@@ -90,6 +90,57 @@ chmod 700 "$dependency_shims/node" "$dependency_shims/npm" "$dependency_shims/do
 pass "Node minimum version and npm capability probe"
 pass ".NET 9 SDK and Runtime capability probe"
 
+node_without_npm="$TEST_TMP/node-without-npm"
+mkdir -p "$node_without_npm"
+cp "$dependency_shims/node" "$node_without_npm/node"
+(
+  NODE_BIN=""; NPM_BIN=""; TOOLCHAIN_DIR="$TEST_TMP/no-node-toolchain"
+  TEMP_DIR="$TEST_TMP/node-package-temp"; LOG_FILE="$TEST_TMP/node-package.log"
+  ENVIRONMENT=linux; PKG_MANAGER=apt; DRY_RUN=0; LANGUAGE=en
+  mkdir -p "$TEMP_DIR"; : >"$LOG_FILE"
+  command_path() {
+    case "$1" in
+      node) printf '%s\n' "$node_without_npm/node" ;;
+      npm) [[ -x "$node_without_npm/npm" ]] && printf '%s\n' "$node_without_npm/npm" ;;
+    esac
+  }
+  install_first_candidate() {
+    [[ "$#" -eq 2 && "$1" == npm && "$2" == npm ]] || return 1
+    cp "$dependency_shims/npm" "$node_without_npm/npm"
+    chmod 700 "$node_without_npm/npm"
+  }
+  install_portable_node() { fail "portable Node used before the independent npm package"; }
+  ensure_node
+  [[ "$NODE_BIN" == "$node_without_npm/node" && "$NPM_BIN" == "$node_without_npm/npm" ]]
+) || fail "system Node with separately packaged npm"
+pass "system Node installs and validates a separately packaged npm"
+
+node_without_package="$TEST_TMP/node-without-npm-package"
+portable_node="$TEST_TMP/portable-node/bin"
+mkdir -p "$node_without_package" "$portable_node"
+cp "$dependency_shims/node" "$node_without_package/node"
+(
+  NODE_BIN=""; NPM_BIN=""; TOOLCHAIN_DIR="$TEST_TMP/portable-toolchain"
+  TEMP_DIR="$TEST_TMP/node-fallback-temp"; LOG_FILE="$TEST_TMP/node-fallback.log"
+  ENVIRONMENT=linux; PKG_MANAGER=apt; DRY_RUN=0; LANGUAGE=en
+  mkdir -p "$TEMP_DIR"; : >"$LOG_FILE"
+  command_path() {
+    [[ "$1" == node ]] && printf '%s\n' "$node_without_package/node"
+  }
+  install_first_candidate() { return 1; }
+  install_portable_node() {
+    cp "$dependency_shims/node" "$portable_node/node"
+    cp "$dependency_shims/npm" "$portable_node/npm"
+    chmod 700 "$portable_node/node" "$portable_node/npm"
+    NODE_BIN="$portable_node/node"
+    NPM_BIN="$portable_node/npm"
+    : >"$TEST_TMP/portable-node-used"
+  }
+  ensure_node
+  [[ -f "$TEST_TMP/portable-node-used" && "$NODE_BIN" == "$portable_node/node" && "$NPM_BIN" == "$portable_node/npm" ]]
+) || fail "portable Node fallback when npm package is unavailable"
+pass "missing independent npm package falls back to a complete portable Node"
+
 set +e
 WALLHUB_INSTALLER_SOURCE_ONLY=0 bash "$ROOT/install.sh" --target invalid --non-interactive >/dev/null 2>&1
 code=$?

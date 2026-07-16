@@ -853,6 +853,22 @@ find_node() {
   return 1
 }
 
+npm_usable_for_node() {
+  local npm="${1:-${NPM_BIN:-}}"
+  [[ -n "$npm" && -x "$npm" && -n "${NODE_BIN:-}" ]] || return 1
+  env "PATH=$(dirname "$NODE_BIN"):$PATH" "$npm" --version >/dev/null 2>&1
+}
+
+ensure_npm_for_node() {
+  if npm_usable_for_node; then return 0; fi
+  NPM_BIN="$(command_path npm)"
+  if npm_usable_for_node; then return 0; fi
+  if ((DRY_RUN)); then NPM_BIN="npm"; return 0; fi
+  install_first_candidate npm npm || return 1
+  NPM_BIN="$(command_path npm)"
+  npm_usable_for_node
+}
+
 install_portable_node() {
   [[ "$ENVIRONMENT" != "termux" ]] || return 1
   stage "node-portable"
@@ -894,12 +910,20 @@ ensure_node() {
     if ((DRY_RUN)); then NODE_BIN="node"; NPM_BIN="npm"; return; fi
     if ! find_node; then install_portable_node || die "$EXIT_DEPENDENCY" "Node >= $MIN_NODE_VERSION could not be installed"; fi
   fi
-  [[ -n "$NPM_BIN" && -x "$NPM_BIN" ]] || die "$EXIT_DEPENDENCY" "npm is unavailable"
+  if ! ensure_npm_for_node; then
+    if [[ "$ENVIRONMENT" != "termux" ]]; then
+      install_portable_node || die "$EXIT_DEPENDENCY" "npm is unavailable and the complete portable Node fallback failed"
+      find_node || die "$EXIT_DEPENDENCY" "Portable Node was installed but did not pass its version probe"
+    else
+      die "$EXIT_DEPENDENCY" "The selected native Termux Node package does not provide npm"
+    fi
+  fi
+  npm_usable_for_node || die "$EXIT_DEPENDENCY" "npm is unavailable or cannot run with the selected Node"
   "$NODE_BIN" -e "const p=require('./package-lock.json');if(p.lockfileVersion!==2)process.exit(1)" 2>/dev/null || {
     local lock_probe="$TEMP_DIR/lockfile-v2.json"; printf '{"lockfileVersion":2}\n' >"$lock_probe"
     "$NODE_BIN" -e "const p=require(process.argv[1]);if(p.lockfileVersion!==2)process.exit(1)" "$lock_probe" || die "$EXIT_DEPENDENCY" "Node cannot read lockfile v2"
   }
-  log INFO "Node=$($NODE_BIN --version) npm=$($NPM_BIN --version)"
+  log INFO "Node=$($NODE_BIN --version) npm=$(env "PATH=$(dirname "$NODE_BIN"):$PATH" "$NPM_BIN" --version)"
 }
 
 find_python() {

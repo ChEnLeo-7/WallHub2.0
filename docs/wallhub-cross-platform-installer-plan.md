@@ -350,20 +350,22 @@ restore-mirrors
 
 ## 阶段 9：GitHub测试分支发布
 
-- [ ] 阶段 9 完成。
+- [x] 阶段 9 完成。
 - [x] 创建 `installer-validation` 分支，不改写远端历史。
-- [ ] 提交 MIT LICENSE、最小源码、public、文档和 install.sh。
-- [ ] 确认提交不包含 `.hermes/`、NuGet 本地状态、个人文件或秘密。
-- [ ] 推送验证分支并验证 Raw install.sh 可访问。
-- [ ] 在全新临时目录执行远程脚本 dry-run。
-- [ ] 记录验证分支 commit SHA，所有远程测试固定使用该 SHA 或分支。
+- [x] 提交 MIT LICENSE、最小源码、public、文档和 install.sh。
+- [x] 确认提交不包含 `.hermes/`、NuGet 本地状态、个人文件或秘密。
+- [x] 推送验证分支并验证 Raw install.sh 可访问。
+- [x] 在全新临时目录执行远程脚本 dry-run。
+- [x] 记录验证分支 commit SHA，所有远程测试固定使用该 SHA 或分支。
 
 ## 阶段 10：PVE x86_64 LXC验证
 
 - [ ] 阶段 10 完成。
-- [ ] 使用临时受限 askpass 连接；密码不进入仓库、命令参数和日志。
-- [ ] 只读记录现有节点、存储、网络桥、模板和 VM/CT ID。
-- [ ] 明确登记现有 ID `100`、`101`、`102` 为禁止操作资源。
+- [x] 使用临时受限 askpass 连接；密码不进入仓库、命令参数和日志。
+- [x] 只读记录现有节点、存储、网络桥、模板和 VM/CT ID。
+- [x] 明确登记现有 ID `100`、`101`、`102` 为禁止操作资源。
+- [x] 修复 Debian 13 系统 Node 满足最低版本但 npm 为独立包时安装提前失败的问题，并完成本地门禁。
+- [ ] 从干净 Debian 13 容器复测独立 npm 安装分支和完整部署。
 - [ ] 每个测试 LXC 使用唯一新 ID 和 `wallhub-installer-validation` 标记。
 - [ ] 每次只运行一个 LXC，资源为2 vCPU、2GB内存、8GB磁盘。
 - [ ] 验证当前稳定 Debian 和 Debian 12 旧基线。
@@ -512,6 +514,16 @@ restore-mirrors
 | 2026-07-17 | 阶段 8 | 阶段验收 | 完成 | 全部本地及模拟门禁通过 | 未启动本地 WallHub 服务 |
 | 2026-07-17 | 阶段 9 | 发布前候选备份 | 完成 | 253 文件；归档 SHA-256 `b2498d30c39270a79019a9d3ed1865b17adbd79a84836d0bfe69eff5f2e7fe4b`；恢复哈希一致 | 工作区外保存，禁止运行目录 0 |
 | 2026-07-17 | 阶段 9 | 创建验证分支 | 完成 | `git switch -c installer-validation`；起点 `74f563d` | 远端当时仅有 main，未改写历史 |
+| 2026-07-17 | 阶段 9 | 提交发布候选 | 完成 | `edb7d283534df2c173f121b95f49fa03c7488a28`；仓库 253 文件 | MIT LICENSE、源码/测试、public、README、Docker、文档和 install.sh |
+| 2026-07-17 | 阶段 9 | 提交内容复核 | 完成 | `git diff --cached --check`；禁止路径 0；未暂存 0；真实秘密 0 | `.hermes`、NuGet、SteamKit、Downloads、node_modules 均保持忽略 |
+| 2026-07-17 | 阶段 9 | 推送与 Raw 验证 | 完成 | origin/installer-validation 指向 `edb7d28`；分支/固定 SHA Raw 与本地字节一致 | install.sh 文本 SHA-256 `705796939abbea38181e400c7c49ee867bb5e5835d0df5219460f5de76cb33c7` |
+| 2026-07-17 | 阶段 9 | 全新目录 Raw dry-run | 完成 | 固定 SHA Raw URL，PVE `/tmp` 新目录；退出 0 | 目标代码/数据未创建，`/etc/wallhub-installer` 前后不变 |
+| 2026-07-17 | 阶段 9 | 固定验证提交 | 完成 | `edb7d283534df2c173f121b95f49fa03c7488a28` | 阶段 10/11 使用该 SHA；出现修复时另记新 SHA |
+| 2026-07-17 | 阶段 9 | 阶段验收 | 完成 | 分支、提交、Raw、dry-run 全部通过 | 无 force push、main 未改变 |
+| 2026-07-17 | 阶段 10 | PVE 临时认证 | 完成 | 无秘密通用 askpass helper + 会话环境变量；每次调用后清空变量 | helper 受本用户 ACL 限制，不含密码 |
+| 2026-07-17 | 阶段 10 | PVE 只读资源清单 | 完成 | PVE 8.4；存储/桥/模板/CT/VM 列表只读命令 | 可用模板覆盖计划中的 x86_64 发行版矩阵 |
+| 2026-07-17 | 阶段 10 | 禁止资源登记 | 完成 | 测试前 100/101/102 均运行 | 后续所有 create/start/exec/destroy 仅允许新登记 ID |
+| 2026-07-17 | 阶段 10 | Debian 13 独立 npm 修复 | 完成 | 安装器能力探测与便携 Node 回退；自测 100/100；Node 255/255；TypeScript、Bash语法和diff检查通过 | 干净容器完整复测保持未勾选；本机未启动服务 |
 
 ## 八、远程测试资源登记
 
@@ -519,7 +531,8 @@ restore-mirrors
 
 | 平台 | 资源标识 | 测试前已存在 | 本次创建 | 所有者标记 | 清理状态 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
-| PVE | 待填写 | - | - | `wallhub-installer-validation` | 待填写 | 禁止操作既有ID 100/101/102 |
+| PVE | 新建测试 ID 待逐个登记 | 否 | 待创建 | `wallhub-installer-validation` | 待填写 | 既有ID 100/101/102 已只读确认并禁止操作 |
+| PVE | CT 9100 / Debian 13 | 否 | 是 | `wallhub-installer-validation-debian13` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘；仅本次测试可操作 |
 | Termux | 原生环境 | 是 | 否 | - | 不删除 | 只清理本次WallHub安装内容 |
 | Termux Proot | 待填写 | 待检查 | 待检查 | `wallhub-installer-validation` | 待填写 | 不删除测试前已有Proot |
 
