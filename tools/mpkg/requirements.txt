@@ -1,0 +1,6 @@
+# Runtime dependencies for the local MPKG converter.
+# These pins retain Python 3.7 compatibility for Linux and Termux deployments.
+Pillow==9.5.0
+lz4==4.3.2
+etcpak==0.9.15
+texture2ddecoder==1.0.6

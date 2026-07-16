@@ -1,0 +1,43 @@
+{
+  "name": "wallpaper-engine-download-web",
+  "version": "2.0.1",
+  "private": true,
+  "description": "Local web app for browsing, downloading, and playing Wallpaper Engine Workshop items",
+  "scripts": {
+    "start": "node server.js",
+    "start:nsfw": "node server.js --NSFW",
+    "dev:ui": "vite --host 0.0.0.0",
+    "build:ui": "vite build",
+    "preview:ui": "vite preview --host 0.0.0.0",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=16.17.0"
+  },
+  "overrides": {
+    "browserslist": "4.24.4",
+    "node-releases": "2.0.19"
+  },
+  "dependencies": {
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "16.18.126",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "10.4.20",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "motion": "^12.40.0",
+    "postcss": "8.5.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "3.4.17",
+    "tailwind-merge": "^2.6.0",
+    "typescript": "5.6.3",
+    "vite": "4.5.14"
+  }
+}

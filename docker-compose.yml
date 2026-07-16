@@ -1,0 +1,41 @@
+services:
+  wallhub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wallhub:latest
+    container_name: Wallhub
+    restart: unless-stopped
+    init: true
+
+    ports:
+      - "${WALLHUB_PORT:-3090}:3090"
+
+    # Most runtime defaults live in Dockerfile/server.js. Keep compose small.
+    # Set this to "1" to start Steamcommunity_302 from ./Steamcommunity_302.
+    environment:
+      WALLHUB_STEAMCOMMUNITY_302: "0"
+    #   STEAM_API_KEY: "${STEAM_API_KEY:-}"
+    #   HTTP_PROXY: "${HTTP_PROXY:-}"
+    #   HTTPS_PROXY: "${HTTPS_PROXY:-}"
+    #   ALL_PROXY: "${ALL_PROXY:-}"
+
+    # Optional Steamcommunity 302 Docker permissions. Disabled by default.
+    # cap_add:
+    #   - NET_ADMIN
+
+    volumes:
+      - ./wallhub-data:/data
+      # Optional Steamcommunity 302 package mount.
+      - ./Steamcommunity_302:/opt/steamcommunity_302
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3090/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+    # Add -NSFW here if needed:
+    # command: ["node", "server.js", "-NSFW"]
+    command: ["node", "server.js"]

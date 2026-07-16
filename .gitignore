@@ -1,0 +1,42 @@
+# Local agent, editor and package-manager state
+/.agents/
+/.claude/
+/.codex/
+/.hermes/
+/NuGet/
+
+# Installed dependencies and generated build output
+/node_modules/
+/frontend/node_modules/
+/frontend/dist/
+/.vite/
+/dist/
+/build/
+__pycache__/
+*.py[cod]
+
+# WallHub runtime data, downloads, sessions and caches
+/Downloads/
+/downloads/
+/SteamKit/
+/cache-settings.json
+/wallhub-data/
+/docker-data/
+/Steamcommunity_302/
+/dumps/
+/tools/DepotDownloader/
+/tools/depotdownloader/
+
+# Local configuration, logs and temporary artifacts
+/.env
+/.env.*
+*.log
+*.tmp
+*.pid
+*.zip
+*.7z
+*.rar
+*.exe
+*.dll
+*.so
+*.dylib
