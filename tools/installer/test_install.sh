@@ -320,11 +320,12 @@ assert_file_contains "$sc302_log" 'mozilla-nss-tools mozilla-nss-tools' "openSUS
 
 make_source_fixture() {
   local root="$1" version="$2"
-  mkdir -p "$root/src" "$root/frontend" "$root/tools/mpkg" "$root/public/assets" "$root/Downloads" "$root/SteamKit"
+  mkdir -p "$root/src/domains/downloads" "$root/frontend" "$root/tools/mpkg" "$root/public/assets" "$root/Downloads" "$root/downloads" "$root/SteamKit"
   printf '{}\n' >"$root/package.json"; printf '{"lockfileVersion":2}\n' >"$root/package-lock.json"
   printf '// server\n' >"$root/server.js"; printf '%s\n' "$version" >"$root/version.txt"
   printf '<script src="/assets/app.js"></script>\n' >"$root/public/index.html"; printf 'ok\n' >"$root/public/assets/app.js"
-  printf 'runtime\n' >"$root/Downloads/private.txt"; printf 'session\n' >"$root/SteamKit/account.txt"
+  printf 'module.exports = {};\n' >"$root/src/domains/downloads/preparedDownloads.js"
+  printf 'runtime\n' >"$root/Downloads/private.txt"; printf 'runtime\n' >"$root/downloads/private.txt"; printf 'session\n' >"$root/SteamKit/account.txt"
 }
 source_one="$TEST_TMP/source-one"; source_two="$TEST_TMP/source-two"
 make_source_fixture "$source_one" one; make_source_fixture "$source_two" two
@@ -400,8 +401,10 @@ ENVIRONMENT=proot; LAYOUT=isolated; INSTALL_DIR="$TEST_TMP/atomic/wallhub"; DATA
 mkdir -p "$TEMP_DIR"
 SOURCE_DIR="$source_one"; deploy_source
 assert_eq one "$(tr -d '\n' <"$INSTALL_DIR/version.txt")" "initial isolated source deployment"
-[[ ! -e "$INSTALL_DIR/Downloads" && ! -e "$INSTALL_DIR/SteamKit" ]] || fail "runtime data copied into source deployment"
+[[ ! -e "$INSTALL_DIR/Downloads" && ! -e "$INSTALL_DIR/downloads" && ! -e "$INSTALL_DIR/SteamKit" ]] || fail "runtime data copied into source deployment"
 pass "source deployment excludes runtime and account data"
+[[ -f "$INSTALL_DIR/src/domains/downloads/preparedDownloads.js" ]] || fail "nested downloads source directory was excluded"
+pass "source deployment preserves nested downloads modules"
 SOURCE_DIR="$source_two"; deploy_source
 assert_eq two "$(tr -d '\n' <"$INSTALL_DIR/version.txt")" "atomic source switch"
 assert_eq one "$(tr -d '\n' <"$ROLLBACK_DIR/version.txt")" "previous source retained for rollback"
@@ -543,6 +546,9 @@ install_systemd_service
 assert_file_contains "$WALLHUB_SYSTEMD_UNIT_PATH" "WorkingDirectory=$INSTALL_DIR" "systemd preserves a working directory containing spaces"
 if grep -Fq 'WorkingDirectory="' "$WALLHUB_SYSTEMD_UNIT_PATH"; then fail "systemd working directory has unsupported outer quotes"; fi
 pass "systemd working directory omits unsupported outer quotes"
+assert_file_contains "$WALLHUB_SYSTEMD_UNIT_PATH" "EnvironmentFile=$CONFIG_DIR/runtime.env" "systemd preserves an environment file path containing spaces"
+if grep -Fq 'EnvironmentFile="' "$WALLHUB_SYSTEMD_UNIT_PATH"; then fail "systemd environment file has unsupported outer quotes"; fi
+pass "systemd environment file omits unsupported outer quotes"
 assert_file_contains "$WALLHUB_SYSTEMD_UNIT_PATH" "ExecStart=\"$NODE_BIN\" \"$INSTALL_DIR/server.js\" --no-supervisor" "systemd quotes executable paths"
 
 run() { command "$@"; }

@@ -1200,8 +1200,8 @@ copy_source_tree() {
   tar -C "$source" \
     --exclude=.git --exclude=.agents --exclude=.claude --exclude=.codex --exclude=.hermes --exclude=NuGet \
     --exclude=node_modules --exclude=frontend/node_modules --exclude=frontend/dist \
-    --exclude=Downloads --exclude=downloads --exclude=SteamKit --exclude=cache-settings.json \
-    --exclude=wallhub-data --exclude=docker-data --exclude=Steamcommunity_302 --exclude=.env --exclude='.env.*' --exclude='*.log' \
+    --exclude='./Downloads' --exclude='./downloads' --exclude='./SteamKit' --exclude='./cache-settings.json' \
+    --exclude='./wallhub-data' --exclude='./docker-data' --exclude='./Steamcommunity_302' --exclude=.env --exclude='.env.*' --exclude='*.log' \
     -cf - . | if ((${#ROOT_PREFIX[@]})); then sudo tar -C "$target" -xf -; else tar -C "$target" -xf -; fi
 }
 
@@ -1411,7 +1411,7 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 WorkingDirectory=$quoted_install
-EnvironmentFile="$quoted_config/runtime.env"
+EnvironmentFile=$quoted_config/runtime.env
 ExecStart="$quoted_node" "$quoted_server" --no-supervisor
 Restart=on-failure
 RestartSec=3
