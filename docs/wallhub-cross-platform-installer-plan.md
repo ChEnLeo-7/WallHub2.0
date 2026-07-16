@@ -365,9 +365,11 @@ restore-mirrors
 - [x] 只读记录现有节点、存储、网络桥、模板和 VM/CT ID。
 - [x] 明确登记现有 ID `100`、`101`、`102` 为禁止操作资源。
 - [x] 修复 Debian 13 系统 Node 满足最低版本但 npm 为独立包时安装提前失败的问题，并完成本地门禁。
-- [ ] 从干净 Debian 13 容器复测独立 npm 安装分支和完整部署。
-- [ ] 修复 Debian 13 对 systemd 单值路径字段外层引号的兼容问题，并覆盖带空格路径。
-- [ ] 修复源码复制规则误删嵌套 `src/domains/downloads` 目录的问题，确保仅排除仓库根运行数据目录。
+- [x] 从干净 Debian 13 容器复测独立 npm 安装分支和完整部署。
+- [x] 修复 Debian 13 对 systemd 单值路径字段外层引号的兼容问题，并覆盖带空格路径。
+- [x] 修复源码复制规则误删嵌套 `src/domains/downloads` 目录的问题，确保仅排除仓库根运行数据目录。
+- [ ] 修复 Debian 12 完整安装后服务未通过 `/health` 的问题，并从干净 Debian 12 容器复测。
+  > 当前状态：已确认 CommonJS `require()` 加载含 ESM `export` 的标签常量导致 Node 18 启动失败；改为 CommonJS 导出并移除测试钩子的 Node 18 专属语义后，Node 16/18、安装器自测、ShellCheck、systemd 与 `/health` 均通过，仍待全新容器复测。
 - [ ] 每个测试 LXC 使用唯一新 ID 和 `wallhub-installer-validation` 标记。
 - [ ] 每次只运行一个 LXC，资源为2 vCPU、2GB内存、8GB磁盘。
 - [ ] 验证当前稳定 Debian 和 Debian 12 旧基线。
@@ -529,6 +531,12 @@ restore-mirrors
 | 2026-07-17 | 阶段 10 | npm修复验证提交与ShellCheck | 完成 | 固定提交 `a44182e77fc5dad53740679478f7dbc3e5f19889`；Raw SHA-256 `6ad33377f39b3d7d725018e0144cfff18cffd7b67c7e7674974d9262da59c578`；ShellCheck 0告警 | PVE仅操作登记CT 9100；未改写远端历史 |
 | 2026-07-17 | 阶段 10 | Debian 13 首次续跑 | 失败待修复 | npm 9.2.0、.NET SDK 9.0.316、SC302依赖、源码、npm资源和Python四模块均通过；systemd退出40 | `WorkingDirectory= path is not absolute: \"/opt/wallhub\"`；建立独立未勾选修复节点 |
 | 2026-07-17 | 阶段 10 | Debian 13 systemd修复续跑 | 失败待修复 | unit语法继续到health，退出50；服务失败后已停止重启 | `EnvironmentFile`因外层引号被忽略；根级排除模式误删 `src/domains/downloads`；分别建立修复节点 |
+| 2026-07-17 | 阶段 10 | systemd与嵌套源码修复 | 完成 | 安装器自测104/104；Node 255/255；TypeScript、Bash、ShellCheck通过；CT安装退出0且health通过 | 固定代码提交 `c7c30f099c4e59aea5951faedc915f8057dd3bb0`；干净容器复测仍未勾选 |
+| 2026-07-17 | 阶段 10 | Debian 13 故障发现容器生命周期 | 完成 | install/check/repair/update/restore-mirrors/uninstall均退出0；更新与维护后health通过 | 默认卸载确认代码/unit删除，数据与state保留；准备销毁登记CT 9100 |
+| 2026-07-17 | 阶段 10 | Debian 13 干净复测 | 完成 | CT 9101从官方模板安装退出0；独立check、systemd verify、is-active和health均通过 | Node 20.19.2、npm 9.2.0、Python 3.13.5、.NET SDK 9.0.316；8GB磁盘最终占用2.0GB |
+| 2026-07-17 | 阶段 10 | Debian 12 首次完整安装 | 失败待修复 | CT 9102依赖、源码与systemd安装完成；`/health` 轮询60秒后退出50 | 保留容器用于只读诊断，已建立独立未勾选修复节点 |
+| 2026-07-17 | 阶段 10 | Debian 12 Node兼容修复 | 实现完成待干净复测 | Node 18测试256/256；安装器自测104/104；ShellCheck通过；systemd active；`/health` 返回`ok` | 根因为Node 20.19新能力掩盖CommonJS加载ESM语法；新增旧CommonJS语义回归门禁 |
+| 2026-07-17 | 阶段 10 | Node 16最低版本实测 | 完成 | 官方Node 16.20.2校验通过；测试文件59/59；完整npm ci、Vite build和独立端口health通过 | 测试动态导入改为显式等待Promise，避免依赖Node 18版测试钩子语义；未替换系统Node |
 
 ## 八、远程测试资源登记
 
@@ -537,7 +545,9 @@ restore-mirrors
 | 平台 | 资源标识 | 测试前已存在 | 本次创建 | 所有者标记 | 清理状态 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
 | PVE | 新建测试 ID 待逐个登记 | 否 | 待创建 | `wallhub-installer-validation` | 待填写 | 既有ID 100/101/102 已只读确认并禁止操作 |
-| PVE | CT 9100 / Debian 13 | 否 | 是 | `wallhub-installer-validation-debian13` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘；仅本次测试可操作 |
+| PVE | CT 9100 / Debian 13 故障发现轮 | 否 | 是 | `wallhub-installer-validation-debian13` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘；完成故障发现和维护生命周期验证后清理 |
+| PVE | CT 9101 / Debian 13 干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭；完整安装与独立检查通过后清理 |
+| PVE | CT 9102 / Debian 12 旧基线 | 否 | 是 | `wallhub-installer-validation` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭；本次下载的12.12模板 |
 | Termux | 原生环境 | 是 | 否 | - | 不删除 | 只清理本次WallHub安装内容 |
 | Termux Proot | 待填写 | 待检查 | 待检查 | `wallhub-installer-validation` | 待填写 | 不删除测试前已有Proot |
 

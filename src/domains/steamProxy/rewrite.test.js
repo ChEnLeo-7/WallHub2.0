@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { createSteamProxyRewriteTools } = require('./rewrite');
 
 function createTools() {
@@ -27,6 +29,17 @@ function createTools() {
     },
   });
 }
+
+test('Workshop tag constants load with legacy CommonJS semantics', () => {
+  const args = [];
+  if (process.allowedNodeEnvironmentFlags.has('--no-experimental-require-module')) {
+    args.push('--no-experimental-require-module');
+  }
+  args.push('-e', `require(${JSON.stringify(path.join(__dirname, 'rewrite', 'workshopTags.js'))})`);
+
+  const result = spawnSync(process.execPath, args, { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+});
 
 test('proxy rewrites Steam Workshop tag links to virtual community paths', () => {
   const tools = createTools();
