@@ -540,7 +540,9 @@ as_root() {
 }
 SERVICE_USER=tester; SERVICE_GROUP=tester
 install_systemd_service
-assert_file_contains "$WALLHUB_SYSTEMD_UNIT_PATH" "WorkingDirectory=\"$INSTALL_DIR\"" "systemd quotes working directory"
+assert_file_contains "$WALLHUB_SYSTEMD_UNIT_PATH" "WorkingDirectory=$INSTALL_DIR" "systemd preserves a working directory containing spaces"
+if grep -Fq 'WorkingDirectory="' "$WALLHUB_SYSTEMD_UNIT_PATH"; then fail "systemd working directory has unsupported outer quotes"; fi
+pass "systemd working directory omits unsupported outer quotes"
 assert_file_contains "$WALLHUB_SYSTEMD_UNIT_PATH" "ExecStart=\"$NODE_BIN\" \"$INSTALL_DIR/server.js\" --no-supervisor" "systemd quotes executable paths"
 
 run() { command "$@"; }

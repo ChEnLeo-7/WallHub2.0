@@ -366,6 +366,7 @@ restore-mirrors
 - [x] 明确登记现有 ID `100`、`101`、`102` 为禁止操作资源。
 - [x] 修复 Debian 13 系统 Node 满足最低版本但 npm 为独立包时安装提前失败的问题，并完成本地门禁。
 - [ ] 从干净 Debian 13 容器复测独立 npm 安装分支和完整部署。
+- [ ] 修复 Debian 13 将带引号的 `WorkingDirectory=` 判定为非绝对路径导致 systemd 服务无法启动的问题，并覆盖带空格路径。
 - [ ] 每个测试 LXC 使用唯一新 ID 和 `wallhub-installer-validation` 标记。
 - [ ] 每次只运行一个 LXC，资源为2 vCPU、2GB内存、8GB磁盘。
 - [ ] 验证当前稳定 Debian 和 Debian 12 旧基线。
@@ -524,6 +525,8 @@ restore-mirrors
 | 2026-07-17 | 阶段 10 | PVE 只读资源清单 | 完成 | PVE 8.4；存储/桥/模板/CT/VM 列表只读命令 | 可用模板覆盖计划中的 x86_64 发行版矩阵 |
 | 2026-07-17 | 阶段 10 | 禁止资源登记 | 完成 | 测试前 100/101/102 均运行 | 后续所有 create/start/exec/destroy 仅允许新登记 ID |
 | 2026-07-17 | 阶段 10 | Debian 13 独立 npm 修复 | 完成 | 安装器能力探测与便携 Node 回退；自测 100/100；Node 255/255；TypeScript、Bash语法和diff检查通过 | 干净容器完整复测保持未勾选；本机未启动服务 |
+| 2026-07-17 | 阶段 10 | npm修复验证提交与ShellCheck | 完成 | 固定提交 `a44182e77fc5dad53740679478f7dbc3e5f19889`；Raw SHA-256 `6ad33377f39b3d7d725018e0144cfff18cffd7b67c7e7674974d9262da59c578`；ShellCheck 0告警 | PVE仅操作登记CT 9100；未改写远端历史 |
+| 2026-07-17 | 阶段 10 | Debian 13 首次续跑 | 失败待修复 | npm 9.2.0、.NET SDK 9.0.316、SC302依赖、源码、npm资源和Python四模块均通过；systemd退出40 | `WorkingDirectory= path is not absolute: \"/opt/wallhub\"`；建立独立未勾选修复节点 |
 
 ## 八、远程测试资源登记
 
