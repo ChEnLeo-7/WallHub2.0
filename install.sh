@@ -854,7 +854,7 @@ find_node() {
 }
 
 npm_usable_for_node() {
-  local npm="${1:-${NPM_BIN:-}}"
+  local npm="${NPM_BIN:-}"
   [[ -n "$npm" && -x "$npm" && -n "${NODE_BIN:-}" ]] || return 1
   env "PATH=$(dirname "$NODE_BIN"):$PATH" "$npm" --version >/dev/null 2>&1
 }
