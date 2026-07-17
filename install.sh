@@ -1522,12 +1522,24 @@ mkdir -p $(printf '%q' "$DATA_DIR/log")
 exec svlogd -tt $(printf '%q' "$DATA_DIR/log")
 EOF
   run mkdir -p "$service_dir/log"
+  run touch "$service_dir/down"
   run cp "$run_file" "$service_dir/run"
   run cp "$log_run" "$service_dir/log/run"
   run chmod 700 "$service_dir/run" "$service_dir/log/run"
   ensure_termux_runsvdir
-  if command -v sv-enable >/dev/null 2>&1; then run env SVDIR="$PREFIX/var/service" sv-enable wallhub; fi
+  wait_for_termux_service_supervision "$service_dir"
+  run rm -f "$service_dir/down"
   run sv up "$service_dir"
+}
+
+wait_for_termux_service_supervision() {
+  local service_dir="$1" _
+  if ((DRY_RUN)); then log DRYRUN "wait for runsv supervision: $service_dir"; return 0; fi
+  for _ in {1..50}; do
+    if [[ -e "$service_dir/supervise/ok" || -p "$service_dir/supervise/ok" ]]; then return 0; fi
+    sleep 0.2
+  done
+  die "$EXIT_SERVICE" "Termux runit did not begin supervising $service_dir"
 }
 
 ensure_termux_runsvdir() {

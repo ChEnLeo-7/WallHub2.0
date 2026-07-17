@@ -794,12 +794,15 @@ old_path="$PATH"; PATH="$service_shims:$PATH"
 PREFIX="$TEST_TMP/termux-service/com.termux/files/usr"; CONFIG_DIR="$TEST_TMP/termux-service/config"; INSTALL_DIR="$TEST_TMP/termux-service/code"; DATA_DIR="$TEST_TMP/termux-service/data"; NODE_BIN=/usr/bin/node
 export WALLHUB_SV_CALLS="$TEST_TMP/termux-sv-calls"; : >"$WALLHUB_SV_CALLS"
 mkdir -p "$CONFIG_DIR" "$INSTALL_DIR" "$DATA_DIR"
-ensure_termux_runsvdir() { :; }
+ensure_termux_runsvdir() { mkdir -p "$PREFIX/var/service/wallhub/supervise"; : >"$PREFIX/var/service/wallhub/supervise/ok"; }
 install_termux_service
 sh -n "$PREFIX/var/service/wallhub/run" "$PREFIX/var/service/wallhub/log/run"
 pass "generated Termux runit service passes sh -n"
 assert_file_contains "$PREFIX/var/service/wallhub/log/run" 'svlogd -tt' "Termux service enables bounded svlogd logging"
 assert_file_contains "$WALLHUB_SV_CALLS" "sv up $PREFIX/var/service/wallhub" "Termux install starts runit service by absolute path"
+[[ ! -e "$PREFIX/var/service/wallhub/down" ]] || fail "Termux service down marker was retained"
+if grep -Fq 'sv-enable' "$WALLHUB_SV_CALLS"; then fail "Termux install depended on sv-enable before supervision"; fi
+pass "Termux install waits for runsv supervision before enabling the service"
 unset SVDIR
 SERVICE_KIND=runit; export WALLHUB_SV_STATUS='down: wallhub: 0s, normally up'
 if service_action status >/dev/null 2>&1; then fail "runit down status"; fi

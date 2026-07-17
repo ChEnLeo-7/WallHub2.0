@@ -417,6 +417,7 @@ restore-mirrors
 - [x] 修复首次隔离安装创建空 `cache-settings.json` 导致运行时 JSON 解析告警的问题，确保不覆盖非空用户设置。
 - [x] 修复 Termux 已自动选择任意第三方镜像时 `--mirror china` 未真正切换清华源的问题，并完成备份恢复真机复测。
 - [ ] 修复默认卸载后继续 purge 时缺失 runit 服务噪声与持久日志重建配置目录的竞态，并从失败现场复测。
+- [ ] 修复长期运行的 `runsvdir` 尚未为重建服务创建 supervise 通道时安装立即失败的问题，并完成卸载后重装复测。
 - [ ] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -627,6 +628,8 @@ restore-mirrors
 | 2026-07-17 | 阶段 11 | Termux .NET严格失败分支 | 完成 | 原生包与官方安装均失败、官方安装成功但运行探测失败两条受控分支均退出20；诊断分别指出bionic不兼容和Debian/Ubuntu Proot | 不自动创建或切换Proot；分支证据日志SHA-256`4ddce538eb7462b9126cc09e25a9ba22db8c8bc95ac1b0f01359dd596a4ada80` |
 | 2026-07-17 | 阶段 11/12 | Termux连续卸载purge故障 | 失败待修复 | 默认卸载退出0并正确保留data/config；紧接purge在服务已删除时产生sv噪声，并因持久日志与rm并发重建配置目录而退出20 | code、service已删除且data已进入purge清理，config/state仍保留；保留失败现场用于修复后续跑，不手工伪造成功 |
 | 2026-07-17 | 阶段 12 | Termux连续purge候选修复 | 实现完成待现场复测 | 缺失runit服务不再调用sv；删除config前把后续日志切到受限临时文件，消除tee重建竞态；真实持久日志回归测试通过 | 原生Termux安装器135/135、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏测试日志SHA-256`cc327d05267d059a2068794edd416240195e661602a97208622216daf6af8e7b` |
+| 2026-07-17 | 阶段 11/12 | Termux卸载后重装runit竞态 | 失败待修复 | purge失败已删除state，故不伪造状态续跑；固定修复提交重新安装到service-installation时退出40 | 长期运行的runsvdir尚未创建`supervise/ok`，立即`sv-enable`返回1；code/data/config为本次半成品，保留用于修复后重装 |
+| 2026-07-17 | 阶段 12 | Termux runsv重建候选修复 | 实现完成待现场复测 | 服务先带`down`标记，等待runsv创建supervise通道后移除标记并绝对路径启动；不再依赖sv-enable时序 | 原生Termux安装器136/136、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏测试日志SHA-256`3e42cf7d3c5cf202db6afaa878907c98bdd8572210f2607f2e9459b6bcc90c67` |
 
 ## 八、远程测试资源登记
 
