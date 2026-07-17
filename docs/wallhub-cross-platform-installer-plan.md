@@ -414,7 +414,8 @@ restore-mirrors
 - [ ] 阶段 12 完成。
 - [ ] 每个远程失败建立独立未勾选修复节点，记录平台、阶段和脱敏证据。
 - [x] 修复原生 Termux 新进程缺少 `SVDIR` 时 `check` 误报 runit 服务未运行的问题，并完成真机复测。
-- [ ] 修复首次隔离安装创建空 `cache-settings.json` 导致运行时 JSON 解析告警的问题，确保不覆盖非空用户设置。
+- [x] 修复首次隔离安装创建空 `cache-settings.json` 导致运行时 JSON 解析告警的问题，确保不覆盖非空用户设置。
+- [ ] 修复 Termux 已自动选择任意第三方镜像时 `--mirror china` 未真正切换清华源的问题，并完成备份恢复真机复测。
 - [ ] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -616,6 +617,10 @@ restore-mirrors
 | 2026-07-17 | 阶段 11 | Termux runit生命周期与项目测试 | 完成 | restart、stop、health不可达、start、repair、check全通过；安装后Node 256/256、Python 17/17、安装器129/129 | 生命周期日志SHA-256`86a7a66e501e1d696f419d139a85625f4fc5fa3384eb5e41a6630fc5a025d95a`；三份测试日志敏感信息扫描零命中 |
 | 2026-07-17 | 阶段 11 | Termux双SteamKit运行时 | 完成 | JSON进度与分块在线播放运行时均成功构建；两个`DepotDownloader.dll -V`均返回3.4.0和.NET 9.0.18 | 脱敏日志SHA-256`84af1436eae7946f41c4ee9bb9d83c978cf090e8bc7f25fd7e7a8a98859b9f1c`；同时发现首次空设置文件告警并建立独立修复节点 |
 | 2026-07-17 | 阶段 12 | 初始设置JSON候选修复 | 实现完成待真机复测 | 缺失或零长度普通文件初始化为`{}`，非空文件保持逐字节不变，异常符号链接不跟随覆盖；新增三组回归断言 | 原生Termux安装器131/131、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏安装器日志SHA-256`b6db9df23b1da5cab2d90b0d695832e2b4b9515f562410b689f3e69895bbf542` |
+| 2026-07-17 | 阶段 12 | 初始设置JSON真机复测 | 完成 | 固定提交`5075be5`更新后设置文件由0字节变为合法`{}`；显式双运行时命令输出设置加载成功且无解析告警 | update、双运行时、check与health均退出0；脱敏日志SHA-256`2e5d82aa9adc65d05efb5355c1efc4e624ac8f3b834af48e660c27ddd85a9d42`，敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11/12 | Termux任意镜像转清华缺陷 | 失败待修复 | 官方源完整安装期间`pkg`因一次可用性探测自动选到其他镜像；现有国内源逻辑只替换固定官方域名 | 直接执行国内源会刷新成功但URL不变；需按Termux仓库suite/component识别主、root和x11仓库并保留其他仓库 |
+| 2026-07-17 | 阶段 11 | Termux public重建路径 | 完成 | 固定提交`5075be5`执行`update --build-ui`，完整npm ci、Vite构建、production prune、check和health均退出0 | public 3个根引用全部存在；脱敏日志SHA-256`24e624921c3b2cfecb046cc67ac2cd5ef92916171e369cb9a7c193ea391962df` |
+| 2026-07-17 | 阶段 12 | Termux任意镜像候选修复 | 实现完成待真机复测 | 按suite/component识别main、root和x11，不依赖当前镜像域名；TUR等无映射仓库保持不变；备份可逐字节恢复 | 原生Termux安装器134/134、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏安装器日志SHA-256`5182795f169e9238fa123e1e6e0fda4211475aa7db4d0f96387be47ab624545b` |
 
 ## 八、远程测试资源登记
 

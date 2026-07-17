@@ -544,6 +544,31 @@ printf 'official\n' >"$source_file"
 replace_in_file "$source_file" 's/official/tuna/'
 assert_eq tuna "$(tr -d '\n' <"$source_file")" "mirror replacement"
 
+(
+  TEMP_DIR="$TEST_TMP/termux-mirror-temp"; CONFIG_DIR="$TEST_TMP/termux-mirror-config"; MIRROR_MANIFEST="$CONFIG_DIR/mirrors/manifest.tsv"
+  ENVIRONMENT=termux; DRY_RUN=0; ROOT_PREFIX=()
+  mkdir -p "$TEMP_DIR" "$CONFIG_DIR"
+  termux_sources="$TEST_TMP/termux-sources.list"; termux_original="$TEST_TMP/termux-sources.original"
+  cat >"$termux_sources" <<'SOURCES'
+deb https://grimler.se/termux/termux-main stable main
+deb-src [trusted=yes] https://mirror.example.invalid/custom-main stable main
+deb https://mirror.example.invalid/custom-root root stable
+deb [arch=arm64] https://mirror.example.invalid/custom-x11 x11 main
+deb https://termux-user-repository.github.io tur stable
+SOURCES
+  cp "$termux_sources" "$termux_original"
+  rewrite_tuna_termux_source_file "$termux_sources"
+  [[ "$(grep -Fc 'https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main' "$termux_sources")" == 2 ]] || fail "Termux main mirror rewrite"
+  grep -Fq 'https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-root root stable' "$termux_sources" || fail "Termux root mirror rewrite"
+  grep -Fq 'https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-x11 x11 main' "$termux_sources" || fail "Termux x11 mirror rewrite"
+  grep -Fq 'https://termux-user-repository.github.io tur stable' "$termux_sources" || fail "Termux unrelated repository preservation"
+  restore_mirrors_internal safe
+  cmp -s "$termux_sources" "$termux_original" || fail "Termux mirror restoration"
+) || fail "Termux mirror rewrite from arbitrary providers"
+pass "Termux mirror rewrite handles arbitrary current providers"
+pass "Termux mirror rewrite preserves unrelated repositories"
+pass "Termux arbitrary mirror backup restores byte-for-byte"
+
 dnf_repo_file="$TEST_TMP/rocky.repo"
 cat >"$dnf_repo_file" <<'REPO'
 [baseos]

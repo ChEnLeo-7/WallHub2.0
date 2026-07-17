@@ -768,6 +768,13 @@ rewrite_tuna_suse_source_file() {
     's#https?://(download|cdn)\.opensuse\.org#https://mirrors.tuna.tsinghua.edu.cn/opensuse#g'
 }
 
+rewrite_tuna_termux_source_file() {
+  replace_in_file "$1" \
+    's#^([[:space:]]*deb(-src)?[[:space:]]+(\[[^]]+\][[:space:]]+)?)[^[:space:]]+([[:space:]]+stable[[:space:]]+main([[:space:]]|$))#\1https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main\4#' \
+    's#^([[:space:]]*deb(-src)?[[:space:]]+(\[[^]]+\][[:space:]]+)?)[^[:space:]]+([[:space:]]+root[[:space:]]+stable([[:space:]]|$))#\1https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-root\4#' \
+    's#^([[:space:]]*deb(-src)?[[:space:]]+(\[[^]]+\][[:space:]]+)?)[^[:space:]]+([[:space:]]+x11[[:space:]]+main([[:space:]]|$))#\1https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-x11\4#'
+}
+
 configure_china_mirrors() {
   [[ "$MIRROR" == "china" ]] || return 0
   stage "china-mirrors"
@@ -775,9 +782,7 @@ configure_china_mirrors() {
   if [[ "$ENVIRONMENT" == "termux" ]]; then
     for file in "$PREFIX/etc/apt/sources.list" "$PREFIX/etc/apt/sources.list.d"/*.list; do
       [[ -f "$file" ]] || continue
-      replace_in_file "$file" \
-        's#https?://packages\.termux\.dev/apt/#https://mirrors.tuna.tsinghua.edu.cn/termux/apt/#g' \
-        's#https?://termux\.net/#https://mirrors.tuna.tsinghua.edu.cn/termux/#g'
+      rewrite_tuna_termux_source_file "$file"
     done
   elif [[ "$OS_FAMILY" == "debian" ]]; then
     for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
