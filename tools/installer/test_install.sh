@@ -285,12 +285,32 @@ assert_eq direct-ok "$(tr -d '\n' <"$TEST_TMP/download.out")" "direct GitHub fal
     pkg_install wallhub-test-package
   done
 )
-assert_file_contains "$shim_log" 'apt-get update' "apt command shim"
+assert_file_contains "$shim_log" 'apt-get -o Acquire::Retries=3 update' "apt command shim"
 assert_file_contains "$shim_log" 'dnf -y makecache' "dnf command shim"
 assert_file_contains "$shim_log" 'pacman -Sy --noconfirm' "pacman command shim"
 assert_file_contains "$shim_log" 'zypper --non-interactive refresh' "zypper command shim"
 assert_file_contains "$shim_log" 'pkg update -y' "Termux pkg command shim"
 pass "uname command shim drives arm64 detection"
+
+if (
+  PKG_MANAGER=apt; PACKAGE_INDEX_UPDATED=0; DRY_RUN=0; LOG_FILE="$TEST_TMP/package-refresh-failure.log"
+  as_root() { return 23; }
+  pkg_refresh
+); then
+  fail "package index refresh failure was ignored"
+fi
+pass "package index refresh failure propagates"
+
+if (
+  DRY_RUN=0; LOG_FILE="$TEST_TMP/package-install-failure.log"
+  pkg_candidate_exists() { return 0; }
+  pkg_install() { return 24; }
+  pkg_search_diagnostic() { :; }
+  install_first_candidate curl curl
+); then
+  fail "package candidate install failure was ignored"
+fi
+pass "package candidate install failure propagates"
 
 delegate_log="$TEST_TMP/delegate.log"
 (

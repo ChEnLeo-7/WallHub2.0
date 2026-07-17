@@ -509,12 +509,12 @@ pkg_refresh() {
   ((PACKAGE_INDEX_UPDATED)) && return 0
   stage "package-index"
   case "$PKG_MANAGER" in
-    apt) as_root env DEBIAN_FRONTEND=noninteractive apt-get update ;;
+    apt) as_root env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 update ;;
     dnf) as_root dnf -y makecache ;;
     pacman) as_root pacman -Sy --noconfirm ;;
     zypper) as_root zypper --non-interactive refresh ;;
     pkg) run pkg update -y ;;
-  esac
+  esac || return $?
   PACKAGE_INDEX_UPDATED=1
 }
 
@@ -531,9 +531,9 @@ pkg_candidate_exists() {
 
 pkg_install() {
   (($#)) || return 0
-  pkg_refresh
+  pkg_refresh || return $?
   case "$PKG_MANAGER" in
-    apt) as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ;;
+    apt) as_root env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends "$@" ;;
     dnf) as_root dnf install -y "$@" ;;
     pacman) as_root pacman -S --needed --noconfirm "$@" ;;
     zypper) as_root zypper --non-interactive install -y "$@" ;;
@@ -558,7 +558,10 @@ install_first_candidate() {
   local candidate
   if ((DRY_RUN)); then pkg_install "$1"; return 0; fi
   for candidate in "$@"; do
-    if pkg_candidate_exists "$candidate"; then pkg_install "$candidate"; return 0; fi
+    if pkg_candidate_exists "$candidate"; then
+      if pkg_install "$candidate"; then return 0; fi
+      log WARN "Package installation failed for candidate: $candidate"
+    fi
   done
   pkg_search_diagnostic "$capability"
   return 1

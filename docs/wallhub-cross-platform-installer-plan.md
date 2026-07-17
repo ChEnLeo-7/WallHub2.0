@@ -368,11 +368,12 @@ restore-mirrors
 - [x] 从干净 Debian 13 容器复测独立 npm 安装分支和完整部署。
 - [x] 修复 Debian 13 对 systemd 单值路径字段外层引号的兼容问题，并覆盖带空格路径。
 - [x] 修复源码复制规则误删嵌套 `src/domains/downloads` 目录的问题，确保仅排除仓库根运行数据目录。
-- [ ] 修复 Debian 12 完整安装后服务未通过 `/health` 的问题，并从干净 Debian 12 容器复测。
-  > 当前状态：已确认 CommonJS `require()` 加载含 ESM `export` 的标签常量导致 Node 18 启动失败；改为 CommonJS 导出并移除测试钩子的 Node 18 专属语义后，Node 16/18、安装器自测、ShellCheck、systemd 与 `/health` 均通过，仍待全新容器复测。
+- [x] 修复 Debian 12 完整安装后服务未通过 `/health` 的问题，并从干净 Debian 12 容器复测。
+- [ ] 修复 Ubuntu 26.04 安装 curl 包后命令仍不可用的问题，并从干净 Ubuntu 26.04 容器复测。
+  > 当前状态：确认Ubuntu 26.04的systemd 258在当前非特权PVE LXC中需要`nesting=1`才能启动网络；安装器同时存在包管理器失败返回码被候选循环吞掉的问题。返回码传播、apt重试和106项自测已通过，CT 9104续跑安装成功，仍待新提交的干净容器复测。
 - [ ] 每个测试 LXC 使用唯一新 ID 和 `wallhub-installer-validation` 标记。
 - [ ] 每次只运行一个 LXC，资源为2 vCPU、2GB内存、8GB磁盘。
-- [ ] 验证当前稳定 Debian 和 Debian 12 旧基线。
+- [x] 验证当前稳定 Debian 和 Debian 12 旧基线。
 - [ ] 验证当前 Ubuntu LTS 和 Ubuntu 22.04 旧基线。
 - [ ] 验证当前 Fedora。
 - [ ] 验证当前 RHEL兼容发行版和9系旧基线。
@@ -537,6 +538,13 @@ restore-mirrors
 | 2026-07-17 | 阶段 10 | Debian 12 首次完整安装 | 失败待修复 | CT 9102依赖、源码与systemd安装完成；`/health` 轮询60秒后退出50 | 保留容器用于只读诊断，已建立独立未勾选修复节点 |
 | 2026-07-17 | 阶段 10 | Debian 12 Node兼容修复 | 实现完成待干净复测 | Node 18测试256/256；安装器自测104/104；ShellCheck通过；systemd active；`/health` 返回`ok` | 根因为Node 20.19新能力掩盖CommonJS加载ESM语法；新增旧CommonJS语义回归门禁 |
 | 2026-07-17 | 阶段 10 | Node 16最低版本实测 | 完成 | 官方Node 16.20.2校验通过；测试文件59/59；完整npm ci、Vite build和独立端口health通过 | 测试动态导入改为显式等待Promise，避免依赖Node 18版测试钩子语义；未替换系统Node |
+| 2026-07-17 | 阶段 10 | Node兼容修复验证提交 | 完成 | 固定提交`d6a78f8b93378dd7668cca5ce16fda5c4bef0899`；远端分支一致；Raw确认CommonJS导出 | 正常推送验证分支，未改写远端历史 |
+| 2026-07-17 | 阶段 10 | Debian 12故障发现容器生命周期 | 完成 | update、check、repair、restore-mirrors、systemd verify、health和默认uninstall均通过 | 卸载保留data/state；精确核对配置后销毁CT 9102；禁止资源销毁前后均运行 |
+| 2026-07-17 | 阶段 10 | 创建Debian 12干净复测容器 | 完成 | CT 9103；Debian 12.12官方模板；2 vCPU、2GB、8GB、0 swap、onboot关闭、非特权 | 创建前确认ID在VM/LXC中均未占用；禁止资源创建前后均运行 |
+| 2026-07-17 | 阶段 10 | Debian 12干净完整复测 | 完成 | 固定提交`d6a78f8`安装退出0；独立check、systemd verify、源码哈希、四模块和health均通过；日志SHA-256`9f6b2dcb856b864f2182428d881a909060d8861ff464c6d80a3b4663ecb37ef5` | Node 18.20.4、npm 9.2.0、Python 3.11.2、Pillow 12.3.0、lz4 4.4.5、.NET SDK 9.0.316/runtime 9.0.18；磁盘占用2.0GB |
+| 2026-07-17 | 阶段 10 | Debian 12干净复测资源清理 | 完成 | 精确核对主机名、标记与资源规格后销毁CT 9103；PVE临时日志已删除 | 工作区外保留通过敏感信息复核的日志副本；禁止资源销毁前后均运行 |
+| 2026-07-17 | 阶段 10 | Ubuntu 26.04首次完整安装 | 失败待修复 | 基础工具安装触发后curl命令能力检查失败；退出20 | 源码与服务阶段尚未执行；保留CT 9104做只读诊断并建立独立修复节点 |
+| 2026-07-17 | 阶段 10 | Ubuntu 26.04故障诊断与续跑 | 实现完成待干净复测 | `nesting=1`后networkd、DHCP和DNS恢复；修正版安装退出0；安装器自测106/106、Bash和ShellCheck通过 | 安装器显式传播索引刷新/包安装/候选安装失败并为apt启用3次下载重试；Node 22.22.1与health通过 |
 
 ## 八、远程测试资源登记
 
@@ -547,7 +555,9 @@ restore-mirrors
 | PVE | 新建测试 ID 待逐个登记 | 否 | 待创建 | `wallhub-installer-validation` | 待填写 | 既有ID 100/101/102 已只读确认并禁止操作 |
 | PVE | CT 9100 / Debian 13 故障发现轮 | 否 | 是 | `wallhub-installer-validation-debian13` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘；完成故障发现和维护生命周期验证后清理 |
 | PVE | CT 9101 / Debian 13 干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭；完整安装与独立检查通过后清理 |
-| PVE | CT 9102 / Debian 12 旧基线 | 否 | 是 | `wallhub-installer-validation` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭；本次下载的12.12模板 |
+| PVE | CT 9102 / Debian 12 旧基线故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭；完成兼容修复与维护生命周期验证后清理 |
+| PVE | CT 9103 / Debian 12 干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；固定验证提交`d6a78f8` |
+| PVE | CT 9104 / Ubuntu 26.04 LTS故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；诊断确认当前PVE组合需`nesting=1` |
 | Termux | 原生环境 | 是 | 否 | - | 不删除 | 只清理本次WallHub安装内容 |
 | Termux Proot | 待填写 | 待检查 | 待检查 | `wallhub-installer-validation` | 待填写 | 不删除测试前已有Proot |
 
