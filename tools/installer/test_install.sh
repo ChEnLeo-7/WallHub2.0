@@ -555,6 +555,28 @@ assert_file_contains "$dnf_repo_file" 'baseurl=https://mirrors.tuna.tsinghua.edu
 assert_file_contains "$dnf_repo_file" '#mirrorlist=' "DNF mirrorlist disabled"
 pass "DNF mirror rewrite uses a valid sed expression"
 
+suse_repo_file="$TEST_TMP/opensuse.repo"
+cat >"$suse_repo_file" <<'REPO'
+[current]
+baseurl=http://cdn.opensuse.org/distribution/leap/$releasever/repo/oss/$basearch
+[legacy]
+baseurl=https://download.opensuse.org/distribution/leap/$releasever/repo/oss/$basearch
+REPO
+rewrite_tuna_suse_source_file "$suse_repo_file"
+assert_eq 2 "$(grep -Fc 'baseurl=https://mirrors.tuna.tsinghua.edu.cn/opensuse/' "$suse_repo_file")" "current and legacy openSUSE mirror hosts are rewritten"
+suse_service_file="$TEST_TMP/opensuse-repoindex.xml"
+printf '%s\n' '<repoindex disturl="http://cdn.opensuse.org">' >"$suse_service_file"
+rewrite_tuna_suse_source_file "$suse_service_file"
+assert_file_contains "$suse_service_file" 'disturl="https://mirrors.tuna.tsinghua.edu.cn/opensuse"' "Leap 16 repository service source is rewritten"
+suse_link_target="$TEST_TMP/opensuse-link-target.xml"
+suse_service_link="$TEST_TMP/opensuse-service-link.xml"
+printf '%s\n' '<repoindex disturl="http://cdn.opensuse.org">' >"$suse_link_target"
+ln -s "$suse_link_target" "$suse_service_link"
+rewrite_tuna_suse_source_file "$suse_service_link"
+assert_file_contains "$suse_link_target" 'disturl="http://cdn.opensuse.org"' "openSUSE service symlink is not registered twice"
+if grep -Fq -- "$suse_service_link" "$MIRROR_MANIFEST"; then fail "openSUSE service symlink was registered"; fi
+pass "openSUSE mirror rewrite supports Leap 16 repositories and services"
+
 printf 'user-change\n' >"$source_file"
 if restore_mirrors_internal safe; then fail "user mirror conflict was overwritten"; fi
 assert_eq user-change "$(tr -d '\n' <"$source_file")" "user mirror edit is preserved"

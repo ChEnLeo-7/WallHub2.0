@@ -762,6 +762,12 @@ enable_tuna_dnf_repo_file() {
     's~^([[:space:]]*)(metalink|mirrorlist)=~\1#\2=~'
 }
 
+rewrite_tuna_suse_source_file() {
+  [[ ! -L "$1" ]] || return 0
+  replace_in_file "$1" \
+    's#https?://(download|cdn)\.opensuse\.org#https://mirrors.tuna.tsinghua.edu.cn/opensuse#g'
+}
+
 configure_china_mirrors() {
   [[ "$MIRROR" == "china" ]] || return 0
   stage "china-mirrors"
@@ -806,9 +812,9 @@ configure_china_mirrors() {
     as_root cp "$temp" /etc/pacman.d/mirrorlist
     mirror_record_modified_hash /etc/pacman.d/mirrorlist
   elif [[ "$OS_FAMILY" == "suse" ]]; then
-    for file in /etc/zypp/repos.d/*.repo; do
+    for file in /usr/share/zypp/local/service/*/repo/*.xml /etc/zypp/repos.d/*.repo; do
       [[ -f "$file" ]] || continue
-      replace_in_file "$file" 's#https?://download\.opensuse\.org#https://mirrors.tuna.tsinghua.edu.cn/opensuse#g'
+      rewrite_tuna_suse_source_file "$file"
     done
   fi
 

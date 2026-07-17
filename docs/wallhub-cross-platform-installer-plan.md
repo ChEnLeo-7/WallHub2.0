@@ -373,8 +373,8 @@ restore-mirrors
 - [x] 修复 Ubuntu 22.04 切换国内源后无法安装Python venv候选的问题，并复测镜像恢复与原地安装。
 - [x] 修复 Rocky Linux 9 国内源repo重写失败，并从干净容器复测。
 - [x] 修复 Arch Linux pacman 7 沙箱、空keyring及滚动发行版部分升级问题，并从干净容器复测。
-- [ ] 修复 openSUSE Leap 16.0 版本化Python、Node和npm包名兼容，并从干净容器复测。
-  > 当前状态：已扩展Python 3.7至3.14、Node 16至24候选并按Node主版本选择npm包；CT 9114续跑安装、121项自测及完整项目门禁通过，仍待新提交的干净容器复测。
+- [ ] 修复 openSUSE Leap 16.0 版本化运行时包名和RIS服务镜像覆盖问题，并从干净容器复测。
+  > 当前状态：版本化Python、Node和npm候选已从无预装运行时的CT 9115验证；RIS XML与repo同步改写、符号链接跳过和公开恢复均通过，仍待新提交的干净容器最终复测。
 - [ ] 每个测试 LXC 使用唯一新 ID 和 `wallhub-installer-validation` 标记。
 - [ ] 每次只运行一个 LXC，资源为2 vCPU、2GB内存、8GB磁盘。
 - [x] 验证当前稳定 Debian 和 Debian 12 旧基线。
@@ -587,6 +587,11 @@ restore-mirrors
 | 2026-07-17 | 阶段 10 | openSUSE Leap 16.0首次完整安装 | 失败待修复 | Leap 16不再提供无版本`python3`包，默认解释器包名为`python313`；安装器退出20 | 基础工具正常；保留CT 9114实测版本包能力并建立修复节点 |
 | 2026-07-17 | 阶段 10 | openSUSE Leap 16.0候选修复 | 实现完成待干净复测 | 实测`python313`提供python3且venv/pip完整；Node/npm按主版本选择；续跑隔离安装、check、systemd verify、SC302三包、四模块和health通过 | nodejs24/npm24 24.18.0/11.16.0；Python 3.13.13；Pillow 12.3.0、lz4 4.4.5；.NET便携SDK 9.0.316/runtime 9.0.18；测试256/256、121/121、17/17；ShellCheck 0.10.0通过 |
 | 2026-07-17 | 阶段 10 | PVE外部重启恢复 | 完成 | 宿主在Leap修正版续跑命令建立SSH前发生外部重启；CT 9114因onboot关闭按预期停止，安装日志和退出码均不存在 | 禁止资源重启后全部运行；重新启动已登记CT，systemd/DNS/Python/zypper恢复且无安装半成品 |
+| 2026-07-17 | 阶段 10 | openSUSE Leap 16.0修复验证提交 | 完成 | 固定提交`69bcaf8`；本地Node、TypeScript、Vite、Python及远端Bash/ShellCheck 0.10/0.11门禁通过 | 正常推送验证分支，未改写历史 |
+| 2026-07-17 | 阶段 10 | openSUSE Leap 16.0故障资源清理 | 完成 | 持久安装日志SHA-256`95f48a960d5c4305d34df6e05459d51485a6b91cbe13e7ba122b019ae2711eb2`；六份有效证据日志敏感信息扫描零命中；精确销毁CT 9114 | PVE临时日志已删除；禁止资源状态未变；测试模板保留至干净复测完成 |
+| 2026-07-17 | 阶段 10 | 创建openSUSE Leap 16.0干净复测容器 | 完成 | CT 9115；与故障轮相同签名模板；unmanaged模式、2 vCPU、2GB、8GB、0 swap、onboot关闭、非特权、nesting启用 | systemd适配后running；初始Python和Node均不存在；手工官方源刷新因CDN异常超时后终止，未安装任何包 |
+| 2026-07-17 | 阶段 10 | openSUSE Leap 16.0国内源干净安装 | 失败待补强 | 无预装运行时完整安装退出0，版本化Python/Node/npm候选均生效；但Leap 16本地RIS服务在refresh时把repo URL重新生成回官方CDN | 安装功能通过但国内源持久性不成立；建立服务XML同步改写节点，不误记为镜像验证完成 |
+| 2026-07-17 | 阶段 10 | openSUSE Leap 16.0 RIS镜像修复 | 实现完成待最终干净复测 | 同时备份改写真实RIS XML和repo，跳过指向同一XML的符号链接；服务刷新后5个repo保持清华URL且8个受管哈希一致 | 公开`restore-mirrors`退出0，7个原文件哈希恢复、2个安装器自有配置删除；测试125/125、256/256、17/17、ShellCheck 0.10.0通过；服务与health正常 |
 
 ## 八、远程测试资源登记
 
@@ -609,7 +614,8 @@ restore-mirrors
 | PVE | CT 9111 / AlmaLinux 10当前RHEL兼容系 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | unmanaged模式；2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；固定验证提交`a5b9d9a`；测试模板已删除 |
 | PVE | CT 9112 / Arch Linux故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；完成pacman兼容修复与续跑验证后清理 |
 | PVE | CT 9113 / Arch Linux干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；固定验证提交`50f2539` |
-| PVE | CT 9114 / openSUSE Leap 16.0 | 否 | 是 | `wallhub-installer-validation` | 运行中 | unmanaged模式；2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；固定验证提交`50f2539` |
+| PVE | CT 9114 / openSUSE Leap 16.0故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | unmanaged模式；2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；完成版本化运行时候选修复后清理 |
+| PVE | CT 9115 / openSUSE Leap 16.0干净复测与RIS故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 运行中 | unmanaged模式、2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；验证版本化运行时和RIS服务镜像修复 |
 | Termux | 原生环境 | 是 | 否 | - | 不删除 | 只清理本次WallHub安装内容 |
 | Termux Proot | 待填写 | 待检查 | 待检查 | `wallhub-installer-validation` | 待填写 | 不删除测试前已有Proot |
 
