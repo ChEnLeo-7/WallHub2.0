@@ -786,6 +786,12 @@ URIs: http://deb.debian.org/debian http://deb.debian.org/debian-security
 Suites: stable stable-security
 Components: main
 SOURCES
+cat >"$proot_official_apt/sources.list.d/ubuntu.sources" <<'SOURCES'
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu http://security.ubuntu.com/ubuntu http://ports.ubuntu.com/ubuntu-ports
+Suites: noble noble-security
+Components: main
+SOURCES
 (
   TEMP_DIR="$proot_official_temp"; CONFIG_DIR="$proot_official_config"
   MIRROR_MANIFEST="$CONFIG_DIR/mirrors/manifest.tsv"; LOG_FILE="$proot_official_root/installer.log"
@@ -799,6 +805,8 @@ SOURCES
 )
 assert_file_not_contains "$proot_official_apt/sources.list.d/debian.sources" 'http://deb.debian.org' "Proot official bootstrap removes HTTP Debian sources"
 assert_file_contains "$proot_official_apt/sources.list.d/debian.sources" 'https://deb.debian.org/debian-security' "Proot official bootstrap enables HTTPS security metadata"
+assert_file_not_contains "$proot_official_apt/sources.list.d/ubuntu.sources" 'http://' "Proot official bootstrap removes HTTP Ubuntu sources"
+assert_file_contains "$proot_official_apt/sources.list.d/ubuntu.sources" 'https://ports.ubuntu.com/ubuntu-ports' "Proot official bootstrap enables HTTPS ARM64 Ubuntu metadata"
 assert_eq 0 "$(tr -d '\n' <"$proot_official_refresh")" "Proot official HTTPS switch refreshes package metadata"
 (
   TEMP_DIR="$proot_official_temp"; CONFIG_DIR="$proot_official_config"
@@ -807,6 +815,7 @@ assert_eq 0 "$(tr -d '\n' <"$proot_official_refresh")" "Proot official HTTPS swi
   restore_mirrors_internal force
 )
 assert_file_contains "$proot_official_apt/sources.list.d/debian.sources" 'http://deb.debian.org/debian' "Proot official HTTPS source change is restorable"
+assert_file_contains "$proot_official_apt/sources.list.d/ubuntu.sources" 'http://archive.ubuntu.com/ubuntu' "Proot Ubuntu HTTPS source change is restorable"
 
 proot_install_order="$TEST_TMP/proot-install-order"
 (
