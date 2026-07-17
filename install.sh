@@ -775,6 +775,7 @@ EOF
   mirror_install_owned_file "$CONFIG_DIR/pip.conf" "$pip_config"
   mirror_install_owned_file "$CONFIG_DIR/npmrc" "$npm_config"
 
+  PACKAGE_INDEX_UPDATED=0
   if ! pkg_refresh; then
     log ERROR "Mirror metadata refresh failed; restoring installer-managed backups"
     restore_mirrors_internal force
@@ -950,6 +951,10 @@ ensure_python_runtime() {
   if ((DRY_RUN)); then PYTHON_BIN="$TOOLCHAIN_DIR/python-venv/bin/python"; return; fi
   [[ -n "$system_python" ]] || die "$EXIT_DEPENDENCY" "Python >= $MIN_PYTHON_VERSION is unavailable"
   as_root mkdir -p "$TOOLCHAIN_DIR"
+  if [[ -x "$TOOLCHAIN_DIR/python-venv/bin/python" ]] && ! "$TOOLCHAIN_DIR/python-venv/bin/python" -m pip --version >/dev/null 2>&1; then
+    log WARN "Existing WallHub Python venv is incomplete; recreating it"
+    safe_remove_tree "$TOOLCHAIN_DIR/python-venv" "$TOOLCHAIN_DIR"
+  fi
   if [[ ! -x "$TOOLCHAIN_DIR/python-venv/bin/python" ]]; then
     if ! as_root_quiet "$system_python" -m venv --system-site-packages "$TOOLCHAIN_DIR/python-venv"; then
       local python_minor
@@ -1705,7 +1710,11 @@ run_uninstall() {
     safe_remove_tree "$DATA_DIR" "$(dirname "$DATA_DIR")"
     if [[ "$CONFIG_DIR" != "/" && "$CONFIG_DIR" == */wallhub-installer ]]; then safe_remove_tree "$CONFIG_DIR" "$(dirname "$CONFIG_DIR")"; fi
   else
-    log INFO "WallHub code/service removed; data, settings and mirror backups were preserved at $DATA_DIR and $CONFIG_DIR"
+    if [[ "$LAYOUT" == "isolated" ]]; then
+      log INFO "WallHub code and service removed; data, settings and mirror backups were preserved at $DATA_DIR and $CONFIG_DIR"
+    else
+      log INFO "WallHub service removed; in-place source was preserved at $INSTALL_DIR; data, settings and mirror backups were preserved at $DATA_DIR and $CONFIG_DIR"
+    fi
   fi
 }
 

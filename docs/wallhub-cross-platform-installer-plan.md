@@ -369,8 +369,9 @@ restore-mirrors
 - [x] 修复 Debian 13 对 systemd 单值路径字段外层引号的兼容问题，并覆盖带空格路径。
 - [x] 修复源码复制规则误删嵌套 `src/domains/downloads` 目录的问题，确保仅排除仓库根运行数据目录。
 - [x] 修复 Debian 12 完整安装后服务未通过 `/health` 的问题，并从干净 Debian 12 容器复测。
-- [ ] 修复 Ubuntu 26.04 安装 curl 包后命令仍不可用的问题，并从干净 Ubuntu 26.04 容器复测。
-  > 当前状态：确认Ubuntu 26.04的systemd 258在当前非特权PVE LXC中需要`nesting=1`才能启动网络；安装器同时存在包管理器失败返回码被候选循环吞掉的问题。返回码传播、apt重试和106项自测已通过，CT 9104续跑安装成功，仍待新提交的干净容器复测。
+- [x] 修复 Ubuntu 26.04 安装 curl 包后命令仍不可用的问题，并从干净 Ubuntu 26.04 容器复测。
+- [ ] 修复 Ubuntu 22.04 切换国内源后无法安装Python venv候选的问题，并复测镜像恢复与原地安装。
+  > 当前状态：已修复镜像切换未使包索引缓存失效，以及失败后残留半成品venv无法自愈的问题；CT 9106续跑安装、镜像恢复、原地卸载保护和111项自测均通过，仍待新提交的干净容器复测。
 - [ ] 每个测试 LXC 使用唯一新 ID 和 `wallhub-installer-validation` 标记。
 - [ ] 每次只运行一个 LXC，资源为2 vCPU、2GB内存、8GB磁盘。
 - [x] 验证当前稳定 Debian 和 Debian 12 旧基线。
@@ -545,6 +546,12 @@ restore-mirrors
 | 2026-07-17 | 阶段 10 | Debian 12干净复测资源清理 | 完成 | 精确核对主机名、标记与资源规格后销毁CT 9103；PVE临时日志已删除 | 工作区外保留通过敏感信息复核的日志副本；禁止资源销毁前后均运行 |
 | 2026-07-17 | 阶段 10 | Ubuntu 26.04首次完整安装 | 失败待修复 | 基础工具安装触发后curl命令能力检查失败；退出20 | 源码与服务阶段尚未执行；保留CT 9104做只读诊断并建立独立修复节点 |
 | 2026-07-17 | 阶段 10 | Ubuntu 26.04故障诊断与续跑 | 实现完成待干净复测 | `nesting=1`后networkd、DHCP和DNS恢复；修正版安装退出0；安装器自测106/106、Bash和ShellCheck通过 | 安装器显式传播索引刷新/包安装/候选安装失败并为apt启用3次下载重试；Node 22.22.1与health通过 |
+| 2026-07-17 | 阶段 10 | 包管理器失败传播验证提交 | 完成 | 固定提交`6ca7489`；本地Node/TypeScript/Vite/Python及远端Bash/ShellCheck门禁通过 | 正常推送验证分支，未改写历史；CT 9104精确核对并销毁，禁止资源状态未变 |
+| 2026-07-17 | 阶段 10 | Ubuntu 26.04干净完整复测 | 完成 | 固定提交`6ca7489`安装退出0；独立check、systemd verify、四模块、修复源码标记和health均通过 | Node 22.22.1、npm 9.2.0、Python 3.14.4、Pillow 12.3.0、lz4 4.4.5、.NET SDK 9.0.316/runtime 9.0.18；磁盘占用2.2GB |
+| 2026-07-17 | 阶段 10 | Ubuntu 26.04干净复测资源清理 | 完成 | 安装日志SHA-256`058761b6d0f489feb9e355df79346102b3f3f55dcf2748e8aca9251ea7f69cbb`；精确核对后销毁CT 9105 | PVE临时日志已删除；禁止资源销毁前后均运行 |
+| 2026-07-17 | 阶段 10 | Ubuntu 22.04国内源原地安装 | 失败待修复 | 国内源配置后Python venv两个候选安装失败；退出20 | 服务与npm阶段尚未执行；保留CT 9106做诊断并建立独立修复节点 |
+| 2026-07-17 | 阶段 10 | Ubuntu 22.04镜像索引修复续跑 | 失败待修复 | 强制刷新清华源后venv包可解析；检测到上轮残留venv有Python但无pip并退出20 | 建立受管venv完整性自愈修复，不把半成品当作可复用环境 |
+| 2026-07-17 | 阶段 10 | Ubuntu 22.04故障轮完整续跑 | 实现完成待干净复测 | 国内源原地安装、check、systemd verify、health、镜像原哈希恢复、默认卸载保护均通过；自测111/111且ShellCheck通过 | Node仓库版本不足时回退官方Node 24.18.0；Python 3.10.12；.NET SDK 9.0.316；原地源码与数据保留 |
 
 ## 八、远程测试资源登记
 
@@ -557,7 +564,9 @@ restore-mirrors
 | PVE | CT 9101 / Debian 13 干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭；完整安装与独立检查通过后清理 |
 | PVE | CT 9102 / Debian 12 旧基线故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭；完成兼容修复与维护生命周期验证后清理 |
 | PVE | CT 9103 / Debian 12 干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；固定验证提交`d6a78f8` |
-| PVE | CT 9104 / Ubuntu 26.04 LTS故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；诊断确认当前PVE组合需`nesting=1` |
+| PVE | CT 9104 / Ubuntu 26.04 LTS故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；诊断确认当前PVE组合需`nesting=1` |
+| PVE | CT 9105 / Ubuntu 26.04 LTS干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、`nesting=1`；固定提交`6ca7489` |
+| PVE | CT 9106 / Ubuntu 22.04旧基线 | 否 | 是 | `wallhub-installer-validation` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；国内源原地安装 |
 | Termux | 原生环境 | 是 | 否 | - | 不删除 | 只清理本次WallHub安装内容 |
 | Termux Proot | 待填写 | 待检查 | 待检查 | `wallhub-installer-validation` | 待填写 | 不删除测试前已有Proot |
 

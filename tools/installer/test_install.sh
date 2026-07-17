@@ -312,6 +312,36 @@ if (
 fi
 pass "package candidate install failure propagates"
 
+partial_toolchain="$TEST_TMP/partial-python-toolchain"
+fake_system_python="$TEST_TMP/fake-system-python"
+healthy_venv_python="$TEST_TMP/healthy-venv-python"
+mkdir -p "$partial_toolchain/python-venv/bin"
+printf '#!/bin/sh\nexit 1\n' >"$partial_toolchain/python-venv/bin/python"
+printf '#!/bin/sh\nexit 0\n' >"$fake_system_python"
+cat >"$healthy_venv_python" <<'SHIM'
+#!/bin/sh
+[ "$1" = -m ] && [ "$2" = pip ]
+SHIM
+chmod 700 "$partial_toolchain/python-venv/bin/python" "$fake_system_python" "$healthy_venv_python"
+(
+  TOOLCHAIN_DIR="$partial_toolchain"; DRY_RUN=0; OS_FAMILY=debian; LOG_FILE="$TEST_TMP/partial-python.log"
+  find_python() { printf '%s\n' "$fake_system_python"; }
+  as_root() { command "$@"; }
+  as_root_quiet() {
+    if [[ "$1" == "$fake_system_python" && "$2" == -m && "$3" == venv ]]; then
+      local target="${*: -1}"
+      mkdir -p "$target/bin"
+      cp "$healthy_venv_python" "$target/bin/python"
+      chmod 700 "$target/bin/python"
+      return 0
+    fi
+    command "$@"
+  }
+  ensure_python_runtime
+  "$PYTHON_BIN" -m pip --version
+) || fail "incomplete Python venv was not rebuilt"
+pass "incomplete Python venv is rebuilt"
+
 delegate_log="$TEST_TMP/delegate.log"
 (
   export PATH="$shim_dir:$PATH" WALLHUB_SHIM_LOG="$shim_log"
@@ -474,6 +504,21 @@ restore_mirrors_internal safe
 [[ ! -e "$owned_target" ]] || fail "installer-owned mirror file restoration"
 pass "restore removes installer-created mirror file"
 
+refresh_marker="$TEST_TMP/mirror-refresh-state"
+(
+  TEMP_DIR="$TEST_TMP/refresh-success-temp"; CONFIG_DIR="$TEST_TMP/refresh-success-config"
+  MIRROR_MANIFEST="$CONFIG_DIR/mirrors/manifest.tsv"; LOG_FILE="$TEST_TMP/refresh-success.log"
+  ENVIRONMENT=proot; OS_FAMILY=unknown; MIRROR=china; DRY_RUN=0; ROOT_PREFIX=(); PACKAGE_INDEX_UPDATED=1
+  mkdir -p "$TEMP_DIR" "$CONFIG_DIR"; : >"$LOG_FILE"
+  pkg_refresh() {
+    printf '%s\n' "$PACKAGE_INDEX_UPDATED" >"$refresh_marker"
+    [[ "$PACKAGE_INDEX_UPDATED" == 0 ]]
+  }
+  configure_china_mirrors
+)
+assert_eq 0 "$(tr -d '\n' <"$refresh_marker")" "mirror switch invalidates cached package metadata"
+pass "mirror switch refreshes package metadata"
+
 refresh_config="$TEST_TMP/refresh-config"; refresh_temp="$TEST_TMP/refresh-temp"
 mkdir -p "$refresh_config" "$refresh_temp"
 set +e
@@ -529,6 +574,17 @@ mkdir -p "$uninstall_code" "$uninstall_data" "$uninstall_config"; touch "$uninst
 )
 [[ ! -e "$uninstall_code" && -f "$uninstall_data/user-setting" && -d "$uninstall_config" ]] || fail "default uninstall preservation"
 pass "default uninstall removes code and preserves user data/settings"
+
+in_place_root="$TEST_TMP/uninstall-in-place"; in_place_code="$in_place_root/code"; in_place_data="$in_place_root/data"; in_place_config="$in_place_root/wallhub-installer"
+mkdir -p "$in_place_code" "$in_place_data" "$in_place_config"; printf 'source\n' >"$in_place_code/server.js"
+(
+  INSTALL_DIR="$in_place_code"; DATA_DIR="$in_place_data"; CONFIG_DIR="$in_place_config"; LAYOUT=in-place; PURGE=0; LOG_FILE="$TEST_TMP/uninstall-in-place.log"; ENVIRONMENT=proot; ROOT_PREFIX=()
+  load_state() { :; }; configure_privilege() { :; }; stop_and_remove_service() { :; }
+  run_uninstall
+)
+[[ -f "$in_place_code/server.js" && -d "$in_place_data" && -d "$in_place_config" ]] || fail "in-place uninstall preservation"
+assert_file_contains "$TEST_TMP/uninstall-in-place.log" 'in-place source was preserved' "in-place uninstall message"
+pass "in-place uninstall preserves source and reports it accurately"
 
 purge_root="$TEST_TMP/uninstall-purge"; purge_code="$purge_root/code"; purge_data="$purge_root/data"; purge_config="$purge_root/wallhub-installer"
 mkdir -p "$purge_code" "$purge_data" "$purge_config" "$purge_root/unrelated"; touch "$purge_code/.wallhub-installer-managed"; printf 'keep\n' >"$purge_root/unrelated/file"
