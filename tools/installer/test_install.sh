@@ -328,6 +328,21 @@ printf 'test-ca\n' >"$proot_bootstrap_ca"
 )
 assert_file_contains "$proot_apt_log" "Acquire::https::CaInfo=$proot_bootstrap_ca" "Proot apt uses the read-only bootstrap CA"
 assert_file_not_contains "$proot_apt_log" 'Acquire::ForceIPv4=true' "Proot apt preserves the detected IPv4 and IPv6 routes"
+assert_file_contains "$proot_apt_log" 'Acquire::Retries=1' "Proot apt uses a short initial dual-stack attempt"
+
+proot_apt_fallback_log="$TEST_TMP/proot-apt-fallback.log"
+(
+  ENVIRONMENT=proot; DRY_RUN=0; LOG_FILE="$TEST_TMP/proot-apt-fallback-installer.log"
+  : >"$LOG_FILE"
+  as_root() {
+    printf '%q ' "$@" >>"$proot_apt_fallback_log"; printf '\n' >>"$proot_apt_fallback_log"
+    [[ "$*" == *Acquire::ForceIPv4=true* ]]
+  }
+  apt_get update
+)
+assert_eq 2 "$(wc -l <"$proot_apt_fallback_log" | tr -d ' ')" "Proot apt retries a failed dual-stack command once"
+assert_file_contains "$proot_apt_fallback_log" 'Acquire::Retries=1' "Proot apt attempts the detected dual-stack route first"
+assert_file_contains "$proot_apt_fallback_log" 'Acquire::Retries=3 -o Acquire::ForceIPv4=true' "Proot apt falls back to IPv4 with the full retry budget"
 
 pacman_sandbox_log="$TEST_TMP/pacman-sandbox.log"
 (
@@ -458,6 +473,7 @@ delegate_log="$TEST_TMP/delegate.log"
 assert_file_contains "$delegate_log" 'proot-distro login --redirect-ports --isolated --bind' "Termux delegates through an isolated Proot session"
 assert_file_not_contains "$delegate_log" 'proot-distro install ubuntu' "current Proot storage layout is recognized"
 assert_file_contains "$delegate_log" '/usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "Proot delegation starts with an isolated runtime environment"
+assert_file_contains "$delegate_log" 'WALLHUB_PROOT_HOST_MANAGED=1' "Proot delegation assigns service ownership to the host controller"
 assert_file_contains "$delegate_log" '/bin/bash -s -- repair --target proot' "Proot delegation uses the container Bash"
 assert_file_not_contains "$delegate_log" "$PREFIX/bin" "Proot runtime command does not contain the Termux executable path"
 assert_file_contains "$delegate_log" '--isolated --bind' "Proot delegation disables implicit host filesystem bindings"
@@ -852,6 +868,20 @@ pass "dirty in-place update leaves the running service untouched"
 ) || fail "repair capability-first skip"
 pass "repair skips dependencies that already pass capability probes"
 
+host_managed_health_marker="$TEST_TMP/host-managed-repair-health"
+(
+  ENVIRONMENT=proot; WALLHUB_PROOT_HOST_MANAGED=1; LOG_FILE="$TEST_TMP/host-managed-repair.log"
+  : >"$LOG_FILE"
+  load_state() { :; }; configure_privilege() { :; }; configure_package_sources() { :; }
+  ensure_base_tools() { :; }; ensure_python_runtime() { :; }; ensure_node() { :; }; ensure_dotnet() { :; }
+  repair_node_dependencies() { :; }; prepare_runtime_layout() { :; }; repair_python_modules() { :; }
+  write_runtime_env() { :; }; install_service() { :; }; write_state() { :; }
+  health_check() { touch "$host_managed_health_marker"; return 1; }
+  run_repair
+)
+[[ ! -e "$host_managed_health_marker" ]] || fail "host-managed repair ran an inner health check"
+pass "host-managed Proot repair defers health verification to the detached controller"
+
 uninstall_root="$TEST_TMP/uninstall-default"; uninstall_code="$uninstall_root/code"; uninstall_data="$uninstall_root/data"; uninstall_config="$uninstall_root/wallhub-installer"
 mkdir -p "$uninstall_code" "$uninstall_data" "$uninstall_config"; touch "$uninstall_code/.wallhub-installer-managed"; printf 'setting\n' >"$uninstall_data/user-setting"
 (
@@ -1020,6 +1050,18 @@ pass "Proot PID manager rotates oversized log"
 "$CONFIG_DIR/wallhubctl" stop >/dev/null
 if "$CONFIG_DIR/wallhubctl" status >/dev/null 2>&1; then fail "Proot PID manager stop"; fi
 pass "Proot PID manager stops process and removes stale PID"
+
+host_managed_config="$TEST_TMP/proot-host-managed/config"
+host_managed_data="$TEST_TMP/proot-host-managed/data"
+TEMP_DIR="$TEST_TMP/proot-host-managed/temp"; CONFIG_DIR="$host_managed_config"; DATA_DIR="$host_managed_data"
+mkdir -p "$TEMP_DIR" "$CONFIG_DIR" "$DATA_DIR"
+printf 'PORT=3090\n' >"$CONFIG_DIR/runtime.env"
+WALLHUB_PROOT_HOST_MANAGED=1; COMMAND=repair; ENVIRONMENT=proot
+install_proot_manager
+bash -n "$CONFIG_DIR/wallhubctl"
+[[ ! -e "$DATA_DIR/wallhub.pid" ]] || fail "host-managed Proot manager started inside the delegated login"
+pass "host-managed Proot install defers startup to the detached controller"
+unset WALLHUB_PROOT_HOST_MANAGED
 
 health_shims="$TEST_TMP/health-shims"; mkdir -p "$health_shims"
 cat >"$health_shims/curl" <<'SHIM'

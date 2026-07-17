@@ -568,8 +568,18 @@ pkg_refresh() {
 }
 
 apt_get() {
-  local -a options=(-o Acquire::Retries=3)
+  local retries=3
+  [[ "$ENVIRONMENT" == "proot" ]] && retries=1
+  local -a options=(-o "Acquire::Retries=$retries")
   if [[ "$ENVIRONMENT" == "proot" && -r "${WALLHUB_PROOT_BOOTSTRAP_CA:-}" ]]; then
+    options+=(-o "Acquire::https::CaInfo=$WALLHUB_PROOT_BOOTSTRAP_CA")
+  fi
+  local code
+  if as_root env DEBIAN_FRONTEND=noninteractive apt-get "${options[@]}" "$@"; then return 0; else code=$?; fi
+  [[ "$ENVIRONMENT" == "proot" ]] || return "$code"
+  log WARN "Proot apt failed on the detected dual-stack route; retrying this command over IPv4"
+  options=(-o Acquire::Retries=3 -o Acquire::ForceIPv4=true)
+  if [[ -r "${WALLHUB_PROOT_BOOTSTRAP_CA:-}" ]]; then
     options+=(-o "Acquire::https::CaInfo=$WALLHUB_PROOT_BOOTSTRAP_CA")
   fi
   as_root env DEBIAN_FRONTEND=noninteractive apt-get "${options[@]}" "$@"
@@ -1583,6 +1593,10 @@ EOF
   if ((was_running)); then run sv restart "$service_dir"; else run sv up "$service_dir"; fi
 }
 
+proot_service_is_host_managed() {
+  [[ "$ENVIRONMENT" == "proot" && "${WALLHUB_PROOT_HOST_MANAGED:-0}" == 1 ]]
+}
+
 wait_for_termux_service_supervision() {
   local service_dir="$1" _
   if ((DRY_RUN)); then log DRYRUN "wait for runsv supervision: $service_dir"; return 0; fi
@@ -1656,7 +1670,11 @@ EOF
   } >"$manager"
   run cp "$manager" "$target"
   run chmod 700 "$target"
-  run "$target" start
+  if proot_service_is_host_managed && [[ "$COMMAND" != "update" ]]; then
+    log INFO "Proot service startup is delegated to the detached host controller"
+  else
+    run "$target" start
+  fi
 }
 
 install_service() {
@@ -1735,8 +1753,12 @@ run_install() {
   write_runtime_env
   install_service
   write_state
-  health_check || die "$EXIT_HEALTH" "WallHub /health did not become ready"
-  log INFO "$(message install_ok): http://127.0.0.1:$DEFAULT_PORT"
+  if proot_service_is_host_managed; then
+    log INFO "WallHub health verification is delegated to the detached host controller"
+  else
+    health_check || die "$EXIT_HEALTH" "WallHub /health did not become ready"
+    log INFO "$(message install_ok): http://127.0.0.1:$DEFAULT_PORT"
+  fi
   log INFO "Steam login, Steam Guard, real downloads and streaming must be validated manually in the UI."
 }
 
@@ -1775,7 +1797,11 @@ run_repair() {
   write_runtime_env
   install_service
   write_state
-  health_check || die "$EXIT_HEALTH" "Repair completed but /health failed"
+  if proot_service_is_host_managed; then
+    log INFO "Repair health verification is delegated to the detached host controller"
+  else
+    health_check || die "$EXIT_HEALTH" "Repair completed but /health failed"
+  fi
 }
 
 ensure_clean_in_place() {
@@ -2198,6 +2224,7 @@ delegate_to_proot() {
     HOME=/root USER=root LOGNAME=root SHELL=/bin/bash
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     LANG=C.UTF-8 LC_ALL=C.UTF-8
+    WALLHUB_PROOT_HOST_MANAGED=1
   )
   local guest_ca=/run/wallhub-bootstrap-ca.pem
   local -a proot_options=(--redirect-ports --isolated --bind "$PROOT_RESOLVER_FILE:/etc/resolv.conf")
@@ -2219,6 +2246,7 @@ delegate_to_proot() {
   case "$COMMAND" in
     install|repair|update)
       run "$PROOT_HOST_CTL" start || die "$EXIT_SERVICE" "WallHub detached Proot service failed to start"
+      [[ "$COMMAND" != "install" ]] || log INFO "$(message install_ok): http://127.0.0.1:$DEFAULT_PORT"
       log INFO "Proot service controls: $PROOT_HOST_CTL {start|stop|restart|status|logs}"
       ;;
     uninstall)

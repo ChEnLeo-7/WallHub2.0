@@ -430,9 +430,11 @@ restore-mirrors
 - [x] 修复通用 `run()` 进程替换包裹 `proot-distro login` 时命令退出后日志管道永久等待的问题。
 - [x] 为最小包索引刷新顺序和Proot委派退出状态完成候选修复及回归门禁。
 - [x] 修复 Android/软路由 Fake-IP 场景下 Proot glibc 与宿主解析、代理接管路径不一致的问题；先验证 A/AAAA 实际可达性，再决定受管解析、地址族策略且不永久覆盖用户 rootfs 配置。
+- [x] 修复 Fake IPv6 偶发可解析但 apt TLS 不可达的问题，保留首次双栈尝试且只在实际失败后对当前 apt 命令回退 IPv4。
 - [x] 修复Proot内部`nohup`服务随委派登录会话结束被清理的问题，使用可登记、可停止的detached Proot会话保持WallHub运行。
+- [x] 修复宿主委派的install/repair在普通login内重复启动临时服务并执行无持久意义health的问题，由detached宿主控制器承担唯一启动和最终health。
 - [x] 修复 Android Proot 中官方 glibc `.NET 9` 因 GC 自动堆初始化失败而被误判为 SDK/Runtime 不可用的问题，仅为安装器能力探测设置与应用现有兼容层一致的受限堆参数。
-- [ ] 修复后先跑本地门禁，再更新验证分支。
+- [x] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
 - [ ] 推送 main，不 force push、不改写历史。
@@ -667,6 +669,13 @@ restore-mirrors
 | 2026-07-17 | 阶段 11 | Debian Proot运行时隔离与MPKG能力 | 完成 | Node 20.19.2、Python 3.13.5、.NET SDK 9.0.316/Runtime 9.0.18均由glibc加载且路径不含Termux前缀 | Pillow、LZ4、etcpak、texture2ddecoder真实API均通过；`compress_etc2_rgba`实际生成16字节，独立探测退出后detached会话仍为1 |
 | 2026-07-17 | 阶段 11/12 | Proot宿主控制器生命周期 | 完成 | stop后health不可达、会话0且DNS停止；重复stop成功；过期PID自愈；start/restart均产生唯一新会话并通过health | `logs`流读取4,103字节后受控结束，附加日志会话退出后仍仅保留1个服务会话；最终controller status与health正常 |
 | 2026-07-17 | 阶段 11/12 | Debian Proot维护与项目门禁 | 完成 | 独立check退出0；Node 256/256、Python 17/17、py_compile、安装器165/165、TypeScript、Vite 2031模块、ShellCheck 0.11.0均通过 | 安装日志SHA-256`fcfbc6bd4cdbd6a8a6c00402d922fbb49901cf7b56e53e283ea11b727666f018`；安装器测试`1df57759f5f23e86d690715d5b9be0710baad3378fdabade7aa9320888ad4db4`；ShellCheck`94154fe87f7319ff4f93622cb326c401c6367490b8a794aa310b8df0ce2bf9ea`；七份日志敏感匹配0 |
+| 2026-07-17 | 阶段 12 | Termux Proot修复验证提交 | 完成 | 固定提交`e16c91d`；本地及Android ARM64全门禁通过 | 正常推送`installer-validation`，未改写历史；临时认证helper未跟踪且未进入提交 |
+| 2026-07-17 | 阶段 11/12 | Proot repair双栈apt偶发故障 | 失败待修复 | 完整安装后执行repair，三个官方HTTPS索引均解析到Fake IPv6并在TLS握手提前关闭；apt按Error-Mode退出，repair返回20 | 事务已恢复原始源，外层失败恢复分支重新建立detached会话且health正常；设计为双栈短尝试失败后仅对该apt命令回退IPv4，不永久改变用户配置 |
+| 2026-07-17 | 阶段 11/12 | Proot repair重复临时服务health故障 | 失败待修复 | 自适应apt回退后Node、.NET、npm和Python均通过，但inner repair启动临时PID服务后health等待60秒失败 | 最小复现确认普通login内manager可健康，但login退出后后台进程必然清理；宿主失败恢复再次建立唯一detached会话且health正常，应消除inner重复启动/health |
+| 2026-07-17 | 阶段 12 | Proot自适应apt与宿主唯一服务候选 | 完成 | 真机安装器测试172/172；双栈成功不降级、失败仅当前apt命令IPv4重试、host-managed install/repair不启动inner临时服务均有断言 | repair退出0，inner明确延后startup/health，外层建立唯一会话且health正常；安装器不写apt地址族配置，用户其他程序仍保留A/AAAA |
+| 2026-07-17 | 阶段 11 | Debian Proot repair与update维护 | 完成 | repair与同分支update均退出0；update后`/opt/wallhub/install.sh`SHA-256与固定提交`e16c91d`一致 | update保留inner health及源码回滚语义，外层最终重新建立唯一detached会话；repair日志SHA-256`0493b1bfca0fd3ea02fe47ab1f2cadd14e00d5a61c40bd6530df052a396ebf59` |
+| 2026-07-17 | 阶段 11 | Debian Proot默认卸载与连续purge | 完成 | 默认卸载退出0并仅删除代码/服务，数据与状态保留；连续purge退出0并恢复原始HTTP源、删除代码/数据/配置/宿主控制器 | 两步结束后会话与DNS均为0；默认卸载日志`5f9a1a8db42d5a95b79063a8a1715f00158bd3d6aa1bb33ffcadf443196cc6c5`，purge日志`ac402bf63298a7ff996755eb7a7165653a9715c8ee388cc43c76687c4ae08f09` |
+| 2026-07-17 | 阶段 12 | Proot维护修复最终候选门禁 | 完成 | 安装器172/172；ShellCheck 0.11.0零诊断；前序Node 256/256、Python 17/17、TypeScript及Vite门禁保持通过 | 安装器测试日志`175eb98e13a6d99b69ea11965ab6290dd6d95643fad33716b332616d8eb830db`；ShellCheck日志`e5ce78c275d894786132a97f16d877cd42729eb0d9847dc832d377b0af1e9f13`；六份日志敏感匹配0 |
 
 ## 八、远程测试资源登记
 
