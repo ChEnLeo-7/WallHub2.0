@@ -66,6 +66,9 @@ UPDATE_IN_PROGRESS=0
 UPDATE_SERVICE_STOPPED=0
 GOOGLE_REACHABLE="unknown"
 PACKAGE_INDEX_UPDATED=0
+PACMAN_DISABLE_SANDBOX=0
+PACMAN_KEYRING_READY=0
+PACMAN_KEYRING_SOURCE_DIR="${WALLHUB_PACMAN_KEYRING_SOURCE_DIR:-/usr/share/pacman/keyrings}"
 
 declare -a ROOT_PREFIX=()
 declare -a TEMP_PATHS=()
@@ -505,13 +508,54 @@ attach_persistent_log() {
   LOG_FILE="$persistent_log"
 }
 
+pacman_supports_disable_sandbox() {
+  pacman -Sh 2>&1 | grep -F -- '--disable-sandbox' >/dev/null
+}
+
+pacman_run() {
+  local -a compatibility_args=()
+  ((PACMAN_DISABLE_SANDBOX)) && compatibility_args+=(--disable-sandbox)
+  as_root pacman "$@" "${compatibility_args[@]}"
+}
+
+ensure_pacman_keyring() {
+  ((PACMAN_KEYRING_READY)) && return 0
+  if ((DRY_RUN)); then PACMAN_KEYRING_READY=1; return 0; fi
+  if as_root_quiet pacman-key --list-keys; then PACMAN_KEYRING_READY=1; return 0; fi
+  command -v pacman-key >/dev/null 2>&1 || return 1
+  local keyring_file name
+  local -a keyrings=()
+  for keyring_file in "$PACMAN_KEYRING_SOURCE_DIR"/*-trusted; do
+    [[ -f "$keyring_file" ]] || continue
+    name="${keyring_file##*/}"
+    keyrings+=("${name%-trusted}")
+  done
+  ((${#keyrings[@]})) || return 1
+  log WARN "pacman keyring is not initialized; initializing installed distribution keyrings"
+  as_root pacman-key --init || return $?
+  as_root pacman-key --populate "${keyrings[@]}" || return $?
+  as_root_quiet pacman-key --list-keys || return $?
+  PACMAN_KEYRING_READY=1
+}
+
 pkg_refresh() {
   ((PACKAGE_INDEX_UPDATED)) && return 0
   stage "package-index"
   case "$PKG_MANAGER" in
     apt) as_root env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 update ;;
     dnf) as_root dnf -y makecache ;;
-    pacman) as_root pacman -Sy --noconfirm ;;
+    pacman)
+      ensure_pacman_keyring || return $?
+      if pacman_run -Syu --noconfirm; then
+        :
+      elif ((PACMAN_DISABLE_SANDBOX == 0)) && pacman_supports_disable_sandbox; then
+        log WARN "pacman sandbox is unavailable; retrying with its supported compatibility flag"
+        PACMAN_DISABLE_SANDBOX=1
+        pacman_run -Syu --noconfirm
+      else
+        return $?
+      fi
+      ;;
     zypper) as_root zypper --non-interactive refresh ;;
     pkg) run pkg update -y ;;
   esac || return $?
@@ -535,7 +579,7 @@ pkg_install() {
   case "$PKG_MANAGER" in
     apt) as_root env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends "$@" ;;
     dnf) as_root dnf install -y "$@" ;;
-    pacman) as_root pacman -S --needed --noconfirm "$@" ;;
+    pacman) ensure_pacman_keyring && pacman_run -S --needed --noconfirm "$@" ;;
     zypper) as_root zypper --non-interactive install -y "$@" ;;
     pkg) run pkg install -y "$@" ;;
   esac

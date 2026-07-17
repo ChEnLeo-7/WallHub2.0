@@ -279,6 +279,7 @@ assert_eq direct-ok "$(tr -d '\n' <"$TEST_TMP/download.out")" "direct GitHub fal
   as_root() { command "$@"; }
   run() { command "$@"; }
   DRY_RUN=0
+  PACMAN_KEYRING_READY=1
   for manager in apt dnf pacman zypper pkg; do
     PKG_MANAGER="$manager"; PACKAGE_INDEX_UPDATED=0
     pkg_refresh
@@ -287,10 +288,60 @@ assert_eq direct-ok "$(tr -d '\n' <"$TEST_TMP/download.out")" "direct GitHub fal
 )
 assert_file_contains "$shim_log" 'apt-get -o Acquire::Retries=3 update' "apt command shim"
 assert_file_contains "$shim_log" 'dnf -y makecache' "dnf command shim"
-assert_file_contains "$shim_log" 'pacman -Sy --noconfirm' "pacman command shim"
+assert_file_contains "$shim_log" 'pacman -Syu --noconfirm' "pacman command shim"
 assert_file_contains "$shim_log" 'zypper --non-interactive refresh' "zypper command shim"
 assert_file_contains "$shim_log" 'pkg update -y' "Termux pkg command shim"
 pass "uname command shim drives arm64 detection"
+
+pacman_sandbox_log="$TEST_TMP/pacman-sandbox.log"
+(
+  PKG_MANAGER=pacman; PACKAGE_INDEX_UPDATED=0; PACMAN_DISABLE_SANDBOX=0; PACMAN_KEYRING_READY=1; DRY_RUN=0
+  LOG_FILE="$TEST_TMP/pacman-sandbox-installer.log"; : >"$LOG_FILE"
+  pacman() {
+    printf '%q ' "$@" >>"$pacman_sandbox_log"; printf '\n' >>"$pacman_sandbox_log"
+    if [[ "$*" == "-Sh" ]]; then
+      printf '%s\n' 'pacman options:' '  --disable-sandbox' '  --verbose' '  --version'
+      return 0
+    fi
+    [[ "$*" == *--disable-sandbox* ]]
+  }
+  as_root() { "$@"; }
+  pkg_refresh
+  pkg_install wallhub-test-package
+)
+assert_file_contains "$pacman_sandbox_log" '-Syu --noconfirm' "pacman attempts its default sandbox first"
+assert_file_contains "$pacman_sandbox_log" '-Syu --noconfirm --disable-sandbox' "pacman upgrade retries without an unavailable sandbox"
+assert_file_contains "$pacman_sandbox_log" '-S --needed --noconfirm wallhub-test-package --disable-sandbox' "pacman install retains the compatibility flag"
+pass "pacman sandbox compatibility fallback"
+
+pacman_keyring_dir="$TEST_TMP/pacman-keyrings"
+pacman_keyring_log="$TEST_TMP/pacman-keyring.log"
+pacman_keyring_ready_marker="$TEST_TMP/pacman-keyring.ready"
+mkdir -p "$pacman_keyring_dir"
+: >"$pacman_keyring_dir/archlinux-trusted"
+: >"$pacman_keyring_dir/vendor-trusted"
+(
+  PACMAN_KEYRING_READY=0; PACMAN_KEYRING_SOURCE_DIR="$pacman_keyring_dir"; DRY_RUN=0
+  LOG_FILE="$TEST_TMP/pacman-keyring-installer.log"; : >"$LOG_FILE"
+  # Invoked indirectly through the as_root wrappers used by the installer.
+  # shellcheck disable=SC2329
+  pacman-key() {
+    printf '%q ' "$@" >>"$pacman_keyring_log"; printf '\n' >>"$pacman_keyring_log"
+    case "$1" in
+      --list-keys) [[ -f "$pacman_keyring_ready_marker" ]] ;;
+      --init) : ;;
+      --populate) touch "$pacman_keyring_ready_marker" ;;
+      *) return 1 ;;
+    esac
+  }
+  as_root() { "$@"; }
+  as_root_quiet() { "$@"; }
+  ensure_pacman_keyring
+  ((PACMAN_KEYRING_READY == 1))
+)
+assert_file_contains "$pacman_keyring_log" '--init' "missing pacman keyring is initialized"
+assert_file_contains "$pacman_keyring_log" '--populate archlinux vendor' "all installed pacman keyrings are populated"
+pass "pacman keyring initialization fallback"
 
 if (
   PKG_MANAGER=apt; PACKAGE_INDEX_UPDATED=0; DRY_RUN=0; LOG_FILE="$TEST_TMP/package-refresh-failure.log"

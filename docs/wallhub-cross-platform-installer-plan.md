@@ -371,14 +371,15 @@ restore-mirrors
 - [x] 修复 Debian 12 完整安装后服务未通过 `/health` 的问题，并从干净 Debian 12 容器复测。
 - [x] 修复 Ubuntu 26.04 安装 curl 包后命令仍不可用的问题，并从干净 Ubuntu 26.04 容器复测。
 - [x] 修复 Ubuntu 22.04 切换国内源后无法安装Python venv候选的问题，并复测镜像恢复与原地安装。
-- [ ] 修复 Rocky Linux 9 国内源repo重写失败，并从干净容器复测。
-  > 当前状态：已修复DNF repo中`mirrorlist|metalink`表达式与sed分隔符冲突；CT 9109自测114/114、ShellCheck和真实repo失败恢复验证均通过，仍待新提交的干净容器复测。
+- [x] 修复 Rocky Linux 9 国内源repo重写失败，并从干净容器复测。
+- [ ] 修复 Arch Linux pacman 7 沙箱、空keyring及滚动发行版部分升级问题，并从干净容器复测。
+  > 当前状态：已实现沙箱兼容参数回退、标准keyring初始化和完整`pacman -Syu`；CT 9112续跑安装、121项自测及完整项目门禁通过，仍待新提交的干净容器复测。
 - [ ] 每个测试 LXC 使用唯一新 ID 和 `wallhub-installer-validation` 标记。
 - [ ] 每次只运行一个 LXC，资源为2 vCPU、2GB内存、8GB磁盘。
 - [x] 验证当前稳定 Debian 和 Debian 12 旧基线。
 - [x] 验证当前 Ubuntu LTS 和 Ubuntu 22.04 旧基线。
 - [x] 验证当前 Fedora。
-- [ ] 验证当前 RHEL兼容发行版和9系旧基线。
+- [x] 验证当前 RHEL兼容发行版和9系旧基线。
 - [ ] 验证当前 Arch。
 - [ ] 验证当前 openSUSE Leap。
 - [ ] 覆盖官方源与国内源。
@@ -560,6 +561,20 @@ restore-mirrors
 | 2026-07-17 | 阶段 10 | Fedora 43资源清理 | 完成 | 安装日志SHA-256`f7486c2097043303341a49b74563bd07b2f5d5208ee64d6d41f39f49b1a62aea`；精确核对并销毁CT 9108 | PVE临时日志已删除；禁止资源状态未变 |
 | 2026-07-17 | 阶段 10 | Rocky Linux 9国内源安装 | 失败待修复 | repo重写阶段sed返回1；退出20 | 依赖与服务阶段尚未执行；保留CT 9109诊断并建立独立修复节点 |
 | 2026-07-17 | 阶段 10 | Rocky Linux 9 DNF repo修复 | 实现完成待干净复测 | 修复sed分隔符冲突；安装器自测114/114、Bash语法和ShellCheck 0.10.0通过；真实国内源切换进入DNF后按预期因上游404退出20 | 失败恢复前后全部repo哈希一致；既有systemd服务与health保持正常；清华Rocky根目录当前不可用，正式完整复测改用官方源 |
+| 2026-07-17 | 阶段 10 | Rocky Linux 9故障发现资源清理 | 完成 | 固定修复提交`a5b9d9a`已推送；安装日志SHA-256`bec2fce25d336e637ee189277169ecd605ebc25af3d7f41e4775b477b1cbf363`；精确核对并销毁CT 9109 | 三份证据日志保存在工作区外且敏感信息扫描零命中；禁止资源状态未变 |
+| 2026-07-17 | 阶段 10 | 创建Rocky Linux 9干净复测容器 | 完成 | CT 9110；Rocky Linux 9.4官方模板；2 vCPU、2GB、8GB、0 swap、onboot关闭、非特权 | 创建前确认ID在VM/LXC中均未占用；DNS能力通过；禁止资源创建前后均运行 |
+| 2026-07-17 | 阶段 10 | Rocky Linux 9干净完整复测 | 完成 | 固定提交`a5b9d9a`官方源安装退出0；独立check、systemd verify、SC302三包、四模块、health均通过；安装日志SHA-256`1270f8e0c1c0cf8049b6cb409e33059eb3c8ba7602968d592eda0b1dd0a6d6b9` | Node 16.20.2/npm 8.19.4测试59/59；Python 3.9.18测试17/17；安装器自测114/114；Pillow 11.3.0、lz4 4.4.5、.NET SDK 9.0.118/runtime 9.0.17；磁盘占用1.7GB |
+| 2026-07-17 | 阶段 10 | Rocky Linux 9干净复测资源清理 | 完成 | 五份证据日志保存在工作区外且敏感信息扫描零命中；精确核对并销毁CT 9110 | PVE临时日志已删除；禁止资源状态未变 |
+| 2026-07-17 | 阶段 10 | AlmaLinux 10测试模板准备 | 完成 | Linux Containers 2026-07-16 x86_64 rootfs；签名指纹`E7FB0CAEC8173D669066514CBAEFF88C22F6E216`；SHA-256`929eb95776b8a11b2d3e166f74026bd7f555fd583c710be695254f90f24b69af` | PVE官方目录尚无RHEL兼容10系模板；使用真实AlmaLinux 10而非Fedora替代；测试完成后删除模板 |
+| 2026-07-17 | 阶段 10 | AlmaLinux 10首次容器创建 | 失败待调整 | PVE 8.4的CentOS setup插件拒绝尚未识别的AlmaLinux 10.2；创建退出255 | 配置、VMID和磁盘卷均未残留；改用PVE unmanaged模式并显式核对网络/systemd，不修改其他资源 |
+| 2026-07-17 | 阶段 10 | 创建AlmaLinux 10 unmanaged容器 | 完成 | CT 9111；AlmaLinux 10.2；2 vCPU、2GB、8GB、0 swap、onboot关闭、非特权；DHCP、DNS、DNF通过 | PVE跳过不支持的发行版setup；systemd初始状态degraded，安装前核对失败单元；禁止资源状态未变 |
+| 2026-07-17 | 阶段 10 | AlmaLinux 10 LXC宿主适配 | 完成 | 仅屏蔽非特权LXC不可自行挂载的mqueue/configfs/debugfs三个静态mount单元；校正容器主机名 | systemd回到running、失败单元0、DNF makecache通过；不涉及WallHub源码或禁止资源 |
+| 2026-07-17 | 阶段 10 | AlmaLinux 10干净完整验证 | 完成 | 固定提交`a5b9d9a`官方源安装退出0；独立check、systemd verify、SC302三包、四模块、源码哈希和health均通过；安装日志SHA-256`f6c444f61b34c4d83b5e0813fc29b74095198e87c48447741cd170e8440747a8` | Node 22.23.1/npm 10.9.8测试256/256；Python 3.12.13测试17/17；安装器自测114/114；Pillow 12.3.0、lz4 4.4.5、.NET SDK 9.0.118/runtime 9.0.17；磁盘占用1.6GB |
+| 2026-07-17 | 阶段 10 | AlmaLinux 10资源清理 | 完成 | 五份证据日志保存在工作区外且敏感信息扫描零命中；精确核对并销毁CT 9111；按原SHA-256核对后删除测试模板 | PVE临时日志、容器和本次模板均无残留；禁止资源状态未变 |
+| 2026-07-17 | 阶段 10 | 创建Arch Linux验证容器 | 完成 | CT 9112；Arch rolling官方模板；2 vCPU、2GB、8GB、0 swap、onboot关闭、非特权、nesting启用 | systemd、pacman 7.1、IPv4/IPv6和DNS通过；禁止资源创建前后均运行 |
+| 2026-07-17 | 阶段 10 | Arch Linux首次完整安装 | 失败待修复 | pacman 7默认下载沙箱需要内核Landlock，PVE LXC组合不支持；索引刷新失败并退出20 | 保留CT 9112诊断；不修改pacman.conf，设计进程内兼容参数回退 |
+| 2026-07-17 | 阶段 10 | Arch Linux依赖续跑 | 失败待修复 | 沙箱回退生效后发现官方模板未初始化keyring；补齐标准初始化后安装Python时暴露`-Sy`部分升级造成pyexpat ABI不匹配 | 不以补装pip掩盖ABI问题；刷新策略改为先初始化keyring再执行完整`pacman -Syu` |
+| 2026-07-17 | 阶段 10 | Arch Linux修复续跑 | 实现完成待干净复测 | 完整系统升级后Python ABI恢复；隔离安装、check、systemd verify、SC302三包、四模块和health通过 | Node 26.4.0/npm 12.0.1测试256/256；Python 3.14.6测试17/17；安装器121/121；ShellCheck 0.11.0通过；磁盘占用1.9GB |
 
 ## 八、远程测试资源登记
 
@@ -577,7 +592,10 @@ restore-mirrors
 | PVE | CT 9106 / Ubuntu 22.04旧基线故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；完成国内源、venv自愈与原地卸载验证后清理 |
 | PVE | CT 9107 / Ubuntu 22.04旧基线干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；国内源原地安装，固定提交`b5a6f20` |
 | PVE | CT 9108 / Fedora 43 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、`nesting=1`；官方源隔离安装 |
-| PVE | CT 9109 / Rocky Linux 9旧基线 | 否 | 是 | `wallhub-installer-validation` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；国内源隔离安装 |
+| PVE | CT 9109 / Rocky Linux 9旧基线故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；完成DNF repo修复、官方源完整安装和国内源失败恢复验证后清理 |
+| PVE | CT 9110 / Rocky Linux 9旧基线干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；固定验证提交`a5b9d9a` |
+| PVE | CT 9111 / AlmaLinux 10当前RHEL兼容系 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | unmanaged模式；2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；固定验证提交`a5b9d9a`；测试模板已删除 |
+| PVE | CT 9112 / Arch Linux | 否 | 是 | `wallhub-installer-validation` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；PVE官方模板；固定验证提交`a5b9d9a` |
 | Termux | 原生环境 | 是 | 否 | - | 不删除 | 只清理本次WallHub安装内容 |
 | Termux Proot | 待填写 | 待检查 | 待检查 | `wallhub-installer-validation` | 待填写 | 不删除测试前已有Proot |
 
