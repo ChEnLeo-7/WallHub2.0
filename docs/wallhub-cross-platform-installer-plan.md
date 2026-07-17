@@ -405,7 +405,7 @@ restore-mirrors
 - [ ] 验证 Debian Proot ARM64 完整安装和服务健康。
 - [ ] 验证 Ubuntu Proot 参数、镜像和依赖分支；至少完成 dry-run和静态检查。
 - [ ] 验证 Termux runit 与 Proot PID 服务管理。
-- [ ] 验证 Python四模块和public复用/重建路径。
+- [x] 验证 Python四模块和public复用/重建路径。
 - [ ] 只清理本次创建的安装目录或 Proot；不删除测试前已存在的环境和用户数据。
 - [ ] 恢复本脚本修改的镜像配置并核对测试前后差异。
 
@@ -418,7 +418,10 @@ restore-mirrors
 - [x] 修复 Termux 已自动选择任意第三方镜像时 `--mirror china` 未真正切换清华源的问题，并完成备份恢复真机复测。
 - [x] 修复默认卸载后继续 purge 时缺失 runit 服务噪声与持久日志重建配置目录的竞态，并完成干净序列复测。
 - [x] 修复长期运行的 `runsvdir` 尚未为重建服务创建 supervise 通道时安装立即失败的问题，并完成卸载后重装复测。
-- [ ] 修复重复 install/repair 对已运行 runit 服务只执行 `sv up`、未重启加载新源码和环境的问题。
+- [x] 修复重复 install/repair 对已运行 runit 服务只执行 `sv up`、未重启加载新源码和环境的问题。
+- [ ] 修复 Proot 委派继承原生 Termux `PATH`、Python、Node 和 .NET 运行时的问题，确保 Debian/Ubuntu 只使用容器内 glibc 工具链。
+- [ ] 兼容 `proot-distro 5.4` 的 `containers/<发行版>/rootfs` 存储布局，避免已创建容器被误判为不存在。
+- [x] 为 Proot 运行时隔离和新旧存储布局完成候选修复及回归门禁。
 - [ ] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -634,6 +637,10 @@ restore-mirrors
 | 2026-07-17 | 阶段 12 | Termux runsv与purge组合真机复测 | 完成 | 固定提交`8779096`从service半成品恢复安装并通过health；随后默认卸载保留data/config，连续purge删除code/data/config/service | 测试前清华源恢复SHA-256`04f0caa3ed57ecd2e33562c409b0f47985e7239696c79aa1a068db5b46714f71`；脱敏日志SHA-256`b278afe99ebded4f6e424597909bac57d88bbf69f28aa9dfe4d2d388369ea6fe` |
 | 2026-07-17 | 阶段 11/12 | Termux重复安装未重启 | 失败待修复 | 半安装服务已由runsv自动启动，固定修复安装完成后sv状态PID与运行时长未变化 | `sv up`不会重启已有服务，可能继续运行旧源码/环境；需区分首次up与已运行restart并补调用断言 |
 | 2026-07-17 | 阶段 12 | Termux重复安装restart候选 | 实现完成待真机复测 | 安装服务前读取绝对路径状态；原先run则restart，未运行则up；连续两次服务安装调用断言通过 | 原生Termux安装器137/137、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏测试日志SHA-256`97549a5e5a8114c34453a48ad4b5761372fde5a056d60980289dd2fa8b78f93d` |
+| 2026-07-17 | 阶段 12 | Termux重复安装restart真机复测 | 完成 | 固定提交`cca33bf`重复install，主服务PID由12108变为13759；check与health退出0 | 最终purge删除原生code/data/config/service并恢复测试前源；脱敏日志SHA-256`927836c08a6fff64c2174329483b28c3dd31fc7a57650ed2136fcb3afa5a7c64` |
+| 2026-07-17 | 阶段 11/12 | Debian Proot宿主运行时泄漏 | 失败待修复 | 首次安装错误复用原生Termux Node、Python和.NET；`etcpak 0.9.15`等四模块均构建为Android ARM64 wheel并安装，但Pillow动态库被Android linker namespace拒绝，联合能力探测退出20 | Debian自身未安装Python/Node；必须隔离宿主PATH并从干净glibc运行时重测；诊断日志SHA-256`cd390e2e7173af60dfb6246236cc325c2399cfa1f6f2713e66bfadd87baa5ea9`且敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11/12 | Proot 5.4存储布局兼容缺陷 | 失败待修复 | 当前真机`proot-distro 5.4.1`使用`containers/debian/rootfs`，安装器仍检查旧`installed-rootfs/debian`路径 | 首次创建成功，但重复install/repair会误判未安装；与运行时隔离修复一并增加双布局断言 |
+| 2026-07-17 | 阶段 12 | Proot隔离与存储布局候选修复 | 实现完成待干净复测 | 委派使用绝对`/usr/bin/env -i`和`/bin/bash`，仅设置容器HOME、glibc PATH及locale；容器存在性兼容新旧目录并以`list --quiet`兜底 | 真机Termux安装器143/143、Node 256/256、Python 17/17、TypeScript、Vite 2031模块及ShellCheck 0.11零告警；Bash测试日志SHA-256`ac2d092af71363cc459cad585166ed2eee294cc0675bb7f7b1355e98e5f1c241`、ShellCheck日志SHA-256`44f29875b17ffa2315746b329c5e18a5b88fd24cf92181329bd7ffb1e4d4ebe9`且敏感信息扫描零命中 |
 
 ## 八、远程测试资源登记
 
@@ -660,7 +667,7 @@ restore-mirrors
 | PVE | CT 9115 / openSUSE Leap 16.0干净复测与RIS故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | unmanaged模式、2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；完成版本化运行时和RIS服务镜像修复后清理 |
 | PVE | CT 9116 / openSUSE Leap 16.0最终干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | unmanaged模式、2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；固定验证提交`e73185e`；测试模板已删除 |
 | Termux | 原生环境 / ARM64 / 0.118.39 | 是 | 否 | - | 不删除 | 测试前无WallHub；仓库已是清华镜像；仅清理本次安装内容 |
-| Termux Proot | 测试前无已安装发行版 | 否 | 待创建 | `wallhub-installer-validation` | 待创建 | 后续仅创建并清理本次Debian/Ubuntu Proot |
+| Termux Proot | Debian ARM64 | 否 | 是 | `wallhub-installer-validation` | 诊断保留 | 测试前Proot为0；首次安装失败现场保留，仅修复验证完成后精确清理本次Debian资源 |
 
 ## 九、已知限制与失败原则
 

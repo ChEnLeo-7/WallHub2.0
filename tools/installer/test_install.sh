@@ -37,6 +37,12 @@ assert_file_contains() {
   pass "$label"
 }
 
+assert_file_not_contains() {
+  local file="$1" text="$2" label="$3"
+  if grep -Fq -- "$text" "$file"; then fail "$label"; fi
+  pass "$label"
+}
+
 write_os_release() {
   local name="$1" id="$2" like="${3:-}" file
   file="$TEST_TMP/$name.os-release"
@@ -404,14 +410,39 @@ delegate_log="$TEST_TMP/delegate.log"
   PREFIX="$TEST_TMP/com.termux/files/usr"; TEMP_DIR="$TEST_TMP/delegate-temp"; LOG_FILE="$TEST_TMP/delegate-installer.log"
   MIRROR=china; LAYOUT=isolated; REPO="$DEFAULT_REPO"; BRANCH="installer-validation"; SC302_DEPS=no; LANGUAGE=en
   NON_INTERACTIVE=1; ASSUME_YES=1; BUILD_UI=0; VERBOSE=0; DRY_RUN=0; PURGE=0; INSTALL_DIR=""; DATA_DIR=""
-  mkdir -p "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" "$TEMP_DIR"
+  mkdir -p "$PREFIX/var/lib/proot-distro/containers/ubuntu/rootfs" "$TEMP_DIR"
   ensure_command_package() { :; }
-  run() { printf '%q ' "$@" >"$delegate_log"; }
+  run() { printf '%q ' "$@" >>"$delegate_log"; printf '\n' >>"$delegate_log"; }
   delegate_to_proot
 )
 assert_file_contains "$delegate_log" 'proot-distro login ubuntu' "Termux delegates to selected Proot distribution"
+assert_file_not_contains "$delegate_log" 'proot-distro install ubuntu' "current Proot storage layout is recognized"
+assert_file_contains "$delegate_log" '/usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "Proot delegation starts with an isolated runtime environment"
+assert_file_contains "$delegate_log" '/bin/bash -s -- repair --target proot' "Proot delegation uses the container Bash"
+assert_file_not_contains "$delegate_log" 'com.termux' "Proot runtime command does not contain a Termux host path"
 assert_file_contains "$delegate_log" 'repair --target proot' "Proot delegation preserves maintenance subcommand"
 assert_file_contains "$delegate_log" '--branch installer-validation' "Proot delegation preserves branch"
+
+(
+  PREFIX="$TEST_TMP/legacy-proot"; PROOT_DISTRO=debian
+  mkdir -p "$PREFIX/var/lib/proot-distro/installed-rootfs/debian"
+  proot_distro_is_installed
+) || fail "legacy Proot storage layout recognition"
+pass "legacy Proot storage layout is recognized"
+
+missing_delegate_log="$TEST_TMP/missing-delegate.log"
+(
+  export PATH="$shim_dir:$PATH" WALLHUB_SHIM_LOG="$shim_log"
+  ENVIRONMENT=termux; TARGET=proot; COMMAND=install; PROOT_DISTRO=debian
+  PREFIX="$TEST_TMP/missing-proot"; TEMP_DIR="$TEST_TMP/missing-delegate-temp"; LOG_FILE="$TEST_TMP/missing-delegate-installer.log"
+  MIRROR=official; LAYOUT=isolated; REPO="$DEFAULT_REPO"; BRANCH=main; SC302_DEPS=no; LANGUAGE=en
+  NON_INTERACTIVE=1; ASSUME_YES=1; BUILD_UI=0; VERBOSE=0; DRY_RUN=0; PURGE=0; INSTALL_DIR=""; DATA_DIR=""
+  mkdir -p "$TEMP_DIR"
+  ensure_command_package() { :; }
+  run() { printf '%q ' "$@" >>"$missing_delegate_log"; printf '\n' >>"$missing_delegate_log"; }
+  delegate_to_proot
+)
+assert_file_contains "$missing_delegate_log" 'proot-distro install debian' "missing Proot distribution is installed"
 
 sc302_log="$TEST_TMP/sc302.log"
 (

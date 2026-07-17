@@ -1827,12 +1827,17 @@ derive_raw_installer_url() {
   printf 'https://raw.githubusercontent.com/%s/%s/install.sh\n' "$slug" "$BRANCH"
 }
 
+proot_distro_is_installed() {
+  local storage="$PREFIX/var/lib/proot-distro"
+  [[ -d "$storage/containers/$PROOT_DISTRO/rootfs" || -d "$storage/installed-rootfs/$PROOT_DISTRO" ]] && return 0
+  proot-distro list --quiet 2>/dev/null | grep -Fxq -- "$PROOT_DISTRO"
+}
+
 delegate_to_proot() {
   [[ "$ENVIRONMENT" == "termux" && "$TARGET" == "proot" ]] || return 1
   stage "proot-bootstrap"
   ensure_command_package proot-distro proot-distro
-  local rootfs="$PREFIX/var/lib/proot-distro/installed-rootfs/$PROOT_DISTRO"
-  if [[ ! -d "$rootfs" ]]; then run proot-distro install "$PROOT_DISTRO"; fi
+  if ! proot_distro_is_installed; then run proot-distro install "$PROOT_DISTRO"; fi
   local installer="$TEMP_DIR/install.sh" raw
   if [[ -r "${BASH_SOURCE[0]}" && "${BASH_SOURCE[0]}" != /dev/* ]]; then cp "${BASH_SOURCE[0]}" "$installer"
   else
@@ -1848,7 +1853,13 @@ delegate_to_proot() {
   ((VERBOSE)) && args+=(--verbose)
   ((DRY_RUN)) && args+=(--dry-run)
   ((PURGE)) && args+=(--purge)
-  run proot-distro login "$PROOT_DISTRO" -- bash -s -- "${args[@]}" <"$installer"
+  local -a clean_env=(
+    /usr/bin/env -i
+    HOME=/root USER=root LOGNAME=root SHELL=/bin/bash
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    LANG=C.UTF-8 LC_ALL=C.UTF-8
+  )
+  run proot-distro login "$PROOT_DISTRO" -- "${clean_env[@]}" /bin/bash -s -- "${args[@]}" <"$installer"
 }
 
 main() {
