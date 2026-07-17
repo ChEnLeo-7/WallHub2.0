@@ -37,6 +37,7 @@ SC302_DEPS=""
 NON_INTERACTIVE=0
 ASSUME_YES=0
 LANGUAGE=""
+LANGUAGE_EXPLICIT=0
 VERBOSE=0
 DRY_RUN=0
 PURGE=0
@@ -144,7 +145,7 @@ parse_args() {
       --sc302-deps) require_value "$1" "${2:-}"; SC302_DEPS="$2"; shift 2 ;;
       --non-interactive) NON_INTERACTIVE=1; shift ;;
       --yes|-y) ASSUME_YES=1; shift ;;
-      --lang) require_value "$1" "${2:-}"; LANGUAGE="$2"; shift 2 ;;
+      --lang) require_value "$1" "${2:-}"; LANGUAGE="$2"; LANGUAGE_EXPLICIT=1; shift 2 ;;
       --verbose) VERBOSE=1; shift ;;
       --dry-run) DRY_RUN=1; shift ;;
       --purge) PURGE=1; shift ;;
@@ -180,12 +181,49 @@ select_language() {
   fi
 }
 
+language_preference_path() {
+  if [[ -n "${WALLHUB_LANGUAGE_PREFERENCE_FILE:-}" ]]; then
+    printf '%s\n' "$WALLHUB_LANGUAGE_PREFERENCE_FILE"
+  else
+    printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/wallhub-installer/language.env"
+  fi
+}
+
+load_language_preference() {
+  ((LANGUAGE_EXPLICIT)) && return 0
+  local -a candidates=("$(language_preference_path)")
+  [[ -n "$STATE_FILE" ]] && candidates+=("$STATE_FILE")
+  [[ -n "${PREFIX:-}" ]] && candidates+=("${PREFIX}/etc/wallhub-installer/state.env")
+  candidates+=("/etc/wallhub-installer/state.env" "${XDG_CONFIG_HOME:-$HOME/.config}/wallhub-installer/state.env")
+  local candidate saved
+  for candidate in "${candidates[@]}"; do
+    [[ -r "$candidate" ]] || continue
+    saved="$(sed -n 's/^LANGUAGE=//p' "$candidate" | tail -n 1)"
+    case "$saved" in
+      zh|en) LANGUAGE="$saved"; return 0 ;;
+    esac
+  done
+}
+
+save_language_preference() {
+  ((DRY_RUN)) && return 0
+  local preference_file directory temp
+  preference_file="$(language_preference_path)"
+  directory="$(dirname "$preference_file")"
+  if ! mkdir -p -- "$directory"; then return 1; fi
+  if ! temp="$(mktemp "$directory/.language.XXXXXXXX")"; then return 1; fi
+  if ! { chmod 600 "$temp" && printf 'LANGUAGE=%s\n' "$LANGUAGE" >"$temp" && mv -f -- "$temp" "$preference_file"; }; then
+    rm -f -- "$temp"
+    return 1
+  fi
+}
+
 message() {
   local key="$1"
   if [[ "$LANGUAGE" == "zh" ]]; then
     case "$key" in
       start) printf 'WallHub 跨平台安装器 %s' "$INSTALLER_VERSION" ;;
-      failure) printf '安装器在阶段“%s”失败' "$CURRENT_STAGE" ;;
+      failure) printf '安装器在阶段“%s”失败' "$(stage_label "$CURRENT_STAGE")" ;;
       diagnostics) printf '诊断日志：%s' "$LOG_FILE" ;;
       repair_hint) printf '修复后可运行：install.sh repair' ;;
       no_tty) printf '交互模式需要 /dev/tty；请改用 --non-interactive 并明确参数' ;;
@@ -229,8 +267,18 @@ redact() {
 
 log() {
   local level="$1"; shift
-  local line
-  line="[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*"
+  local line display_level="$level"
+  if [[ "$LANGUAGE" == "zh" ]]; then
+    case "$level" in
+      INFO) display_level="信息" ;;
+      WARN) display_level="警告" ;;
+      ERROR) display_level="错误" ;;
+      STAGE) display_level="阶段" ;;
+      DRYRUN) display_level="演练" ;;
+      DEBUG) display_level="调试" ;;
+    esac
+  fi
+  line="[$(date '+%Y-%m-%d %H:%M:%S')] [$display_level] $*"
   printf '%s\n' "$line" | redact >&2
   if [[ -n "$LOG_FILE" ]]; then printf '%s\n' "$line" | redact >>"$LOG_FILE"; fi
 }
@@ -239,9 +287,44 @@ debug() {
   if ((VERBOSE)); then log DEBUG "$*"; fi
 }
 
+stage_label() {
+  local name="$1"
+  if [[ "$LANGUAGE" != "zh" ]]; then printf '%s' "$name"; return; fi
+  case "$name" in
+    package-index) printf '软件包索引' ;;
+    base-tools) printf '基础工具' ;;
+    china-mirrors) printf '国内镜像源' ;;
+    proot-https-sources) printf 'Proot HTTPS 软件源' ;;
+    node-portable) printf 'Node 便携运行时' ;;
+    node) printf 'Node 运行时' ;;
+    python-runtime) printf 'Python 运行时' ;;
+    python-build-dependencies) printf 'Python 编译依赖' ;;
+    python-mpkg-modules) printf 'MPKG Python 模块' ;;
+    dotnet-official) printf '.NET 官方运行时' ;;
+    dotnet-9) printf '.NET 9 运行时' ;;
+    steamcommunity-302-dependencies) printf 'Steamcommunity 302 系统依赖' ;;
+    source-acquisition) printf '获取源码' ;;
+    source-deployment) printf '部署源码' ;;
+    npm-and-public) printf 'npm 依赖与前端资源' ;;
+    runtime-layout) printf '运行目录' ;;
+    runtime-environment) printf '运行环境' ;;
+    installer-state) printf '安装器状态' ;;
+    service-installation) printf '安装服务' ;;
+    health-check) printf '健康检查' ;;
+    check) printf '检查' ;;
+    repair) printf '修复' ;;
+    update) printf '更新' ;;
+    uninstall) printf '卸载' ;;
+    restore-mirrors) printf '恢复镜像源' ;;
+    proot-resolver) printf 'Proot 域名解析' ;;
+    proot-bootstrap) printf 'Proot 初始化' ;;
+    *) printf '%s' "$name" ;;
+  esac
+}
+
 stage() {
   CURRENT_STAGE="$1"
-  log STAGE "$CURRENT_STAGE"
+  log STAGE "$(stage_label "$CURRENT_STAGE")"
 }
 
 die() {
@@ -321,6 +404,23 @@ open_tty() {
   exec 3<>/dev/tty
 }
 
+choose_language() {
+  ((NON_INTERACTIVE || LANGUAGE_EXPLICIT)) && return 0
+  local input_fd="${1:-3}" output_fd="${2:-3}" choice="" default_choice=2
+  [[ "$LANGUAGE" == "zh" ]] && default_choice=1
+  while true; do
+    printf '请选择显示语言 / Select display language:\n  1) 中文\n  2) English\n选择 / Choice [%s]: ' "$default_choice" >&"$output_fd"
+    IFS= read -r choice <&"$input_fd" || die "$EXIT_USAGE" "$(message no_tty)"
+    choice="${choice:-$default_choice}"
+    case "$choice" in
+      1|zh|ZH|中文) LANGUAGE="zh"; break ;;
+      2|en|EN|English|english) LANGUAGE="en"; break ;;
+      *) printf '无效选项 / Invalid choice: %s\n' "$choice" >&"$output_fd" ;;
+    esac
+  done
+  save_language_preference || printf '无法保存语言偏好 / Could not save language preference\n' >&"$output_fd"
+}
+
 ask_choice() {
   local variable="$1" prompt="$2" default="$3" allowed="$4" value=""
   if ((NON_INTERACTIVE)); then printf -v "$variable" '%s' "$default"; return; fi
@@ -329,7 +429,7 @@ ask_choice() {
     IFS= read -r value <&3 || die "$EXIT_USAGE" "$(message no_tty)"
     value="${value:-$default}"
     if [[ " $allowed " == *" $value "* ]]; then printf -v "$variable" '%s' "$value"; return; fi
-    printf 'Invalid value: %s\n' "$value" >&3
+    if [[ "$LANGUAGE" == "zh" ]]; then printf '无效选项：%s\n' "$value" >&3; else printf 'Invalid value: %s\n' "$value" >&3; fi
   done
 }
 
@@ -1500,6 +1600,7 @@ write_state() {
     printf 'OS_FAMILY=%q\n' "$OS_FAMILY"
     printf 'PKG_MANAGER=%q\n' "$PKG_MANAGER"
     printf 'ARCH=%q\n' "$ARCH"
+    printf 'LANGUAGE=%q\n' "$LANGUAGE"
     printf 'LAYOUT=%q\n' "$LAYOUT"
     printf 'MIRROR=%q\n' "$MIRROR"
     printf 'REPO=%q\n' "$REPO"
@@ -1522,6 +1623,7 @@ write_state() {
 }
 
 load_state() {
+  local active_language="$LANGUAGE"
   local candidates=()
   [[ -n "$STATE_FILE" ]] && candidates+=("$STATE_FILE")
   [[ -n "${PREFIX:-}" ]] && candidates+=("${PREFIX}/etc/wallhub-installer/state.env")
@@ -1532,6 +1634,7 @@ load_state() {
       # State is installer-owned, mode 0600, and values were emitted with printf %q.
       # shellcheck disable=SC1090
       source "$candidate"
+      case "$active_language" in zh|en) LANGUAGE="$active_language" ;; esac
       STATE_FILE="$candidate"; CONFIG_DIR="$(dirname "$candidate")"; MIRROR_MANIFEST="$CONFIG_DIR/mirrors/manifest.tsv"
       attach_persistent_log
       return 0
@@ -2275,10 +2378,12 @@ delegate_to_proot() {
 
 main() {
   parse_args "$@"
+  load_language_preference
   select_language
   init_temp
-  log INFO "$(message start)"
   open_tty
+  choose_language
+  log INFO "$(message start)"
   detect_environment
   interactive_defaults
   if [[ "$ENVIRONMENT" == "termux" && "$TARGET" == "proot" ]]; then

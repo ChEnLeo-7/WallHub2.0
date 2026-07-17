@@ -13,6 +13,7 @@ trap - EXIT ERR INT TERM
 
 TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/wallhub-installer-tests.XXXXXXXX")"
 trap 'rm -rf -- "$TEST_TMP"' EXIT
+WALLHUB_LANGUAGE_PREFERENCE_FILE="$TEST_TMP/language-preference.env"
 TESTS=0
 
 pass() {
@@ -180,6 +181,79 @@ for installer_command in install check repair update uninstall restore-mirrors; 
   assert_eq "$installer_command" "$COMMAND" "parse subcommand $installer_command"
 done
 
+COMMAND=install; TARGET=auto; LANGUAGE=""; LANGUAGE_EXPLICIT=0; NON_INTERACTIVE=0; DRY_RUN=0
+parse_args install --lang zh --non-interactive --dry-run
+assert_eq zh "$LANGUAGE" "explicit language argument is parsed"
+assert_eq 1 "$LANGUAGE_EXPLICIT" "explicit language argument suppresses the interactive language prompt"
+
+language_state="$TEST_TMP/language-state.env"
+printf 'LANGUAGE=zh\n' >"$language_state"
+(
+  LANGUAGE=""; LANGUAGE_EXPLICIT=0; STATE_FILE="$language_state"; PREFIX=""
+  load_language_preference
+  [[ "$LANGUAGE" == zh ]]
+) || fail "saved installer language preference"
+pass "saved installer language preference becomes the next default"
+(
+  LANGUAGE=en; LANGUAGE_EXPLICIT=1; STATE_FILE="$language_state"; PREFIX=""
+  load_language_preference
+  [[ "$LANGUAGE" == en ]]
+) || fail "explicit language preference override"
+pass "explicit language argument overrides the saved preference"
+(
+  LANGUAGE=""; LANGUAGE_EXPLICIT=0; STATE_FILE="$TEST_TMP/missing-language-state"; PREFIX="$TEST_TMP/missing-prefix"
+  LANG=zh_CN.UTF-8; unset LC_ALL LC_MESSAGES
+  select_language
+  [[ "$LANGUAGE" == zh ]]
+) || fail "Chinese locale language default"
+pass "locale supplies the language default when no preference exists"
+
+language_input="$TEST_TMP/language-input"; language_output="$TEST_TMP/language-output"; language_result="$TEST_TMP/language-result"
+printf '1\n' >"$language_input"
+(
+  LANGUAGE=en; LANGUAGE_EXPLICIT=0; NON_INTERACTIVE=0; DRY_RUN=0; LOG_FILE="$TEST_TMP/language.log"
+  exec 4<"$language_input" 5>"$language_output"
+  choose_language 4 5
+  printf '%s\n' "$LANGUAGE" >"$language_result"
+)
+assert_eq zh "$(tr -d '\n' <"$language_result")" "bilingual language selector chooses Chinese"
+assert_file_contains "$language_output" '请选择显示语言 / Select display language' "language selector is bilingual"
+assert_file_contains "$language_output" '1) 中文' "language selector displays the Chinese option"
+assert_file_contains "$language_output" '2) English' "language selector displays the English option"
+assert_file_contains "$WALLHUB_LANGUAGE_PREFERENCE_FILE" 'LANGUAGE=zh' "interactive language preference is persisted for later runs"
+
+rm -f "$WALLHUB_LANGUAGE_PREFERENCE_FILE"
+printf '2\n' >"$language_input"
+(
+  LANGUAGE=zh; LANGUAGE_EXPLICIT=0; NON_INTERACTIVE=0; DRY_RUN=1; LOG_FILE="$TEST_TMP/language-dry-run.log"
+  exec 4<"$language_input" 5>"$language_output"
+  choose_language 4 5
+)
+[[ ! -e "$WALLHUB_LANGUAGE_PREFERENCE_FILE" ]] || fail "dry-run language preference side effect"
+pass "dry-run does not persist the language preference"
+
+language_order="$TEST_TMP/language-order"
+(
+  parse_args() { :; }
+  load_language_preference() { printf 'preference\n' >>"$language_order"; }
+  select_language() { printf 'default\n' >>"$language_order"; }
+  init_temp() { printf 'temp\n' >>"$language_order"; }
+  open_tty() { printf 'tty\n' >>"$language_order"; }
+  choose_language() { printf 'language\n' >>"$language_order"; }
+  log() { printf 'banner\n' >>"$language_order"; }
+  detect_environment() { ENVIRONMENT=linux; TARGET=linux; printf 'detect\n' >>"$language_order"; }
+  interactive_defaults() { printf 'target\n' >>"$language_order"; }
+  resolve_paths() { printf 'paths\n' >>"$language_order"; }
+  configure_privilege() { printf 'privilege\n' >>"$language_order"; }
+  ensure_config_dir() { printf 'config\n' >>"$language_order"; }
+  run_install() { printf 'install\n' >>"$language_order"; }
+  COMMAND=install; ENVIRONMENT=""; TARGET=auto
+  main
+)
+assert_eq $'preference\ndefault\ntemp\ntty\nlanguage\nbanner\ndetect\ntarget\npaths\nprivilege\nconfig\ninstall' "$(cat "$language_order")" "language choice is the first interactive prompt before the startup banner"
+
+LANGUAGE=en; LANGUAGE_EXPLICIT=0; NON_INTERACTIVE=0; DRY_RUN=0
+
 redacted="$(printf '%s\n' 'https://demo-user:demo-pass@example.invalid/path token=demo-token' | redact)"
 [[ "$redacted" != *demo-pass* && "$redacted" != *demo-token* ]] || fail "log redaction"
 pass "log redaction removes URL credentials and token values"
@@ -224,8 +298,12 @@ assert_eq 10 "$code" "unsupported architecture exits with status 10"
 
 LANGUAGE=zh
 assert_eq "演练模式" "$(message dry_run)" "Chinese message table"
+assert_eq "目标环境 [auto/linux/termux/proot]" "$(message prompt_target)" "Chinese selection controls subsequent prompts"
+assert_eq "Python 运行时" "$(stage_label python-runtime)" "Chinese selection localizes installer stage names"
 LANGUAGE=en
 assert_eq "dry run" "$(message dry_run)" "English message table"
+assert_eq "Target environment [auto/linux/termux/proot]" "$(message prompt_target)" "English selection controls subsequent prompts"
+assert_eq "python-runtime" "$(stage_label python-runtime)" "English selection preserves diagnostic stage identifiers"
 
 reset_detection
 ENVIRONMENT=linux; LAYOUT=isolated; INSTALL_DIR=""; DATA_DIR=""
@@ -966,10 +1044,11 @@ mkdir -p "$TEMP_DIR" "$CONFIG_DIR"
 ENVIRONMENT=proot; TARGET=proot; OS_ID=debian; OS_CODENAME=bookworm; OS_FAMILY=debian; PKG_MANAGER=apt; ARCH=arm64
 LAYOUT=isolated; MIRROR=official; REPO="$DEFAULT_REPO"; BRANCH=main; INSTALL_DIR="$TEST_TMP/code path"; DATA_DIR="$TEST_TMP/data path"
 TOOLCHAIN_DIR="$DATA_DIR/toolchain"; NODE_BIN=/usr/bin/node; NPM_BIN=/usr/bin/npm; PYTHON_BIN=/usr/bin/python3; DOTNET_BIN=/usr/bin/dotnet; DOTNET_ROOT_DIR=/usr/lib/dotnet
-SERVICE_KIND=pid; SERVICE_USER=tester; SERVICE_GROUP=tester; LOG_FILE="$TEST_TMP/state.log"; DRY_RUN=0; ROOT_PREFIX=()
+SERVICE_KIND=pid; SERVICE_USER=tester; SERVICE_GROUP=tester; LANGUAGE=zh; LOG_FILE="$TEST_TMP/state.log"; DRY_RUN=0; ROOT_PREFIX=()
 write_state
-bash -c 'set -u; source "$1"; [[ "$INSTALL_DIR" == "$2" && "$DATA_DIR" == "$3" && "$ARCH" == arm64 ]]' bash "$STATE_FILE" "$INSTALL_DIR" "$DATA_DIR" || fail "state file round trip"
+bash -c 'set -u; source "$1"; [[ "$INSTALL_DIR" == "$2" && "$DATA_DIR" == "$3" && "$ARCH" == arm64 && "$LANGUAGE" == zh ]]' bash "$STATE_FILE" "$INSTALL_DIR" "$DATA_DIR" || fail "state file round trip"
 pass "state file round trip preserves quoted paths"
+pass "state file persists the selected installer language"
 
 TEMP_DIR="$TEST_TMP/service-temp"; CONFIG_DIR="$TEST_TMP/service config"; INSTALL_DIR="$TEST_TMP/code path"; DATA_DIR="$TEST_TMP/data path"; NODE_BIN=/usr/bin/node
 mkdir -p "$TEMP_DIR" "$CONFIG_DIR" "$INSTALL_DIR" "$DATA_DIR"
