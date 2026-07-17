@@ -402,9 +402,13 @@ restore-mirrors
 - [x] 验证原生 Termux 官方源和国内源路径。
 - [x] 验证原生 `.NET 9` 包搜索及微软官方脚本回退。
 - [x] 若 bionic 下不可运行，确认脚本严格失败且诊断准确，不标记完整安装成功。
-- [ ] 验证 Debian Proot ARM64 完整安装和服务健康。
+- [x] 无人值守续跑前只读核对本次 Debian、活动 Proot 会话、DNS bridge、WallHub 进程及残留安装状态。
+- [x] 在不记录具体解析地址的前提下，确认宿主 A/AAAA 均为软路由 Fake-IP，并区分 DNS 成功与后续 HTTP/TLS 代理接管结果。
+- [x] 验证 bridge、宿主只读 CA 和临时官方 HTTPS source 可在不强制地址族的情况下完成 Proot apt 签名索引刷新。
+- [x] 为 Fake-IP/最小 rootfs 候选修复完成真机 Bash 语法与安装器完整回归门禁。
+- [x] 验证 Debian Proot ARM64 完整安装和服务健康。
 - [ ] 验证 Ubuntu Proot 参数、镜像和依赖分支；至少完成 dry-run和静态检查。
-- [ ] 验证 Termux runit 与 Proot PID 服务管理。
+- [x] 验证 Termux runit 与 Proot PID 服务管理。
 - [x] 验证 Python四模块和public复用/重建路径。
 - [ ] 只清理本次创建的安装目录或 Proot；不删除测试前已存在的环境和用户数据。
 - [ ] 恢复本脚本修改的镜像配置并核对测试前后差异。
@@ -420,11 +424,14 @@ restore-mirrors
 - [x] 修复长期运行的 `runsvdir` 尚未为重建服务创建 supervise 通道时安装立即失败的问题，并完成卸载后重装复测。
 - [x] 修复重复 install/repair 对已运行 runit 服务只执行 `sv up`、未重启加载新源码和环境的问题。
 - [ ] 修复 Proot 委派继承原生 Termux `PATH`、Python、Node 和 .NET 运行时的问题，确保 Debian/Ubuntu 只使用容器内 glibc 工具链。
-- [ ] 兼容 `proot-distro 5.4` 的 `containers/<发行版>/rootfs` 存储布局，避免已创建容器被误判为不存在。
+- [x] 兼容 `proot-distro 5.4` 的 `containers/<发行版>/rootfs` 存储布局，避免已创建容器被误判为不存在。
 - [x] 为 Proot 运行时隔离和新旧存储布局完成候选修复及回归门禁。
-- [ ] 修复最小 Proot rootfs 缺少包索引时首次候选查询直接失败的问题，候选检查前只刷新一次索引并传播刷新错误。
-- [ ] 修复通用 `run()` 进程替换包裹 `proot-distro login` 时命令退出后日志管道永久等待的问题。
+- [x] 修复最小 Proot rootfs 缺少包索引时首次候选查询直接失败的问题，候选检查前只刷新一次索引并传播刷新错误。
+- [x] 修复通用 `run()` 进程替换包裹 `proot-distro login` 时命令退出后日志管道永久等待的问题。
 - [x] 为最小包索引刷新顺序和Proot委派退出状态完成候选修复及回归门禁。
+- [x] 修复 Android/软路由 Fake-IP 场景下 Proot glibc 与宿主解析、代理接管路径不一致的问题；先验证 A/AAAA 实际可达性，再决定受管解析、地址族策略且不永久覆盖用户 rootfs 配置。
+- [x] 修复Proot内部`nohup`服务随委派登录会话结束被清理的问题，使用可登记、可停止的detached Proot会话保持WallHub运行。
+- [x] 修复 Android Proot 中官方 glibc `.NET 9` 因 GC 自动堆初始化失败而被误判为 SDK/Runtime 不可用的问题，仅为安装器能力探测设置与应用现有兼容层一致的受限堆参数。
 - [ ] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -647,6 +654,19 @@ restore-mirrors
 | 2026-07-17 | 阶段 11/12 | Debian Proot最小索引缺失 | 失败待修复 | 固定提交`e877fc6`从空Proot列表创建全新Debian成功，但最小OCI rootfs没有apt索引，首次`apt-cache show curl`找不到候选并在base-tools退出20 | Debian未安装任何WallHub依赖；原始日志SHA-256`fca56f5bd211ba1b3a81e4a4f12b1ff03903194c26e6adf0cffb155b0c3e64d0`且敏感信息扫描零命中 |
 | 2026-07-17 | 阶段 11/12 | Proot委派退出日志管道挂起 | 失败待修复 | 内部安装器退出后外层SSH仍不返回；最小复现确认普通Proot退出正常，通用`run()`的两个进程替换`tee`导致超时124 | 普通`pipefail + tee`管道正确返回内部状态20；复现日志SHA-256`a0ed867f541f56277ca0d805dfed150ff0bda4a392579cbe0255c597011e9900`、替代路径日志SHA-256`6973f7ae8507676e828d64a63fe0d3714a1631c5a24ec9475e48452366b4465b`，敏感信息扫描零命中 |
 | 2026-07-17 | 阶段 12 | Proot最小索引与退出管道候选修复 | 实现完成待干净复测 | `install_first_candidate`在候选查询前执行一次缓存刷新；Proot委派改用普通`tee`管道并显式返回内部`PIPESTATUS[0]` | 真机Termux安装器146/146、Node 256/256、Python 17/17、TypeScript、Vite及ShellCheck 0.11零告警；测试日志SHA-256`9aa7b13ff7eb583dd6a92c43cc53db2f62ab94b381e83d62b7ff996fb7d83292`、ShellCheck日志SHA-256`44f29875b17ffa2315746b329c5e18a5b88fd24cf92181329bd7ffb1e4d4ebe9`且敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11/12 | Proot最小索引与退出管道真机复测 | 完成 | 固定提交`dd0703b`从空列表创建Debian后先执行package-index；内部DNS失败退出20后外层同步返回20且Proot会话可正常结束 | 两项原缺陷已关闭；完整安装转入独立DNS兼容节点；原始日志SHA-256`55613673069348b9552892020537ddad7ece5716c1a2eb4591fa557588e1fbed`且敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11/12 | Android Proot解析/连接故障（原按DNS64排查） | 失败待修复 | 宿主Bionic可解析但Proot glibc查询默认`8.8.8.8/8.8.4.4`超时；强制IPv4仍无法解析，两个国内公共DNS对照成功 | 不永久改写rootfs的resolv.conf；后续确认宿主结果来自软路由Fake-IP，必须同时探测解析和实际连接，不能只凭地址族推断 |
+| 2026-07-17 | 阶段 11/12 | Proot后台服务会话生命周期缺陷 | 失败待修复 | 最小`nohup sleep`在普通login命令返回后不再出现在Proot会话表，证明内部PID管理器不能独自维持外层Proot会话 | 使用`login --detach --no-kill-on-exit`承载服务，并由宿主侧受管控制器登记与停止；复现日志SHA-256`a875f9b70ba905de090eaf393da3491fe770aac648c8b14c068f87eae0fda07e`且敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11 | Termux Proot无人值守续跑前审计 | 完成 | 本次Debian存在；活动Proot会话、DNS bridge和WallHub进程均为0；宿主原生WallHub路径均不存在 | Debian仅apt/curl已安装，Git、Node、Python、.NET和WallHub均未安装；保留58,293,404字节失败日志及受管解析候选文件继续诊断 |
+| 2026-07-17 | 阶段 11/12 | Fake-IP解析与连接分层诊断 | 完成 | 四个依赖域名的宿主A均属常见Fake-IP网段、AAAA均属ULA；Proot默认A/AAAA解析超时，bridge解析成功 | bridge后的Debian/npm连接仍在HTTP或TLS层失败；国内站点成功，GitHub已返回200但完整响应读取超时，证明必须用轻量真实请求选择可用路径，A-only及ForceIPv4暂不定稿 |
+| 2026-07-17 | 阶段 11/12 | Proot Fake-IP与最小CA引导验证 | 完成 | bridge保留A/AAAA；宿主CA只读绑定为apt临时CaInfo；官方HTTPS源在独立索引目录拉取3个文件共20,781,688字节 | 不写入用户rootfs解析配置、不强制IPv4；官方HTTP源改为安装器受管且可恢复的HTTPS配置，并前置到基础包安装前 |
+| 2026-07-17 | 阶段 12 | Proot Fake-IP候选回归门禁 | 完成 | Android ARM64 Termux执行两个脚本`bash -n`及安装器测试164/164 | 新增CA绑定、双栈、官方HTTPS改写/恢复和包源前置顺序断言全部通过；Windows Git Bash仍仅停在既有符号链接语义断言 |
+| 2026-07-17 | 阶段 11/12 | Debian Proot .NET GC初始化故障 | 失败待修复 | 官方ARM64 SDK 9.0.316与Runtime 9.0.18完整下载解压，但无兼容参数执行`dotnet --info`报告GC heap初始化失败并退出137 | 同一运行时分别设置256/512/1024 MiB硬限制均退出0；项目DepotDownloader已有192/256 MiB兼容层，安装器探测需复用同一原则且不得写入用户设置 |
+| 2026-07-17 | 阶段 12 | Debian Proot .NET GC探测修复 | 完成 | 安装器测试165/165；失败现场原地续跑复用SDK 9.0.316/Runtime 9.0.18并越过dotnet阶段 | 仅能力探测进程设置256 MiB十六进制硬限制及workstation GC，不写入用户设置或WallHub全局运行环境 |
+| 2026-07-17 | 阶段 11 | Debian Proot官方源完整安装 | 完成待干净复测 | 19个安装阶段全部执行并退出0；官方HTTPS源、SC302依赖、源码、npm、public、Python模块、服务和health均通过 | 外层命令退出后detached会话保持1个，宿主控制器状态与health正常；本轮为故障现场续跑，最终仍需空列表干净安装 |
+| 2026-07-17 | 阶段 11 | Debian Proot运行时隔离与MPKG能力 | 完成 | Node 20.19.2、Python 3.13.5、.NET SDK 9.0.316/Runtime 9.0.18均由glibc加载且路径不含Termux前缀 | Pillow、LZ4、etcpak、texture2ddecoder真实API均通过；`compress_etc2_rgba`实际生成16字节，独立探测退出后detached会话仍为1 |
+| 2026-07-17 | 阶段 11/12 | Proot宿主控制器生命周期 | 完成 | stop后health不可达、会话0且DNS停止；重复stop成功；过期PID自愈；start/restart均产生唯一新会话并通过health | `logs`流读取4,103字节后受控结束，附加日志会话退出后仍仅保留1个服务会话；最终controller status与health正常 |
+| 2026-07-17 | 阶段 11/12 | Debian Proot维护与项目门禁 | 完成 | 独立check退出0；Node 256/256、Python 17/17、py_compile、安装器165/165、TypeScript、Vite 2031模块、ShellCheck 0.11.0均通过 | 安装日志SHA-256`fcfbc6bd4cdbd6a8a6c00402d922fbb49901cf7b56e53e283ea11b727666f018`；安装器测试`1df57759f5f23e86d690715d5b9be0710baad3378fdabade7aa9320888ad4db4`；ShellCheck`94154fe87f7319ff4f93622cb326c401c6367490b8a794aa310b8df0ce2bf9ea`；七份日志敏感匹配0 |
 
 ## 八、远程测试资源登记
 

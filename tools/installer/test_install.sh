@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Globals in this harness are inputs consumed dynamically by sourced installer functions.
-# shellcheck disable=SC2030,SC2031,SC2034
+# Globals and test doubles in this harness are consumed indirectly by sourced installer functions.
+# shellcheck disable=SC2030,SC2031,SC2034,SC2329
 
 set -euo pipefail
 
@@ -99,6 +99,18 @@ chmod 700 "$dependency_shims/node" "$dependency_shims/npm" "$dependency_shims/do
 ) || fail "Node and .NET capability shims"
 pass "Node minimum version and npm capability probe"
 pass ".NET 9 SDK and Runtime capability probe"
+
+cat >"$dependency_shims/dotnet-proot" <<'SHIM'
+#!/usr/bin/env bash
+[[ "${DOTNET_gcServer:-}" == 0 && "${DOTNET_GCHeapHardLimit:-}" == 10000000 ]] || exit 70
+exec "$(dirname "$0")/dotnet" "$@"
+SHIM
+chmod 700 "$dependency_shims/dotnet-proot"
+(
+  ENVIRONMENT=proot
+  dotnet_capability_probe "$dependency_shims/dotnet-proot"
+) || fail "Proot .NET GC compatibility probe"
+pass "Proot .NET capability probe uses the bounded GC environment"
 
 node_without_npm="$TEST_TMP/node-without-npm"
 mkdir -p "$node_without_npm"
@@ -296,12 +308,26 @@ assert_eq direct-ok "$(tr -d '\n' <"$TEST_TMP/download.out")" "direct GitHub fal
     pkg_install wallhub-test-package
   done
 )
-assert_file_contains "$shim_log" 'apt-get -o Acquire::Retries=3 update' "apt command shim"
+assert_file_contains "$shim_log" 'apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update' "apt command shim"
 assert_file_contains "$shim_log" 'dnf -y makecache' "dnf command shim"
 assert_file_contains "$shim_log" 'pacman -Syu --noconfirm' "pacman command shim"
 assert_file_contains "$shim_log" 'zypper --non-interactive refresh' "zypper command shim"
 assert_file_contains "$shim_log" 'pkg update -y' "Termux pkg command shim"
 pass "uname command shim drives arm64 detection"
+
+proot_apt_log="$TEST_TMP/proot-apt.log"
+proot_bootstrap_ca="$TEST_TMP/proot-bootstrap-ca.pem"
+printf 'test-ca\n' >"$proot_bootstrap_ca"
+(
+  export PATH="$shim_dir:$PATH" WALLHUB_SHIM_LOG="$proot_apt_log"
+  export WALLHUB_PROOT_BOOTSTRAP_CA="$proot_bootstrap_ca"
+  ENVIRONMENT=proot; PKG_MANAGER=apt; PACKAGE_INDEX_UPDATED=0; DRY_RUN=0
+  as_root() { command "$@"; }
+  pkg_refresh
+  pkg_install wallhub-test-package
+)
+assert_file_contains "$proot_apt_log" "Acquire::https::CaInfo=$proot_bootstrap_ca" "Proot apt uses the read-only bootstrap CA"
+assert_file_not_contains "$proot_apt_log" 'Acquire::ForceIPv4=true' "Proot apt preserves the detected IPv4 and IPv6 routes"
 
 pacman_sandbox_log="$TEST_TMP/pacman-sandbox.log"
 (
@@ -421,17 +447,26 @@ delegate_log="$TEST_TMP/delegate.log"
   PREFIX="$TEST_TMP/com.termux/files/usr"; TEMP_DIR="$TEST_TMP/delegate-temp"; LOG_FILE="$TEST_TMP/delegate-installer.log"
   MIRROR=china; LAYOUT=isolated; REPO="$DEFAULT_REPO"; BRANCH="installer-validation"; SC302_DEPS=no; LANGUAGE=en
   NON_INTERACTIVE=1; ASSUME_YES=1; BUILD_UI=0; VERBOSE=0; DRY_RUN=0; PURGE=0; INSTALL_DIR=""; DATA_DIR=""
-  mkdir -p "$PREFIX/var/lib/proot-distro/containers/ubuntu/rootfs" "$TEMP_DIR"
+  mkdir -p "$PREFIX/var/lib/proot-distro/containers/ubuntu/rootfs" "$PREFIX/etc/tls" "$TEMP_DIR"
+  printf 'test-ca\n' >"$PREFIX/etc/tls/cert.pem"
   ensure_command_package() { :; }
+  prepare_proot_resolver() { PROOT_RESOLVER_FILE="$TEST_TMP/managed-resolver"; PROOT_HOST_CTL="$TEST_TMP/hostctl"; PROOT_HOST_CA_FILE="$PREFIX/etc/tls/cert.pem"; }
   run() { printf '%q ' "$@" >>"$delegate_log"; printf '\n' >>"$delegate_log"; }
   run_proot_installer() { shift; printf '%q ' "$@" >>"$delegate_log"; printf '\n' >>"$delegate_log"; }
   delegate_to_proot
 )
-assert_file_contains "$delegate_log" 'proot-distro login ubuntu' "Termux delegates to selected Proot distribution"
+assert_file_contains "$delegate_log" 'proot-distro login --redirect-ports --isolated --bind' "Termux delegates through an isolated Proot session"
 assert_file_not_contains "$delegate_log" 'proot-distro install ubuntu' "current Proot storage layout is recognized"
 assert_file_contains "$delegate_log" '/usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "Proot delegation starts with an isolated runtime environment"
 assert_file_contains "$delegate_log" '/bin/bash -s -- repair --target proot' "Proot delegation uses the container Bash"
-assert_file_not_contains "$delegate_log" 'com.termux' "Proot runtime command does not contain a Termux host path"
+assert_file_not_contains "$delegate_log" "$PREFIX/bin" "Proot runtime command does not contain the Termux executable path"
+assert_file_contains "$delegate_log" '--isolated --bind' "Proot delegation disables implicit host filesystem bindings"
+assert_file_contains "$delegate_log" 'managed-resolver:/etc/resolv.conf' "Proot delegation binds the managed resolver"
+assert_file_contains "$delegate_log" 'cert.pem:/run/wallhub-bootstrap-ca.pem' "Proot delegation binds the native Termux CA bundle"
+assert_file_contains "$delegate_log" 'WALLHUB_PROOT_BOOTSTRAP_CA=/run/wallhub-bootstrap-ca.pem' "Proot delegation exposes only the guest CA path"
+assert_file_contains "$delegate_log" 'login --redirect-ports --isolated' "Proot delegation redirects privileged DNS traffic to the host bridge"
+assert_file_contains "$delegate_log" 'hostctl session-stop' "Proot repair stops the previous detached service session"
+assert_file_contains "$delegate_log" 'hostctl start' "Proot repair restarts the detached service session"
 assert_file_contains "$delegate_log" 'repair --target proot' "Proot delegation preserves maintenance subcommand"
 assert_file_contains "$delegate_log" '--branch installer-validation' "Proot delegation preserves branch"
 
@@ -449,13 +484,46 @@ missing_delegate_log="$TEST_TMP/missing-delegate.log"
   PREFIX="$TEST_TMP/missing-proot"; TEMP_DIR="$TEST_TMP/missing-delegate-temp"; LOG_FILE="$TEST_TMP/missing-delegate-installer.log"
   MIRROR=official; LAYOUT=isolated; REPO="$DEFAULT_REPO"; BRANCH=main; SC302_DEPS=no; LANGUAGE=en
   NON_INTERACTIVE=1; ASSUME_YES=1; BUILD_UI=0; VERBOSE=0; DRY_RUN=0; PURGE=0; INSTALL_DIR=""; DATA_DIR=""
-  mkdir -p "$TEMP_DIR"
+  mkdir -p "$PREFIX/etc/tls" "$TEMP_DIR"
+  printf 'test-ca\n' >"$PREFIX/etc/tls/cert.pem"
   ensure_command_package() { :; }
+  prepare_proot_resolver() { PROOT_RESOLVER_FILE="$TEST_TMP/managed-resolver"; PROOT_HOST_CTL="$TEST_TMP/hostctl"; PROOT_HOST_CA_FILE="$PREFIX/etc/tls/cert.pem"; }
   run() { printf '%q ' "$@" >>"$missing_delegate_log"; printf '\n' >>"$missing_delegate_log"; }
   run_proot_installer() { shift; printf '%q ' "$@" >>"$missing_delegate_log"; printf '\n' >>"$missing_delegate_log"; }
   delegate_to_proot
 )
 assert_file_contains "$missing_delegate_log" 'proot-distro install debian' "missing Proot distribution is installed"
+
+resolver_root="$TEST_TMP/proot-resolver-selection"
+(
+  PREFIX="$resolver_root/prefix"; PROOT_DISTRO=debian; TEMP_DIR="$resolver_root/temp"; LOG_FILE="$resolver_root/installer.log"
+  DRY_RUN=0; mkdir -p "$PREFIX/etc/tls" "$TEMP_DIR"; printf 'test-ca\n' >"$PREFIX/etc/tls/cert.pem"; : >"$LOG_FILE"
+  host_python="$(command -v python3 || command -v python)"
+  ensure_command_package() { :; }
+  command_path() {
+    case "$1" in
+      python3|python) printf '%s\n' "$host_python" ;;
+      proot-distro) printf '/test/bin/proot-distro\n' ;;
+      curl) printf '/test/bin/curl\n' ;;
+    esac
+  }
+  run() {
+    if [[ "$1" == "$PROOT_HOST_CTL" && "${2:-}" == dns-start ]]; then return 0; fi
+    command "$@"
+  }
+  proot_resolver_works() { grep -Fq 'nameserver 127.0.0.1' "$1"; }
+  prepare_proot_resolver
+  grep -Fq 'nameserver 127.0.0.1' "$PROOT_RESOLVER_FILE"
+  grep -Fq 'query_type in (1, 28)' "$PROOT_HOST_CONFIG/dns_bridge.py"
+  [[ "$PROOT_HOST_CA_FILE" == "$PREFIX/etc/tls/cert.pem" ]]
+  "$host_python" -m py_compile "$PROOT_HOST_CONFIG/dns_bridge.py"
+  bash -n "$PROOT_HOST_CTL"
+  grep -Fq 'login --detach --no-kill-on-exit' "$PROOT_HOST_CTL"
+  grep -Fq -- '--redirect-ports --isolated' "$PROOT_HOST_CTL"
+) || fail "managed Proot host runtime generation"
+pass "Proot resolver uses the loopback DNS bridge"
+pass "generated Proot DNS bridge passes Python compilation"
+pass "generated Proot host controller passes Bash syntax and detached-session checks"
 
 proot_runner_input="$TEST_TMP/proot-runner-input"
 proot_runner_log="$TEST_TMP/proot-runner.log"
@@ -689,6 +757,54 @@ refresh_marker="$TEST_TMP/mirror-refresh-state"
 )
 assert_eq 0 "$(tr -d '\n' <"$refresh_marker")" "mirror switch invalidates cached package metadata"
 pass "mirror switch refreshes package metadata"
+
+proot_official_root="$TEST_TMP/proot-official-https"
+proot_official_apt="$proot_official_root/apt"
+proot_official_config="$proot_official_root/config"
+proot_official_temp="$proot_official_root/temp"
+proot_official_refresh="$proot_official_root/refresh-state"
+mkdir -p "$proot_official_apt/sources.list.d" "$proot_official_config" "$proot_official_temp"
+cat >"$proot_official_apt/sources.list.d/debian.sources" <<'SOURCES'
+Types: deb
+URIs: http://deb.debian.org/debian http://deb.debian.org/debian-security
+Suites: stable stable-security
+Components: main
+SOURCES
+(
+  TEMP_DIR="$proot_official_temp"; CONFIG_DIR="$proot_official_config"
+  MIRROR_MANIFEST="$CONFIG_DIR/mirrors/manifest.tsv"; LOG_FILE="$proot_official_root/installer.log"
+  ENVIRONMENT=proot; OS_FAMILY=debian; MIRROR=official; DRY_RUN=0; ROOT_PREFIX=(); PACKAGE_INDEX_UPDATED=1
+  WALLHUB_APT_ETC_DIR="$proot_official_apt"; : >"$LOG_FILE"
+  pkg_refresh() {
+    printf '%s\n' "$PACKAGE_INDEX_UPDATED" >"$proot_official_refresh"
+    [[ "$PACKAGE_INDEX_UPDATED" == 0 ]]
+  }
+  configure_proot_official_https_sources
+)
+assert_file_not_contains "$proot_official_apt/sources.list.d/debian.sources" 'http://deb.debian.org' "Proot official bootstrap removes HTTP Debian sources"
+assert_file_contains "$proot_official_apt/sources.list.d/debian.sources" 'https://deb.debian.org/debian-security' "Proot official bootstrap enables HTTPS security metadata"
+assert_eq 0 "$(tr -d '\n' <"$proot_official_refresh")" "Proot official HTTPS switch refreshes package metadata"
+(
+  TEMP_DIR="$proot_official_temp"; CONFIG_DIR="$proot_official_config"
+  MIRROR_MANIFEST="$CONFIG_DIR/mirrors/manifest.tsv"; LOG_FILE="$proot_official_root/restore.log"
+  ENVIRONMENT=proot; DRY_RUN=0; ROOT_PREFIX=(); : >"$LOG_FILE"
+  restore_mirrors_internal force
+)
+assert_file_contains "$proot_official_apt/sources.list.d/debian.sources" 'http://deb.debian.org/debian' "Proot official HTTPS source change is restorable"
+
+proot_install_order="$TEST_TMP/proot-install-order"
+(
+  ENVIRONMENT=proot
+  configure_package_sources() { printf 'sources\n' >>"$proot_install_order"; }
+  ensure_base_tools() { printf 'base-tools\n' >>"$proot_install_order"; }
+  ensure_python_runtime() { :; }; ensure_node() { :; }; ensure_dotnet() { :; }
+  ensure_sc302_dependencies() { :; }; acquire_source() { :; }; deploy_source() { :; }
+  install_node_dependencies() { :; }; prepare_runtime_layout() { :; }; ensure_python_modules() { :; }
+  write_runtime_env() { :; }; install_service() { :; }; write_state() { :; }; health_check() { return 0; }
+  log() { :; }; message() { printf 'test'; }
+  run_install
+)
+assert_eq $'sources\nbase-tools' "$(head -n 2 "$proot_install_order")" "Proot configures reachable package sources before base tools"
 
 refresh_config="$TEST_TMP/refresh-config"; refresh_temp="$TEST_TMP/refresh-temp"
 mkdir -p "$refresh_config" "$refresh_temp"

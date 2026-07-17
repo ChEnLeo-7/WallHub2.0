@@ -10,6 +10,7 @@ DEFAULT_BRANCH="main"
 DEFAULT_PORT="3090"
 MIN_NODE_VERSION="16.17.0"
 MIN_PYTHON_VERSION="3.7.0"
+PROOT_DOTNET_PROBE_GC_HEAP_HARD_LIMIT="10000000"
 
 EXIT_USAGE=2
 EXIT_UNSUPPORTED=10
@@ -21,6 +22,10 @@ EXIT_HEALTH=50
 COMMAND="install"
 TARGET="auto"
 PROOT_DISTRO="debian"
+PROOT_HOST_CONFIG=""
+PROOT_RESOLVER_FILE=""
+PROOT_HOST_CTL=""
+PROOT_HOST_CA_FILE=""
 MIRROR=""
 LAYOUT=""
 REPO="$DEFAULT_REPO"
@@ -542,7 +547,7 @@ pkg_refresh() {
   ((PACKAGE_INDEX_UPDATED)) && return 0
   stage "package-index"
   case "$PKG_MANAGER" in
-    apt) as_root env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 update ;;
+    apt) apt_get -o APT::Update::Error-Mode=any update ;;
     dnf) as_root dnf -y makecache ;;
     pacman)
       ensure_pacman_keyring || return $?
@@ -562,6 +567,14 @@ pkg_refresh() {
   PACKAGE_INDEX_UPDATED=1
 }
 
+apt_get() {
+  local -a options=(-o Acquire::Retries=3)
+  if [[ "$ENVIRONMENT" == "proot" && -r "${WALLHUB_PROOT_BOOTSTRAP_CA:-}" ]]; then
+    options+=(-o "Acquire::https::CaInfo=$WALLHUB_PROOT_BOOTSTRAP_CA")
+  fi
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get "${options[@]}" "$@"
+}
+
 pkg_candidate_exists() {
   local package="$1"
   case "$PKG_MANAGER" in
@@ -577,7 +590,7 @@ pkg_install() {
   (($#)) || return 0
   pkg_refresh || return $?
   case "$PKG_MANAGER" in
-    apt) as_root env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends "$@" ;;
+    apt) apt_get install -y --no-install-recommends "$@" ;;
     dnf) as_root dnf install -y "$@" ;;
     pacman) ensure_pacman_keyring && pacman_run -S --needed --noconfirm "$@" ;;
     zypper) as_root zypper --non-interactive install -y "$@" ;;
@@ -589,11 +602,11 @@ pkg_search_diagnostic() {
   local term="$1"
   log WARN "No known package candidate provides $term; querying package metadata"
   case "$PKG_MANAGER" in
-    apt) apt-cache search "$term" 2>/dev/null | head -n 20 >>"$LOG_FILE" || true ;;
-    dnf) dnf -q provides "*/$term" 2>/dev/null | head -n 30 >>"$LOG_FILE" || dnf -q search "$term" >>"$LOG_FILE" 2>&1 || true ;;
-    pacman) pacman -Ss "$term" 2>/dev/null | head -n 30 >>"$LOG_FILE" || true ;;
-    zypper) zypper --non-interactive what-provides "$term" >>"$LOG_FILE" 2>&1 || true ;;
-    pkg) pkg search "$term" 2>/dev/null | head -n 30 >>"$LOG_FILE" || true ;;
+    apt) timeout 20 apt-cache search "$term" 2>/dev/null | head -n 20 >>"$LOG_FILE" || true ;;
+    dnf) timeout 20 dnf -q provides "*/$term" 2>/dev/null | head -n 30 >>"$LOG_FILE" || timeout 20 dnf -q search "$term" >>"$LOG_FILE" 2>&1 || true ;;
+    pacman) timeout 20 pacman -Ss "$term" 2>/dev/null | head -n 30 >>"$LOG_FILE" || true ;;
+    zypper) timeout 20 zypper --non-interactive what-provides "$term" >>"$LOG_FILE" 2>&1 || true ;;
+    pkg) timeout 20 pkg search "$term" 2>/dev/null | head -n 30 >>"$LOG_FILE" || true ;;
   esac
 }
 
@@ -840,6 +853,35 @@ EOF
     log ERROR "Mirror metadata refresh failed; restoring installer-managed backups"
     restore_mirrors_internal force
     die "$EXIT_DEPENDENCY" "China mirror refresh failed and original configuration was restored"
+  fi
+}
+
+configure_proot_official_https_sources() {
+  [[ "$ENVIRONMENT" == "proot" && "$OS_FAMILY" == "debian" && "$MIRROR" == "official" ]] || return 0
+  stage "proot-https-sources"
+  local apt_dir="${WALLHUB_APT_ETC_DIR:-/etc/apt}" file
+  for file in "$apt_dir/sources.list" "$apt_dir/sources.list.d"/*.list "$apt_dir/sources.list.d"/*.sources; do
+    [[ -f "$file" ]] || continue
+    replace_in_file "$file" \
+      's#http://(deb|ftp)\.debian\.org/debian#https://deb.debian.org/debian#g' \
+      's#http://security\.debian\.org/debian-security#https://security.debian.org/debian-security#g' \
+      's#http://(([a-z]{2}\.)?archive|security)\.ubuntu\.com/ubuntu#https://\1.ubuntu.com/ubuntu#g' \
+      's#http://ports\.ubuntu\.com/ubuntu-ports#https://ports.ubuntu.com/ubuntu-ports#g'
+  done
+
+  PACKAGE_INDEX_UPDATED=0
+  if ! pkg_refresh; then
+    log ERROR "Official HTTPS metadata refresh failed; restoring installer-managed backups"
+    restore_mirrors_internal force
+    die "$EXIT_DEPENDENCY" "Official Proot HTTPS source refresh failed and original configuration was restored"
+  fi
+}
+
+configure_package_sources() {
+  if [[ "$ENVIRONMENT" == "proot" && "$MIRROR" == "official" ]]; then
+    configure_proot_official_https_sources
+  else
+    configure_china_mirrors
   fi
 }
 
@@ -1104,9 +1146,13 @@ ensure_python_modules() {
 
 dotnet_capability_probe() {
   local command="$1"
-  "$command" --info >/dev/null 2>&1 || return 1
-  "$command" --list-sdks 2>/dev/null | grep -Eq '^9\.' || return 1
-  "$command" --list-runtimes 2>/dev/null | grep -Eq '^Microsoft\.NETCore\.App 9\.' || return 1
+  local -a runtime_env=()
+  if [[ "$ENVIRONMENT" == "proot" ]]; then
+    runtime_env=(env DOTNET_gcServer=0 "DOTNET_GCHeapHardLimit=$PROOT_DOTNET_PROBE_GC_HEAP_HARD_LIMIT")
+  fi
+  "${runtime_env[@]}" "$command" --info >/dev/null 2>&1 || return 1
+  "${runtime_env[@]}" "$command" --list-sdks 2>/dev/null | grep -Eq '^9\.' || return 1
+  "${runtime_env[@]}" "$command" --list-runtimes 2>/dev/null | grep -Eq '^Microsoft\.NETCore\.App 9\.' || return 1
 }
 
 find_dotnet() {
@@ -1674,8 +1720,9 @@ rollback_source() {
 }
 
 run_install() {
+  [[ "$ENVIRONMENT" == "proot" ]] && configure_package_sources
   ensure_base_tools
-  configure_china_mirrors
+  [[ "$ENVIRONMENT" != "proot" ]] && configure_package_sources
   ensure_python_runtime
   ensure_node
   ensure_dotnet
@@ -1716,8 +1763,9 @@ run_repair() {
   stage "repair"
   load_state
   configure_privilege
+  [[ "$ENVIRONMENT" == "proot" ]] && configure_package_sources
   ensure_base_tools
-  configure_china_mirrors
+  [[ "$ENVIRONMENT" != "proot" ]] && configure_package_sources
   ensure_python_runtime
   ensure_node
   ensure_dotnet
@@ -1828,10 +1876,281 @@ derive_raw_installer_url() {
   printf 'https://raw.githubusercontent.com/%s/%s/install.sh\n' "$slug" "$BRANCH"
 }
 
-proot_distro_is_installed() {
+proot_distro_rootfs() {
   local storage="$PREFIX/var/lib/proot-distro"
-  [[ -d "$storage/containers/$PROOT_DISTRO/rootfs" || -d "$storage/installed-rootfs/$PROOT_DISTRO" ]] && return 0
+  if [[ -d "$storage/containers/$PROOT_DISTRO/rootfs" ]]; then
+    printf '%s\n' "$storage/containers/$PROOT_DISTRO/rootfs"
+  elif [[ -d "$storage/installed-rootfs/$PROOT_DISTRO" ]]; then
+    printf '%s\n' "$storage/installed-rootfs/$PROOT_DISTRO"
+  else
+    return 1
+  fi
+}
+
+proot_distro_is_installed() {
+  proot_distro_rootfs >/dev/null 2>&1 && return 0
   proot-distro list --quiet 2>/dev/null | grep -Fxq -- "$PROOT_DISTRO"
+}
+
+proot_resolver_works() {
+  local resolver="$1"
+  timeout 12 proot-distro login --redirect-ports --isolated --bind "$resolver:/etc/resolv.conf" "$PROOT_DISTRO" -- \
+    /usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/getent ahostsv4 deb.debian.org >/dev/null 2>&1
+}
+
+write_proot_dns_bridge() {
+  local source="$TEMP_DIR/dns_bridge.py" target="$PROOT_HOST_CONFIG/dns_bridge.py"
+  cat >"$source" <<'PY'
+#!/usr/bin/env python3
+import socket
+import socketserver
+import struct
+import threading
+import time
+
+CACHE = {}
+CACHE_LOCK = threading.Lock()
+
+
+def parse_question(data):
+    if len(data) < 17:
+        raise ValueError("short DNS query")
+    _, _, questions, _, _, _ = struct.unpack("!HHHHHH", data[:12])
+    if questions != 1:
+        raise ValueError("unsupported DNS question count")
+    labels = []
+    offset = 12
+    while True:
+        length = data[offset]
+        offset += 1
+        if length == 0:
+            break
+        if length & 0xC0 or offset + length > len(data):
+            raise ValueError("invalid DNS name")
+        labels.append(data[offset:offset + length])
+        offset += length
+    if offset + 4 > len(data):
+        raise ValueError("short DNS question")
+    query_type, query_class = struct.unpack("!HH", data[offset:offset + 4])
+    name = b".".join(labels).decode("idna")
+    return name, query_type, query_class, data[12:offset + 4]
+
+
+def resolve(name, query_type):
+    family = socket.AF_INET if query_type == 1 else socket.AF_INET6
+    key = (name, query_type)
+    now = time.monotonic()
+    with CACHE_LOCK:
+        cached = CACHE.get(key)
+        if cached and cached[0] > now:
+            return cached[1]
+    addresses = []
+    for item in socket.getaddrinfo(name, None, family, socket.SOCK_STREAM):
+        packed = socket.inet_pton(family, item[4][0])
+        if packed not in addresses:
+            addresses.append(packed)
+    with CACHE_LOCK:
+        CACHE[key] = (now + 30, addresses)
+    return addresses
+
+
+def build_response(data):
+    query_id, query_flags = struct.unpack("!HH", data[:4])
+    name, query_type, query_class, question = parse_question(data)
+    answers = []
+    response_code = 0
+    # Resolve through Android's native resolver so Fake-IP mappings and the
+    # active VPN/router policy remain consistent for both address families.
+    if query_class == 1 and query_type in (1, 28):
+        try:
+            answers = resolve(name, query_type)
+        except socket.gaierror:
+            response_code = 3
+        except OSError:
+            response_code = 2
+    flags = 0x8080 | (query_flags & 0x0100) | response_code
+    header = struct.pack("!HHHHHH", query_id, flags, 1, len(answers), 0, 0)
+    records = b"".join(
+        b"\xc0\x0c" + struct.pack("!HHIH", query_type, 1, 30, len(address)) + address
+        for address in answers
+    )
+    return header + question + records
+
+
+class Handler(socketserver.BaseRequestHandler):
+    def handle(self):
+        data, transport = self.request
+        try:
+            response = build_response(data)
+        except (UnicodeError, ValueError, struct.error):
+            return
+        transport.sendto(response, self.client_address)
+
+
+class Server(socketserver.ThreadingUDPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+Server(("127.0.0.1", 2053), Handler).serve_forever()
+PY
+  run cp "$source" "$target"
+  run chmod 700 "$target"
+}
+
+find_termux_ca_bundle() {
+  local candidate
+  for candidate in \
+    "${SSL_CERT_FILE:-}" \
+    "$PREFIX/etc/tls/cert.pem" \
+    "$PREFIX/etc/tls/certs/ca-certificates.crt" \
+    "$PREFIX/etc/ssl/certs/ca-certificates.crt"; do
+    [[ -n "$candidate" && -s "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+write_proot_host_controller() {
+  local python_bin="$1" source="$TEMP_DIR/proot-wallhubctl" target="$PROOT_HOST_CONFIG/wallhubctl"
+  {
+    cat <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+EOF
+    printf 'PREFIX=%q\n' "$PREFIX"
+    printf 'DISTRO=%q\n' "$PROOT_DISTRO"
+    printf 'HOST_CONFIG=%q\n' "$PROOT_HOST_CONFIG"
+    printf 'RESOLVER_FILE=%q\n' "$PROOT_RESOLVER_FILE"
+    printf 'PROOT_BIN=%q\n' "$(command_path proot-distro)"
+    printf 'PYTHON_BIN=%q\n' "$python_bin"
+    printf 'CURL_BIN=%q\n' "$(command_path curl)"
+    cat <<'EOF'
+DNS_BRIDGE="$HOST_CONFIG/dns_bridge.py"
+DNS_PID_FILE="$HOST_CONFIG/dns-bridge.pid"
+DNS_LOG="$HOST_CONFIG/dns-bridge.log"
+SESSION_PID_FILE="$HOST_CONFIG/wallhub-session.pid"
+INNER_CTL=/root/.config/wallhub-installer/wallhubctl
+PORT=3090
+PROOT_OPTIONS=(--redirect-ports --isolated --bind "$RESOLVER_FILE:/etc/resolv.conf")
+CLEAN_ENV=(/usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8)
+
+read_pid() { [[ -s "$1" ]] || return 1; local p; p="$(cat "$1")"; [[ "$p" =~ ^[0-9]+$ ]] || return 1; printf '%s\n' "$p"; }
+dns_running() { local p; p="$(read_pid "$DNS_PID_FILE")" || return 1; kill -0 "$p" 2>/dev/null && tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -Fq "$DNS_BRIDGE"; }
+session_running() { local p; p="$(read_pid "$SESSION_PID_FILE")" || return 1; "$PROOT_BIN" ps --quiet 2>/dev/null | grep -Fxq "$p" && tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -Fq "$INNER_CTL"; }
+health_ready() { [[ "$("$CURL_BIN" -fsS --max-time 3 "http://127.0.0.1:$PORT/health" 2>/dev/null || true)" == ok ]]; }
+
+start_dns() {
+  if dns_running; then return 0; fi
+  rm -f "$DNS_PID_FILE"
+  if [[ -f "$DNS_LOG" && $(stat -c %s "$DNS_LOG") -gt 1048576 ]]; then mv -f "$DNS_LOG" "$DNS_LOG.1"; fi
+  nohup "$PYTHON_BIN" "$DNS_BRIDGE" >>"$DNS_LOG" 2>&1 </dev/null &
+  echo $! >"$DNS_PID_FILE"
+  sleep 1
+  dns_running || { echo "WallHub Proot DNS bridge failed; see $DNS_LOG" >&2; return 1; }
+}
+
+stop_dns() {
+  local p
+  p="$(read_pid "$DNS_PID_FILE")" || { rm -f "$DNS_PID_FILE"; return 0; }
+  if dns_running; then
+    kill -TERM "$p" 2>/dev/null || true
+    for _ in {1..20}; do kill -0 "$p" 2>/dev/null || break; sleep 0.25; done
+    kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null || true
+  fi
+  rm -f "$DNS_PID_FILE"
+}
+
+stop_session() {
+  local p
+  p="$(read_pid "$SESSION_PID_FILE")" || { rm -f "$SESSION_PID_FILE"; return 0; }
+  if session_running; then
+    "$PROOT_BIN" kill "$p" >/dev/null 2>&1 || true
+    for _ in {1..20}; do "$PROOT_BIN" ps --quiet 2>/dev/null | grep -Fxq "$p" || break; sleep 0.5; done
+    if "$PROOT_BIN" ps --quiet 2>/dev/null | grep -Fxq "$p"; then
+      "$PROOT_BIN" kill --signal KILL "$p" >/dev/null 2>&1 || true
+    fi
+  fi
+  rm -f "$SESSION_PID_FILE"
+}
+
+start_session() {
+  local output p
+  if session_running && health_ready; then echo "WallHub Proot session is already running"; return 0; fi
+  stop_session
+  start_dns
+  output="$("$PROOT_BIN" login --detach --no-kill-on-exit "${PROOT_OPTIONS[@]}" "$DISTRO" -- "${CLEAN_ENV[@]}" \
+    /bin/bash -c '"$1" stop >/dev/null 2>&1 || true; "$1" start' bash "$INNER_CTL" 2>&1)"
+  p="$(printf '%s\n' "$output" | awk '/^PID:/ {print $2; exit}')"
+  [[ "$p" =~ ^[0-9]+$ ]] || { printf '%s\n' "$output" >&2; return 1; }
+  echo "$p" >"$SESSION_PID_FILE"
+  for _ in {1..60}; do
+    if session_running && health_ready; then echo "WallHub Proot session started (pid $p)"; return 0; fi
+    sleep 1
+  done
+  stop_session
+  echo "WallHub Proot session failed its health check" >&2
+  return 1
+}
+
+show_logs() {
+  start_dns
+  exec "$PROOT_BIN" login "${PROOT_OPTIONS[@]}" "$DISTRO" -- "${CLEAN_ENV[@]}" "$INNER_CTL" logs
+}
+
+case "${1:-status}" in
+  start) start_session ;;
+  stop) stop_session; stop_dns ;;
+  restart) stop_session; start_session ;;
+  status) if session_running && health_ready; then echo "WallHub Proot session is running"; else echo "WallHub Proot session is stopped"; exit 1; fi ;;
+  logs) show_logs ;;
+  dns-start) start_dns ;;
+  dns-stop) stop_dns ;;
+  session-stop) stop_session ;;
+  *) echo "Usage: wallhubctl {start|stop|restart|status|logs}" >&2; exit 2 ;;
+esac
+EOF
+  } >"$source"
+  run cp "$source" "$target"
+  run chmod 700 "$target"
+  PROOT_HOST_CTL="$target"
+}
+
+prepare_proot_resolver() {
+  stage "proot-resolver"
+  PROOT_HOST_CONFIG="$PREFIX/etc/wallhub-proot-installer/$PROOT_DISTRO"
+  PROOT_RESOLVER_FILE="$PROOT_HOST_CONFIG/resolv.conf"
+  PROOT_HOST_CTL="$PROOT_HOST_CONFIG/wallhubctl"
+  if ((DRY_RUN)); then
+    PROOT_HOST_CA_FILE="${SSL_CERT_FILE:-$PREFIX/etc/tls/cert.pem}"
+    log DRYRUN "install a loopback DNS bridge and managed Proot controller at $PROOT_HOST_CONFIG"
+    return 0
+  fi
+  run mkdir -p "$PROOT_HOST_CONFIG"
+  run chmod 700 "$PROOT_HOST_CONFIG"
+  ensure_command_package python python
+  local python_bin
+  python_bin="$(command_path python3)"; [[ -n "$python_bin" ]] || python_bin="$(command_path python)"
+  [[ -n "$python_bin" ]] || die "$EXIT_DEPENDENCY" "Native Termux Python is required for the Proot DNS bridge"
+  PROOT_HOST_CA_FILE="$(find_termux_ca_bundle || true)"
+  if [[ -z "$PROOT_HOST_CA_FILE" ]]; then
+    install_first_candidate ca-certificates ca-certificates || die "$EXIT_DEPENDENCY" "Cannot install native Termux CA certificates"
+    PROOT_HOST_CA_FILE="$(find_termux_ca_bundle || true)"
+  fi
+  [[ -n "$PROOT_HOST_CA_FILE" ]] || die "$EXIT_DEPENDENCY" "Native Termux CA bundle is unavailable"
+  printf 'nameserver 127.0.0.1\noptions timeout:2 attempts:2\n' >"$PROOT_RESOLVER_FILE"
+  chmod 600 "$PROOT_RESOLVER_FILE"
+  write_proot_dns_bridge
+  write_proot_host_controller "$python_bin"
+  run "$PROOT_HOST_CTL" dns-start
+  if ! proot_resolver_works "$PROOT_RESOLVER_FILE"; then
+    "$PROOT_HOST_CTL" dns-stop >/dev/null 2>&1 || true
+    die "$EXIT_DEPENDENCY" "The managed Termux-to-Proot DNS bridge failed its resolver probe"
+  fi
+  log INFO "Proot DNS is bridged through the native Termux resolver"
 }
 
 run_proot_installer() {
@@ -1853,7 +2172,12 @@ delegate_to_proot() {
   [[ "$ENVIRONMENT" == "termux" && "$TARGET" == "proot" ]] || return 1
   stage "proot-bootstrap"
   ensure_command_package proot-distro proot-distro
-  if ! proot_distro_is_installed; then run proot-distro install "$PROOT_DISTRO"; fi
+  if ! proot_distro_is_installed; then
+    [[ "$COMMAND" == "install" ]] || die "$EXIT_DEPENDENCY" "Proot distribution is not installed: $PROOT_DISTRO"
+    run proot-distro install "$PROOT_DISTRO"
+  fi
+  prepare_proot_resolver
+  case "$COMMAND" in install|repair|update|uninstall) run "$PROOT_HOST_CTL" session-stop ;; esac
   local installer="$TEMP_DIR/install.sh" raw
   if [[ -r "${BASH_SOURCE[0]}" && "${BASH_SOURCE[0]}" != /dev/* ]]; then cp "${BASH_SOURCE[0]}" "$installer"
   else
@@ -1875,7 +2199,33 @@ delegate_to_proot() {
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     LANG=C.UTF-8 LC_ALL=C.UTF-8
   )
-  run_proot_installer "$installer" proot-distro login "$PROOT_DISTRO" -- "${clean_env[@]}" /bin/bash -s -- "${args[@]}"
+  local guest_ca=/run/wallhub-bootstrap-ca.pem
+  local -a proot_options=(--redirect-ports --isolated --bind "$PROOT_RESOLVER_FILE:/etc/resolv.conf")
+  if [[ -n "$PROOT_HOST_CA_FILE" ]]; then
+    proot_options+=(--bind "$PROOT_HOST_CA_FILE:$guest_ca")
+    clean_env+=("WALLHUB_PROOT_BOOTSTRAP_CA=$guest_ca")
+  fi
+  local delegate_code=0
+  run_proot_installer "$installer" proot-distro login "${proot_options[@]}" \
+    "$PROOT_DISTRO" -- "${clean_env[@]}" /bin/bash -s -- "${args[@]}" || delegate_code=$?
+  if ((delegate_code)); then
+    if [[ "$COMMAND" == "repair" || "$COMMAND" == "update" ]]; then
+      "$PROOT_HOST_CTL" start >>"$LOG_FILE" 2>&1 || "$PROOT_HOST_CTL" dns-stop >/dev/null 2>&1 || true
+    else
+      "$PROOT_HOST_CTL" dns-stop >/dev/null 2>&1 || true
+    fi
+    return "$delegate_code"
+  fi
+  case "$COMMAND" in
+    install|repair|update)
+      run "$PROOT_HOST_CTL" start || die "$EXIT_SERVICE" "WallHub detached Proot service failed to start"
+      log INFO "Proot service controls: $PROOT_HOST_CTL {start|stop|restart|status|logs}"
+      ;;
+    uninstall)
+      run "$PROOT_HOST_CTL" dns-stop
+      if ((!DRY_RUN)); then safe_remove_tree "$PROOT_HOST_CONFIG" "$(dirname "$PROOT_HOST_CONFIG")"; fi
+      ;;
+  esac
 }
 
 main() {
