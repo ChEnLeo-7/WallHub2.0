@@ -722,6 +722,9 @@ service_shims="$TEST_TMP/service-shims"; mkdir -p "$service_shims"
 for service_command in sv sv-enable; do
   cat >"$service_shims/$service_command" <<'SHIM'
 #!/usr/bin/env sh
+if [ -n "${WALLHUB_SV_CALLS:-}" ]; then
+  printf '%s %s\n' "$(basename "$0")" "$*" >>"$WALLHUB_SV_CALLS"
+fi
 if [ "$(basename "$0")" = sv ] && [ "${1:-}" = status ]; then
   printf '%s\n' "${WALLHUB_SV_STATUS:-down: wallhub: 0s, normally up}"
 fi
@@ -731,19 +734,28 @@ SHIM
 done
 old_path="$PATH"; PATH="$service_shims:$PATH"
 PREFIX="$TEST_TMP/termux-service/com.termux/files/usr"; CONFIG_DIR="$TEST_TMP/termux-service/config"; INSTALL_DIR="$TEST_TMP/termux-service/code"; DATA_DIR="$TEST_TMP/termux-service/data"; NODE_BIN=/usr/bin/node
+export WALLHUB_SV_CALLS="$TEST_TMP/termux-sv-calls"; : >"$WALLHUB_SV_CALLS"
 mkdir -p "$CONFIG_DIR" "$INSTALL_DIR" "$DATA_DIR"
 ensure_termux_runsvdir() { :; }
 install_termux_service
 sh -n "$PREFIX/var/service/wallhub/run" "$PREFIX/var/service/wallhub/log/run"
 pass "generated Termux runit service passes sh -n"
 assert_file_contains "$PREFIX/var/service/wallhub/log/run" 'svlogd -tt' "Termux service enables bounded svlogd logging"
+assert_file_contains "$WALLHUB_SV_CALLS" "sv up $PREFIX/var/service/wallhub" "Termux install starts runit service by absolute path"
+unset SVDIR
 SERVICE_KIND=runit; export WALLHUB_SV_STATUS='down: wallhub: 0s, normally up'
 if service_action status >/dev/null 2>&1; then fail "runit down status"; fi
 pass "runit down status is not treated as healthy"
 export WALLHUB_SV_STATUS='run: wallhub: (pid 123) 1s'
 service_action status >/dev/null
 pass "runit running status is accepted"
+assert_file_contains "$WALLHUB_SV_CALLS" "sv status $PREFIX/var/service/wallhub" "Termux maintenance resolves runit service without SVDIR"
+service_action restart >/dev/null
+service_action stop >/dev/null
+assert_file_contains "$WALLHUB_SV_CALLS" "sv restart $PREFIX/var/service/wallhub" "Termux restart uses the absolute runit service path"
+assert_file_contains "$WALLHUB_SV_CALLS" "sv down $PREFIX/var/service/wallhub" "Termux stop uses the absolute runit service path"
 unset WALLHUB_SV_STATUS
+unset WALLHUB_SV_CALLS
 PATH="$old_path"
 
 TEMP_DIR="$TEST_TMP/proot-service-temp"; CONFIG_DIR="$TEST_TMP/proot config"; INSTALL_DIR="$TEST_TMP/proot code"; DATA_DIR="$TEST_TMP/proot data"; NODE_BIN="$TEST_TMP/fake-node"

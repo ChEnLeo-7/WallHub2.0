@@ -391,8 +391,12 @@ restore-mirrors
 ## 阶段 11：Android ARM64 Termux验证
 
 - [ ] 阶段 11 完成。
-- [ ] 使用临时受限 askpass 连接，不记录密码和私网地址。
-- [ ] 记录测试前 Termux 版本、仓库、架构、已安装包和现有 Proot 列表。
+- [x] 使用临时受限 askpass 连接，不记录密码和私网地址。
+- [x] 记录测试前 Termux 版本、仓库、架构、已安装包和现有 Proot 列表。
+- [x] 固定验证提交分别完成原生 Termux 官方源、国内源无副作用 dry-run，并核对前后状态哈希。
+- [x] 校验并备份测试前清华源，临时切换 Termux 官方源且确认 ARM64 运行时候选可用。
+- [x] 完成原生 Termux 官方源隔离安装，验证四模块、runit 与 `/health` 成功。
+- [x] 在原生 Termux 实际编译并运行 `.NET 9` console，确认 SDK/runtime 不只是版本探测通过。
 - [ ] 验证官方 F-Droid/GitHub Termux 环境识别。
 - [ ] 验证原生 Termux 官方源和国内源路径。
 - [ ] 验证原生 `.NET 9` 包搜索及微软官方脚本回退。
@@ -408,6 +412,7 @@ restore-mirrors
 
 - [ ] 阶段 12 完成。
 - [ ] 每个远程失败建立独立未勾选修复节点，记录平台、阶段和脱敏证据。
+- [ ] 修复原生 Termux 新进程缺少 `SVDIR` 时 `check` 误报 runit 服务未运行的问题，并完成真机复测。
 - [ ] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -597,6 +602,14 @@ restore-mirrors
 | 2026-07-17 | 阶段 10 | openSUSE Leap 16.0最终干净复测 | 完成 | 固定提交`e73185e`国内源首次安装退出0；RIS XML、5个repo、8个受管哈希、符号链接排除、源码哈希、check、systemd verify、SC302三包、四模块和health均通过；安装日志SHA-256`200e6aa6456099e5e2b38db965e4e4755dfdb3af01d7c427c369e950dd1e23da` | Node/npm 24.18.0/11.16.0测试256/256；Python 3.13.13测试17/17；安装器125/125；.NET SDK 9.0.316/runtime 9.0.18；公开restore退出0并恢复7个原文件、删除2个自有配置；磁盘占用1.5GB |
 | 2026-07-17 | 阶段 10 | openSUSE Leap 16.0最终资源清理 | 完成 | 6份证据日志保存在工作区外且敏感信息扫描零命中；精确核对并销毁CT 9116；按原SHA-256核对后删除测试模板 | PVE临时日志、容器和本次模板均无残留；禁止资源状态未变 |
 | 2026-07-17 | 阶段 10 | 阶段验收与资源审计 | 完成 | Debian/Ubuntu/Fedora/RHEL兼容9/10、Arch、Leap 16矩阵通过；测试ID 9100至9116全部不存在；两个自建模板及part无残留 | 全程唯一ID、单测试LXC、2 vCPU/2GB/8GB；禁止资源100/101/102最终均运行；脱敏证据保存在工作区外 |
+| 2026-07-17 | 阶段 11 | Android Termux临时认证与基线 | 完成 | Android 16、ARM64、Termux 0.118.39、包名com.termux；测试前源为清华Termux镜像；磁盘可用25GB | APK release元数据为UNKNOWN，不猜测F-Droid/GitHub来源；Git/Node/Python/.NET/Proot/termux-services均未安装 |
+| 2026-07-17 | 阶段 11 | 手机既有环境登记 | 完成 | 现有Proot 0；WallHub代码、数据、配置三路径均不存在 | 测试结束仅清理本次创建内容并恢复测试前清华源状态 |
+| 2026-07-17 | 阶段 11 | 原生Termux双镜像dry-run | 完成 | 固定提交`cf60128`；官方源和国内源参数均退出0；dpkg状态、APT配置、WallHub三路径和Proot列表在前/中/后三次快照SHA-256一致 | 脱敏日志SHA-256：官方`c43f4d33b841b6e310516be02ff2644656f2e4646c5534d3eeff49df9fb61770`，国内`e4924e2e0728a22398f34f318b4e370af8ba325fe24f5e05cc18fbb42b760d6d`；敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11 | 原生Termux官方源准备 | 完成 | 测试前清华源与受限验证目录备份SHA-256一致，权限和所有者已记录；官方源刷新退出0 | ARM64候选：.NET SDK 9.0.18、Node 24.17.0、Python 3.14.6、termux-services 0.13；证据日志SHA-256`48ab87218b92b95160af29c4f8a9a5fb9fb050b7f8e5bfd5a20b1adaf57eaf85` |
+| 2026-07-17 | 阶段 11 | 原生Termux官方源完整安装 | 完成 | 固定提交`cf60128`安装退出0；Python wheel失败后源码构建回退成功；runit与health通过 | Node/npm 24.17.0/11.18.0、Python 3.14.6、.NET SDK 9.0.119/runtime 9.0.18；安装日志SHA-256`a4db6b81b152dcb29db884cf624badc663f7138726d9e5d4a4e542e112e35d72`且敏感信息零命中 |
+| 2026-07-17 | 阶段 11 | 原生Termux独立能力探测 | 完成 | 四模块由check能力探测通过；绝对路径sv为run、health为ok、public有效；.NET 9 console真实编译运行输出成功 | 能力日志SHA-256`dfdd7e7e9d7f43e9ec2d9b56e69d36849d830bb606d1d2f1ed77715f3123681a`；check同时暴露独立runit路径缺陷并单独登记 |
+| 2026-07-17 | 阶段 11/12 | 原生Termux runit维护状态故障 | 失败待修复 | 完整安装和health退出0；独立`check`退出40，但同一时刻绝对路径`sv status`为run且health为ok | 新维护进程无`SVDIR`，`sv status wallhub`无法解析服务；能力探测确认Node 24.17.0、Python 3.14.6、.NET SDK 9.0.119/runtime 9.0.18及真实console编译运行均正常 |
+| 2026-07-17 | 阶段 12 | Termux runit绝对路径候选修复 | 实现完成待真机复测 | install/check/update/uninstall统一使用绝对服务路径，`sv-enable`显式传入`SVDIR`；原生Termux Bash语法和安装器测试128/128 | 新增安装、无SVDIR状态、restart、stop路径断言；Node 256/256、TypeScript、Vite 2031模块、Python 17/17及py_compile、ShellCheck 0.11零告警通过；安装器日志SHA-256`4714009d7df4a9844d00f18ee6ba7036d22c347f5ea1075ba8c5780659a7ea30` |
 
 ## 八、远程测试资源登记
 
@@ -622,8 +635,8 @@ restore-mirrors
 | PVE | CT 9114 / openSUSE Leap 16.0故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | unmanaged模式；2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；完成版本化运行时候选修复后清理 |
 | PVE | CT 9115 / openSUSE Leap 16.0干净复测与RIS故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | unmanaged模式、2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；完成版本化运行时和RIS服务镜像修复后清理 |
 | PVE | CT 9116 / openSUSE Leap 16.0最终干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | unmanaged模式、2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；固定验证提交`e73185e`；测试模板已删除 |
-| Termux | 原生环境 | 是 | 否 | - | 不删除 | 只清理本次WallHub安装内容 |
-| Termux Proot | 待填写 | 待检查 | 待检查 | `wallhub-installer-validation` | 待填写 | 不删除测试前已有Proot |
+| Termux | 原生环境 / ARM64 / 0.118.39 | 是 | 否 | - | 不删除 | 测试前无WallHub；仓库已是清华镜像；仅清理本次安装内容 |
+| Termux Proot | 测试前无已安装发行版 | 否 | 待创建 | `wallhub-installer-validation` | 待创建 | 后续仅创建并清理本次Debian/Ubuntu Proot |
 
 ## 九、已知限制与失败原则
 

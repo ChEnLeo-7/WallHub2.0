@@ -1516,8 +1516,8 @@ EOF
   run cp "$log_run" "$service_dir/log/run"
   run chmod 700 "$service_dir/run" "$service_dir/log/run"
   ensure_termux_runsvdir
-  if command -v sv-enable >/dev/null 2>&1; then run sv-enable wallhub; fi
-  run sv up wallhub
+  if command -v sv-enable >/dev/null 2>&1; then run env SVDIR="$PREFIX/var/service" sv-enable wallhub; fi
+  run sv up "$service_dir"
 }
 
 ensure_termux_runsvdir() {
@@ -1604,13 +1604,14 @@ service_action() {
   case "$SERVICE_KIND" in
     systemd) as_root systemctl "$action" wallhub.service ;;
     runit)
+      local runit_service="$PREFIX/var/service/wallhub"
       case "$action" in
-        start) run sv up wallhub ;;
-        stop) run sv down wallhub ;;
-        restart) run sv restart wallhub ;;
+        start) run sv up "$runit_service" ;;
+        stop) run sv down "$runit_service" ;;
+        restart) run sv restart "$runit_service" ;;
         status)
           local status_output
-          status_output="$(sv status wallhub 2>&1)" || return 1
+          status_output="$(sv status "$runit_service" 2>&1)" || return 1
           printf '%s\n' "$status_output"
           [[ "$status_output" == run:* ]] ;;
       esac ;;
@@ -1752,7 +1753,7 @@ stop_and_remove_service() {
       as_root rm -f /etc/systemd/system/wallhub.service
       as_root systemctl daemon-reload ;;
     runit)
-      run sv down wallhub 2>/dev/null || true
+      run sv down "$PREFIX/var/service/wallhub" 2>/dev/null || true
       if [[ "$PREFIX/var/service/wallhub" == "$PREFIX"/* ]]; then run rm -rf "$PREFIX/var/service/wallhub"; fi ;;
     pid) run "$CONFIG_DIR/wallhubctl" stop 2>/dev/null || true ;;
   esac
