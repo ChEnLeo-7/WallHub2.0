@@ -912,11 +912,17 @@ npm_usable_for_node() {
 }
 
 ensure_npm_for_node() {
+  local node_major=""
   if npm_usable_for_node; then return 0; fi
   NPM_BIN="$(command_path npm)"
   if npm_usable_for_node; then return 0; fi
   if ((DRY_RUN)); then NPM_BIN="npm"; return 0; fi
-  install_first_candidate npm npm || return 1
+  node_major="$($NODE_BIN -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
+  if [[ "$node_major" =~ ^[0-9]+$ ]]; then
+    install_first_candidate npm npm "npm${node_major}" || return 1
+  else
+    install_first_candidate npm npm || return 1
+  fi
   NPM_BIN="$(command_path npm)"
   npm_usable_for_node
 }
@@ -956,7 +962,7 @@ ensure_node() {
   stage "node"
   if find_node; then log INFO "Using Node $($NODE_BIN --version) at $NODE_BIN"; else
     case "$PKG_MANAGER" in
-      apt|dnf|pacman|zypper) install_first_candidate node nodejs node || true ;;
+      apt|dnf|pacman|zypper) install_first_candidate node nodejs nodejs24 nodejs22 nodejs20 nodejs18 nodejs16 node || true ;;
       pkg) install_first_candidate node nodejs-lts nodejs || true ;;
     esac
     if ((DRY_RUN)); then NODE_BIN="node"; NPM_BIN="npm"; return; fi
@@ -993,7 +999,7 @@ ensure_python_runtime() {
   local system_python=""
   system_python="$(find_python || true)"
   if [[ -z "$system_python" ]]; then
-    install_first_candidate python python3 python || die "$EXIT_DEPENDENCY" "Python >= $MIN_PYTHON_VERSION could not be installed"
+    install_first_candidate python python3 python314 python313 python312 python311 python310 python39 python38 python37 python || die "$EXIT_DEPENDENCY" "Python >= $MIN_PYTHON_VERSION could not be installed"
     ((DRY_RUN)) || system_python="$(find_python || true)"
   fi
   if ((DRY_RUN)); then PYTHON_BIN="$TOOLCHAIN_DIR/python-venv/bin/python"; return; fi

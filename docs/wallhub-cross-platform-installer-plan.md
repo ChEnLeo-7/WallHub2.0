@@ -372,15 +372,16 @@ restore-mirrors
 - [x] 修复 Ubuntu 26.04 安装 curl 包后命令仍不可用的问题，并从干净 Ubuntu 26.04 容器复测。
 - [x] 修复 Ubuntu 22.04 切换国内源后无法安装Python venv候选的问题，并复测镜像恢复与原地安装。
 - [x] 修复 Rocky Linux 9 国内源repo重写失败，并从干净容器复测。
-- [ ] 修复 Arch Linux pacman 7 沙箱、空keyring及滚动发行版部分升级问题，并从干净容器复测。
-  > 当前状态：已实现沙箱兼容参数回退、标准keyring初始化和完整`pacman -Syu`；CT 9112续跑安装、121项自测及完整项目门禁通过，仍待新提交的干净容器复测。
+- [x] 修复 Arch Linux pacman 7 沙箱、空keyring及滚动发行版部分升级问题，并从干净容器复测。
+- [ ] 修复 openSUSE Leap 16.0 版本化Python、Node和npm包名兼容，并从干净容器复测。
+  > 当前状态：已扩展Python 3.7至3.14、Node 16至24候选并按Node主版本选择npm包；CT 9114续跑安装、121项自测及完整项目门禁通过，仍待新提交的干净容器复测。
 - [ ] 每个测试 LXC 使用唯一新 ID 和 `wallhub-installer-validation` 标记。
 - [ ] 每次只运行一个 LXC，资源为2 vCPU、2GB内存、8GB磁盘。
 - [x] 验证当前稳定 Debian 和 Debian 12 旧基线。
 - [x] 验证当前 Ubuntu LTS 和 Ubuntu 22.04 旧基线。
 - [x] 验证当前 Fedora。
 - [x] 验证当前 RHEL兼容发行版和9系旧基线。
-- [ ] 验证当前 Arch。
+- [x] 验证当前 Arch。
 - [ ] 验证当前 openSUSE Leap。
 - [ ] 覆盖官方源与国内源。
 - [ ] 覆盖隔离安装与原地安装。
@@ -575,6 +576,17 @@ restore-mirrors
 | 2026-07-17 | 阶段 10 | Arch Linux首次完整安装 | 失败待修复 | pacman 7默认下载沙箱需要内核Landlock，PVE LXC组合不支持；索引刷新失败并退出20 | 保留CT 9112诊断；不修改pacman.conf，设计进程内兼容参数回退 |
 | 2026-07-17 | 阶段 10 | Arch Linux依赖续跑 | 失败待修复 | 沙箱回退生效后发现官方模板未初始化keyring；补齐标准初始化后安装Python时暴露`-Sy`部分升级造成pyexpat ABI不匹配 | 不以补装pip掩盖ABI问题；刷新策略改为先初始化keyring再执行完整`pacman -Syu` |
 | 2026-07-17 | 阶段 10 | Arch Linux修复续跑 | 实现完成待干净复测 | 完整系统升级后Python ABI恢复；隔离安装、check、systemd verify、SC302三包、四模块和health通过 | Node 26.4.0/npm 12.0.1测试256/256；Python 3.14.6测试17/17；安装器121/121；ShellCheck 0.11.0通过；磁盘占用1.9GB |
+| 2026-07-17 | 阶段 10 | Arch Linux修复验证提交 | 完成 | 固定提交`50f2539`；本地Node、TypeScript、Vite、Python及远端Bash/ShellCheck门禁通过 | 正常推送验证分支，未改写历史 |
+| 2026-07-17 | 阶段 10 | Arch Linux故障发现资源清理 | 完成 | 六份证据日志保存在工作区外且敏感信息扫描零命中；成功续跑日志SHA-256`1fe67a35c81d41826f6801c7232c9c0012a482d1bf5395d1d0a902f7f70f7e48`；精确销毁CT 9112 | PVE临时日志已删除；禁止资源状态未变 |
+| 2026-07-17 | 阶段 10 | 创建Arch Linux干净复测容器 | 完成 | CT 9113；与故障轮相同官方模板；2 vCPU、2GB、8GB、0 swap、onboot关闭、非特权、nesting启用 | 初始keyring目录确认为缺失，systemd与DNS通过；禁止资源创建前后均运行 |
+| 2026-07-17 | 阶段 10 | Arch Linux干净完整复测 | 完成 | 固定提交`50f2539`首次安装退出0；日志确认keyring初始化、沙箱回退和完整系统升级；独立check、systemd verify、SC302三包、四模块、源码哈希和health均通过；安装日志SHA-256`50b9a6634d500b828aa87e7b3cfe2b489a7a2342ef7892945a9768f331de3eae` | Node 26.4.0/npm 12.0.1测试256/256；Python 3.14.6测试17/17且pyexpat ABI通过；安装器121/121；.NET SDK 9.0.119/runtime 9.0.18；磁盘占用2.1GB |
+| 2026-07-17 | 阶段 10 | Arch Linux干净复测资源清理 | 完成 | 五份证据日志保存在工作区外且敏感信息扫描零命中；精确核对并销毁CT 9113 | PVE临时日志已删除；禁止资源状态未变 |
+| 2026-07-17 | 阶段 10 | openSUSE Leap 16.0测试模板准备 | 完成 | Linux Containers 2026-07-09 x86_64 rootfs；签名指纹`E7FB0CAEC8173D669066514CBAEFF88C22F6E216`；SHA-256`7963e31d676e837e7a711d99df2ff9ae32fa49ac037db0724d148ea8ef972c19` | PVE官方目录仅有已过时Leap 15.6；验证当前Leap 16.0，测试完成后删除模板 |
+| 2026-07-17 | 阶段 10 | 创建openSUSE Leap 16.0容器 | 完成 | CT 9114；unmanaged模式；2 vCPU、2GB、8GB、0 swap、onboot关闭、非特权、nesting启用；DNS与zypper通过 | systemd初始仅有configfs/debugfs两个LXC静态挂载失败；禁止资源状态未变 |
+| 2026-07-17 | 阶段 10 | openSUSE Leap 16.0 LXC宿主适配 | 完成 | 仅屏蔽非特权LXC不可自行挂载的configfs/debugfs两个静态mount单元；校正主机名 | systemd回到running、失败单元0、官方仓库全部刷新成功；不涉及WallHub源码或禁止资源 |
+| 2026-07-17 | 阶段 10 | openSUSE Leap 16.0首次完整安装 | 失败待修复 | Leap 16不再提供无版本`python3`包，默认解释器包名为`python313`；安装器退出20 | 基础工具正常；保留CT 9114实测版本包能力并建立修复节点 |
+| 2026-07-17 | 阶段 10 | openSUSE Leap 16.0候选修复 | 实现完成待干净复测 | 实测`python313`提供python3且venv/pip完整；Node/npm按主版本选择；续跑隔离安装、check、systemd verify、SC302三包、四模块和health通过 | nodejs24/npm24 24.18.0/11.16.0；Python 3.13.13；Pillow 12.3.0、lz4 4.4.5；.NET便携SDK 9.0.316/runtime 9.0.18；测试256/256、121/121、17/17；ShellCheck 0.10.0通过 |
+| 2026-07-17 | 阶段 10 | PVE外部重启恢复 | 完成 | 宿主在Leap修正版续跑命令建立SSH前发生外部重启；CT 9114因onboot关闭按预期停止，安装日志和退出码均不存在 | 禁止资源重启后全部运行；重新启动已登记CT，systemd/DNS/Python/zypper恢复且无安装半成品 |
 
 ## 八、远程测试资源登记
 
@@ -595,7 +607,9 @@ restore-mirrors
 | PVE | CT 9109 / Rocky Linux 9旧基线故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；完成DNF repo修复、官方源完整安装和国内源失败恢复验证后清理 |
 | PVE | CT 9110 / Rocky Linux 9旧基线干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；固定验证提交`a5b9d9a` |
 | PVE | CT 9111 / AlmaLinux 10当前RHEL兼容系 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | unmanaged模式；2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权；固定验证提交`a5b9d9a`；测试模板已删除 |
-| PVE | CT 9112 / Arch Linux | 否 | 是 | `wallhub-installer-validation` | 运行中 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；PVE官方模板；固定验证提交`a5b9d9a` |
+| PVE | CT 9112 / Arch Linux故障发现轮 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；完成pacman兼容修复与续跑验证后清理 |
+| PVE | CT 9113 / Arch Linux干净复测 | 否 | 是 | `wallhub-installer-validation` | 已销毁 | 2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；固定验证提交`50f2539` |
+| PVE | CT 9114 / openSUSE Leap 16.0 | 否 | 是 | `wallhub-installer-validation` | 运行中 | unmanaged模式；2 vCPU、2GB RAM、8GB磁盘、0 swap、onboot关闭、非特权、nesting启用；固定验证提交`50f2539` |
 | Termux | 原生环境 | 是 | 否 | - | 不删除 | 只清理本次WallHub安装内容 |
 | Termux Proot | 待填写 | 待检查 | 待检查 | `wallhub-installer-validation` | 待填写 | 不删除测试前已有Proot |
 

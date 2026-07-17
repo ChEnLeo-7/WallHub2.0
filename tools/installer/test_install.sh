@@ -62,7 +62,11 @@ dependency_shims="$TEST_TMP/dependency-shims"
 mkdir -p "$dependency_shims"
 cat >"$dependency_shims/node" <<'SHIM'
 #!/usr/bin/env bash
-if [[ "${1:-}" == --version ]]; then printf 'v16.17.0\n'; else exit 0; fi
+case "${1:-}" in
+  --version) printf 'v16.17.0\n' ;;
+  -p) printf '16\n' ;;
+  *) exit 0 ;;
+esac
 SHIM
 cat >"$dependency_shims/npm" <<'SHIM'
 #!/usr/bin/env bash
@@ -105,7 +109,7 @@ cp "$dependency_shims/node" "$node_without_npm/node"
     esac
   }
   install_first_candidate() {
-    [[ "$#" -eq 2 && "$1" == npm && "$2" == npm ]] || return 1
+    [[ "$#" -eq 3 && "$1" == npm && "$2" == npm && "$3" == npm16 ]] || return 1
     cp "$dependency_shims/npm" "$node_without_npm/npm"
     chmod 700 "$node_without_npm/npm"
   }
@@ -324,7 +328,7 @@ mkdir -p "$pacman_keyring_dir"
   PACMAN_KEYRING_READY=0; PACMAN_KEYRING_SOURCE_DIR="$pacman_keyring_dir"; DRY_RUN=0
   LOG_FILE="$TEST_TMP/pacman-keyring-installer.log"; : >"$LOG_FILE"
   # Invoked indirectly through the as_root wrappers used by the installer.
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   pacman-key() {
     printf '%q ' "$@" >>"$pacman_keyring_log"; printf '\n' >>"$pacman_keyring_log"
     case "$1" in
