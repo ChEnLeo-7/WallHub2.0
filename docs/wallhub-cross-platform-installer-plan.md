@@ -397,6 +397,7 @@ restore-mirrors
 - [x] 校验并备份测试前清华源，临时切换 Termux 官方源且确认 ARM64 运行时候选可用。
 - [x] 完成原生 Termux 官方源隔离安装，验证四模块、runit 与 `/health` 成功。
 - [x] 在原生 Termux 实际编译并运行 `.NET 9` console，确认 SDK/runtime 不只是版本探测通过。
+- [x] 在原生 Termux 构建并真实启动 JSON 进度与分块在线播放两套 DepotDownloader 运行时。
 - [ ] 验证官方 F-Droid/GitHub Termux 环境识别。
 - [ ] 验证原生 Termux 官方源和国内源路径。
 - [ ] 验证原生 `.NET 9` 包搜索及微软官方脚本回退。
@@ -412,7 +413,8 @@ restore-mirrors
 
 - [ ] 阶段 12 完成。
 - [ ] 每个远程失败建立独立未勾选修复节点，记录平台、阶段和脱敏证据。
-- [ ] 修复原生 Termux 新进程缺少 `SVDIR` 时 `check` 误报 runit 服务未运行的问题，并完成真机复测。
+- [x] 修复原生 Termux 新进程缺少 `SVDIR` 时 `check` 误报 runit 服务未运行的问题，并完成真机复测。
+- [ ] 修复首次隔离安装创建空 `cache-settings.json` 导致运行时 JSON 解析告警的问题，确保不覆盖非空用户设置。
 - [ ] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -610,6 +612,10 @@ restore-mirrors
 | 2026-07-17 | 阶段 11 | 原生Termux独立能力探测 | 完成 | 四模块由check能力探测通过；绝对路径sv为run、health为ok、public有效；.NET 9 console真实编译运行输出成功 | 能力日志SHA-256`dfdd7e7e9d7f43e9ec2d9b56e69d36849d830bb606d1d2f1ed77715f3123681a`；check同时暴露独立runit路径缺陷并单独登记 |
 | 2026-07-17 | 阶段 11/12 | 原生Termux runit维护状态故障 | 失败待修复 | 完整安装和health退出0；独立`check`退出40，但同一时刻绝对路径`sv status`为run且health为ok | 新维护进程无`SVDIR`，`sv status wallhub`无法解析服务；能力探测确认Node 24.17.0、Python 3.14.6、.NET SDK 9.0.119/runtime 9.0.18及真实console编译运行均正常 |
 | 2026-07-17 | 阶段 12 | Termux runit绝对路径候选修复 | 实现完成待真机复测 | install/check/update/uninstall统一使用绝对服务路径，`sv-enable`显式传入`SVDIR`；原生Termux Bash语法和安装器测试128/128 | 新增安装、无SVDIR状态、restart、stop路径断言；Node 256/256、TypeScript、Vite 2031模块、Python 17/17及py_compile、ShellCheck 0.11零告警通过；安装器日志SHA-256`4714009d7df4a9844d00f18ee6ba7036d22c347f5ea1075ba8c5780659a7ea30` |
+| 2026-07-17 | 阶段 12 | Termux runit修复真机复测 | 完成 | 固定提交`03a0199`执行隔离update退出0并通过health；随后新SSH进程执行check退出0，绝对路径sv状态为run | Raw脚本与本地SHA-256一致；脱敏复测日志SHA-256`68592e81efc35d6edf845982f2e669dda1c59e37ddf34576a2ddefeb67e3960f`，敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11 | Termux runit生命周期与项目测试 | 完成 | restart、stop、health不可达、start、repair、check全通过；安装后Node 256/256、Python 17/17、安装器129/129 | 生命周期日志SHA-256`86a7a66e501e1d696f419d139a85625f4fc5fa3384eb5e41a6630fc5a025d95a`；三份测试日志敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11 | Termux双SteamKit运行时 | 完成 | JSON进度与分块在线播放运行时均成功构建；两个`DepotDownloader.dll -V`均返回3.4.0和.NET 9.0.18 | 脱敏日志SHA-256`84af1436eae7946f41c4ee9bb9d83c978cf090e8bc7f25fd7e7a8a98859b9f1c`；同时发现首次空设置文件告警并建立独立修复节点 |
+| 2026-07-17 | 阶段 12 | 初始设置JSON候选修复 | 实现完成待真机复测 | 缺失或零长度普通文件初始化为`{}`，非空文件保持逐字节不变，异常符号链接不跟随覆盖；新增三组回归断言 | 原生Termux安装器131/131、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏安装器日志SHA-256`b6db9df23b1da5cab2d90b0d695832e2b4b9515f562410b689f3e69895bbf542` |
 
 ## 八、远程测试资源登记
 

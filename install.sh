@@ -1375,10 +1375,15 @@ prepare_runtime_layout() {
     if [[ -e "$INSTALL_DIR/cache-settings.json" && ! -L "$INSTALL_DIR/cache-settings.json" ]]; then
       as_root mv "$INSTALL_DIR/cache-settings.json" "$DATA_DIR/cache-settings.json"
     fi
-    if [[ ! -e "$DATA_DIR/cache-settings.json" ]]; then as_root touch "$DATA_DIR/cache-settings.json"; fi
+    local settings_file="$DATA_DIR/cache-settings.json"
+    if { [[ ! -e "$settings_file" && ! -L "$settings_file" ]] || [[ -f "$settings_file" && ! -L "$settings_file" && ! -s "$settings_file" ]]; }; then
+      local default_settings="$TEMP_DIR/cache-settings.default.json"
+      printf '{}\n' >"$default_settings"
+      as_root cp "$default_settings" "$settings_file"
+    fi
     if [[ -e "$INSTALL_DIR/cache-settings.json" || -L "$INSTALL_DIR/cache-settings.json" ]]; then as_root rm -f "$INSTALL_DIR/cache-settings.json"; fi
-    as_root ln -s "$DATA_DIR/cache-settings.json" "$INSTALL_DIR/cache-settings.json"
-    as_root chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR/cache-settings.json"
+    as_root ln -s "$settings_file" "$INSTALL_DIR/cache-settings.json"
+    as_root chown "$SERVICE_USER:$SERVICE_GROUP" "$settings_file"
   fi
 }
 

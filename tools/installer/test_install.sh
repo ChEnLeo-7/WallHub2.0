@@ -685,6 +685,26 @@ mkdir -p "$purge_code" "$purge_data" "$purge_config" "$purge_root/unrelated"; to
 [[ ! -e "$purge_code" && ! -e "$purge_data" && ! -e "$purge_config" && -f "$purge_root/unrelated/file" ]] || fail "purge path ownership"
 pass "purge removes only installer-registered paths"
 
+runtime_root="$TEST_TMP/runtime-settings"
+(
+  TEMP_DIR="$runtime_root/temp"; CONFIG_DIR="$runtime_root/config"; INSTALL_DIR="$runtime_root/code"; DATA_DIR="$runtime_root/data"; TOOLCHAIN_DIR="$runtime_root/data/toolchain"
+  ENVIRONMENT=termux; LAYOUT=isolated; LOG_FILE="$runtime_root/runtime.log"; DRY_RUN=0; ROOT_PREFIX=()
+  mkdir -p "$TEMP_DIR" "$CONFIG_DIR" "$INSTALL_DIR"; : >"$LOG_FILE"
+  as_root() { if [[ "$1" == chown ]]; then return 0; fi; command "$@"; }
+  prepare_runtime_layout
+  [[ "$(cat "$DATA_DIR/cache-settings.json")" == "{}" ]] || fail "new cache settings JSON"
+  [[ -L "$INSTALL_DIR/cache-settings.json" && "$(readlink "$INSTALL_DIR/cache-settings.json")" == "$DATA_DIR/cache-settings.json" ]] || fail "cache settings link"
+  printf '{"custom":"preserved"}\n' >"$DATA_DIR/cache-settings.json"
+  prepare_runtime_layout
+  [[ "$(cat "$DATA_DIR/cache-settings.json")" == '{"custom":"preserved"}' ]] || fail "non-empty cache settings preservation"
+  : >"$DATA_DIR/cache-settings.json"
+  prepare_runtime_layout
+  [[ "$(cat "$DATA_DIR/cache-settings.json")" == "{}" ]] || fail "empty cache settings repair"
+) || fail "runtime cache settings initialization"
+pass "new isolated installs create valid cache settings JSON"
+pass "runtime layout preserves non-empty cache settings"
+pass "runtime layout repairs only zero-length cache settings"
+
 TEMP_DIR="$TEST_TMP/state-temp"; CONFIG_DIR="$TEST_TMP/state config"; STATE_FILE="$CONFIG_DIR/state.env"; MIRROR_MANIFEST="$CONFIG_DIR/mirrors/manifest.tsv"
 mkdir -p "$TEMP_DIR" "$CONFIG_DIR"
 ENVIRONMENT=proot; TARGET=proot; OS_ID=debian; OS_CODENAME=bookworm; OS_FAMILY=debian; PKG_MANAGER=apt; ARCH=arm64
