@@ -1763,8 +1763,9 @@ stop_and_remove_service() {
       as_root rm -f /etc/systemd/system/wallhub.service
       as_root systemctl daemon-reload ;;
     runit)
-      run sv down "$PREFIX/var/service/wallhub" 2>/dev/null || true
-      if [[ "$PREFIX/var/service/wallhub" == "$PREFIX"/* ]]; then run rm -rf "$PREFIX/var/service/wallhub"; fi ;;
+      local runit_service="$PREFIX/var/service/wallhub"
+      if [[ -d "$runit_service" ]]; then run sv down "$runit_service" 2>/dev/null || true; fi
+      if [[ "$runit_service" == "$PREFIX"/* ]] && { [[ -e "$runit_service" ]] || [[ -L "$runit_service" ]]; }; then run rm -rf "$runit_service"; fi ;;
     pid) run "$CONFIG_DIR/wallhubctl" stop 2>/dev/null || true ;;
   esac
 }
@@ -1779,7 +1780,14 @@ run_uninstall() {
     ask_yes_twice "Permanently remove WallHub data, settings and installer state" || die "$EXIT_USAGE" "Purge confirmation was not completed"
     restore_mirrors_internal safe || log WARN "Some mirror files were kept because the user changed them"
     safe_remove_tree "$DATA_DIR" "$(dirname "$DATA_DIR")"
-    if [[ "$CONFIG_DIR" != "/" && "$CONFIG_DIR" == */wallhub-installer ]]; then safe_remove_tree "$CONFIG_DIR" "$(dirname "$CONFIG_DIR")"; fi
+    if [[ "$CONFIG_DIR" != "/" && "$CONFIG_DIR" == */wallhub-installer ]]; then
+      if [[ "$LOG_FILE" == "$CONFIG_DIR"/* ]]; then
+        LOG_FILE="$TEMP_DIR/uninstall-purge.log"
+        : >"$LOG_FILE"
+        chmod 600 "$LOG_FILE" 2>/dev/null || true
+      fi
+      safe_remove_tree "$CONFIG_DIR" "$(dirname "$CONFIG_DIR")"
+    fi
   else
     if [[ "$LAYOUT" == "isolated" ]]; then
       log INFO "WallHub code and service removed; data, settings and mirror backups were preserved at $DATA_DIR and $CONFIG_DIR"

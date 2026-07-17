@@ -710,6 +710,19 @@ mkdir -p "$purge_code" "$purge_data" "$purge_config" "$purge_root/unrelated"; to
 [[ ! -e "$purge_code" && ! -e "$purge_data" && ! -e "$purge_config" && -f "$purge_root/unrelated/file" ]] || fail "purge path ownership"
 pass "purge removes only installer-registered paths"
 
+purge_log_root="$TEST_TMP/uninstall-purge-live-log"; purge_log_code="$purge_log_root/code"; purge_log_data="$purge_log_root/data"; purge_log_config="$purge_log_root/wallhub-installer"
+mkdir -p "$purge_log_code" "$purge_log_data" "$purge_log_config" "$purge_log_root/temp"
+touch "$purge_log_code/.wallhub-installer-managed"; printf 'persistent log\n' >"$purge_log_config/installer.log"
+(
+  TEMP_DIR="$purge_log_root/temp"; INSTALL_DIR="$purge_log_code"; DATA_DIR="$purge_log_data"; CONFIG_DIR="$purge_log_config"; MIRROR_MANIFEST="$purge_log_config/mirrors/manifest.tsv"
+  LAYOUT=isolated; PURGE=1; ASSUME_YES=1; NON_INTERACTIVE=1; LOG_FILE="$purge_log_config/installer.log"; ENVIRONMENT=proot; ROOT_PREFIX=(); DRY_RUN=0
+  load_state() { :; }; configure_privilege() { :; }; stop_and_remove_service() { :; }
+  run_uninstall
+  [[ "$LOG_FILE" == "$purge_log_root/temp/uninstall-purge.log" ]] || fail "purge log relocation"
+)
+[[ ! -e "$purge_log_code" && ! -e "$purge_log_data" && ! -e "$purge_log_config" ]] || fail "live log purge cleanup"
+pass "purge relocates a persistent log before deleting its config directory"
+
 runtime_root="$TEST_TMP/runtime-settings"
 (
   TEMP_DIR="$runtime_root/temp"; CONFIG_DIR="$runtime_root/config"; INSTALL_DIR="$runtime_root/code"; DATA_DIR="$runtime_root/data"; TOOLCHAIN_DIR="$runtime_root/data/toolchain"

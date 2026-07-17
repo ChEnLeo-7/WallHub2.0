@@ -399,9 +399,9 @@ restore-mirrors
 - [x] 在原生 Termux 实际编译并运行 `.NET 9` console，确认 SDK/runtime 不只是版本探测通过。
 - [x] 在原生 Termux 构建并真实启动 JSON 进度与分块在线播放两套 DepotDownloader 运行时。
 - [ ] 验证官方 F-Droid/GitHub Termux 环境识别。
-- [ ] 验证原生 Termux 官方源和国内源路径。
-- [ ] 验证原生 `.NET 9` 包搜索及微软官方脚本回退。
-- [ ] 若 bionic 下不可运行，确认脚本严格失败且诊断准确，不标记完整安装成功。
+- [x] 验证原生 Termux 官方源和国内源路径。
+- [x] 验证原生 `.NET 9` 包搜索及微软官方脚本回退。
+- [x] 若 bionic 下不可运行，确认脚本严格失败且诊断准确，不标记完整安装成功。
 - [ ] 验证 Debian Proot ARM64 完整安装和服务健康。
 - [ ] 验证 Ubuntu Proot 参数、镜像和依赖分支；至少完成 dry-run和静态检查。
 - [ ] 验证 Termux runit 与 Proot PID 服务管理。
@@ -415,7 +415,8 @@ restore-mirrors
 - [ ] 每个远程失败建立独立未勾选修复节点，记录平台、阶段和脱敏证据。
 - [x] 修复原生 Termux 新进程缺少 `SVDIR` 时 `check` 误报 runit 服务未运行的问题，并完成真机复测。
 - [x] 修复首次隔离安装创建空 `cache-settings.json` 导致运行时 JSON 解析告警的问题，确保不覆盖非空用户设置。
-- [ ] 修复 Termux 已自动选择任意第三方镜像时 `--mirror china` 未真正切换清华源的问题，并完成备份恢复真机复测。
+- [x] 修复 Termux 已自动选择任意第三方镜像时 `--mirror china` 未真正切换清华源的问题，并完成备份恢复真机复测。
+- [ ] 修复默认卸载后继续 purge 时缺失 runit 服务噪声与持久日志重建配置目录的竞态，并从失败现场复测。
 - [ ] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -621,6 +622,11 @@ restore-mirrors
 | 2026-07-17 | 阶段 11/12 | Termux任意镜像转清华缺陷 | 失败待修复 | 官方源完整安装期间`pkg`因一次可用性探测自动选到其他镜像；现有国内源逻辑只替换固定官方域名 | 直接执行国内源会刷新成功但URL不变；需按Termux仓库suite/component识别主、root和x11仓库并保留其他仓库 |
 | 2026-07-17 | 阶段 11 | Termux public重建路径 | 完成 | 固定提交`5075be5`执行`update --build-ui`，完整npm ci、Vite构建、production prune、check和health均退出0 | public 3个根引用全部存在；脱敏日志SHA-256`24e624921c3b2cfecb046cc67ac2cd5ef92916171e369cb9a7c193ea391962df` |
 | 2026-07-17 | 阶段 12 | Termux任意镜像候选修复 | 实现完成待真机复测 | 按suite/component识别main、root和x11，不依赖当前镜像域名；TUR等无映射仓库保持不变；备份可逐字节恢复 | 原生Termux安装器134/134、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏安装器日志SHA-256`5182795f169e9238fa123e1e6e0fda4211475aa7db4d0f96387be47ab624545b` |
+| 2026-07-17 | 阶段 12 | Termux任意镜像真机复测 | 完成 | 固定提交`87106cd`把第三方主镜像切到清华并完成安装/check；主源、pip、npm和受管备份均核验 | 公开restore退出0，源文件SHA-256逐字节恢复、pip/npm自有配置删除、health保持正常；脱敏日志SHA-256`f2b344f4d9ceab4922529bf2e5d51c0dd13f7b8d00f078d00c0bcbb7bd18a5e4` |
+| 2026-07-17 | 阶段 11 | Termux微软glibc .NET回退实测 | 完成 | 官方脚本实际下载并解压Linux ARM64 SDK 9.0.316共213232357字节，脚本退出0；其`dotnet --info`在bionic真实退出127并报告缺少所需加载器 | 隔离目录由trap删除；脱敏日志SHA-256`5b445cd1b307c37e5fc9709ea52db168a89958efac910d20cc7ac89536b077d4` |
+| 2026-07-17 | 阶段 11 | Termux .NET严格失败分支 | 完成 | 原生包与官方安装均失败、官方安装成功但运行探测失败两条受控分支均退出20；诊断分别指出bionic不兼容和Debian/Ubuntu Proot | 不自动创建或切换Proot；分支证据日志SHA-256`4ddce538eb7462b9126cc09e25a9ba22db8c8bc95ac1b0f01359dd596a4ada80` |
+| 2026-07-17 | 阶段 11/12 | Termux连续卸载purge故障 | 失败待修复 | 默认卸载退出0并正确保留data/config；紧接purge在服务已删除时产生sv噪声，并因持久日志与rm并发重建配置目录而退出20 | code、service已删除且data已进入purge清理，config/state仍保留；保留失败现场用于修复后续跑，不手工伪造成功 |
+| 2026-07-17 | 阶段 12 | Termux连续purge候选修复 | 实现完成待现场复测 | 缺失runit服务不再调用sv；删除config前把后续日志切到受限临时文件，消除tee重建竞态；真实持久日志回归测试通过 | 原生Termux安装器135/135、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏测试日志SHA-256`cc327d05267d059a2068794edd416240195e661602a97208622216daf6af8e7b` |
 
 ## 八、远程测试资源登记
 
