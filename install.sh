@@ -710,6 +710,14 @@ replace_in_file() {
   mirror_record_modified_hash "$path"
 }
 
+enable_tuna_dnf_repo_file() {
+  local file="$1"
+  grep -Eq '^[[:space:]]*#?baseurl=https://mirrors\.tuna\.tsinghua\.edu\.cn/' "$file" || return 0
+  replace_in_file "$file" \
+    's|^([[:space:]]*)#?baseurl=(https://mirrors\.tuna\.tsinghua\.edu\.cn/.*)|\1baseurl=\2|' \
+    's~^([[:space:]]*)(metalink|mirrorlist)=~\1#\2=~'
+}
+
 configure_china_mirrors() {
   [[ "$MIRROR" == "china" ]] || return 0
   stage "china-mirrors"
@@ -745,11 +753,7 @@ configure_china_mirrors() {
         's#https?://dl\.rockylinux\.org/\$contentdir#https://mirrors.tuna.tsinghua.edu.cn/rocky#g' \
         's#https?://repo\.almalinux\.org/almalinux#https://mirrors.tuna.tsinghua.edu.cn/almalinux#g' \
         's#https?://mirror\.stream\.centos\.org#https://mirrors.tuna.tsinghua.edu.cn/centos-stream#g'
-      if grep -Eq '^[[:space:]]*#?baseurl=https://mirrors\.tuna\.tsinghua\.edu\.cn/' "$file"; then
-        replace_in_file "$file" \
-          's|^([[:space:]]*)#?baseurl=(https://mirrors\.tuna\.tsinghua\.edu\.cn/.*)|\1baseurl=\2|' \
-          's|^([[:space:]]*)(metalink|mirrorlist)=|\1#\2=|'
-      fi
+      enable_tuna_dnf_repo_file "$file"
     done
   elif [[ "$OS_FAMILY" == "arch" && -f /etc/pacman.d/mirrorlist ]]; then
     mirror_backup_file /etc/pacman.d/mirrorlist

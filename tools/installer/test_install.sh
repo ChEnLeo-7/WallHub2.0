@@ -488,6 +488,18 @@ source_file="$TEST_TMP/sources.list"
 printf 'official\n' >"$source_file"
 replace_in_file "$source_file" 's/official/tuna/'
 assert_eq tuna "$(tr -d '\n' <"$source_file")" "mirror replacement"
+
+dnf_repo_file="$TEST_TMP/rocky.repo"
+cat >"$dnf_repo_file" <<'REPO'
+[baseos]
+mirrorlist=https://mirrors.example.invalid/mirrorlist
+#baseurl=https://mirrors.tuna.tsinghua.edu.cn/rocky/$releasever/BaseOS/$basearch/os/
+REPO
+enable_tuna_dnf_repo_file "$dnf_repo_file"
+assert_file_contains "$dnf_repo_file" 'baseurl=https://mirrors.tuna.tsinghua.edu.cn/rocky/' "DNF mirror baseurl enabled"
+assert_file_contains "$dnf_repo_file" '#mirrorlist=' "DNF mirrorlist disabled"
+pass "DNF mirror rewrite uses a valid sed expression"
+
 printf 'user-change\n' >"$source_file"
 if restore_mirrors_internal safe; then fail "user mirror conflict was overwritten"; fi
 assert_eq user-change "$(tr -d '\n' <"$source_file")" "user mirror edit is preserved"
