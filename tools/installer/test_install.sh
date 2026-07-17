@@ -362,8 +362,19 @@ if (
 fi
 pass "package index refresh failure propagates"
 
+candidate_refresh_log="$TEST_TMP/package-candidate-refresh.log"
+(
+  DRY_RUN=0; PACKAGE_INDEX_UPDATED=0
+  pkg_refresh() { printf 'refresh\n' >>"$candidate_refresh_log"; PACKAGE_INDEX_UPDATED=1; }
+  pkg_candidate_exists() { [[ "$PACKAGE_INDEX_UPDATED" == 1 && "$1" == curl ]]; }
+  pkg_install() { printf 'install %s\n' "$1" >>"$candidate_refresh_log"; }
+  install_first_candidate curl curl
+)
+assert_eq $'refresh\ninstall curl' "$(cat "$candidate_refresh_log")" "package index refresh precedes candidate lookup"
+
 if (
   DRY_RUN=0; LOG_FILE="$TEST_TMP/package-install-failure.log"
+  pkg_refresh() { :; }
   pkg_candidate_exists() { return 0; }
   pkg_install() { return 24; }
   pkg_search_diagnostic() { :; }
@@ -413,6 +424,7 @@ delegate_log="$TEST_TMP/delegate.log"
   mkdir -p "$PREFIX/var/lib/proot-distro/containers/ubuntu/rootfs" "$TEMP_DIR"
   ensure_command_package() { :; }
   run() { printf '%q ' "$@" >>"$delegate_log"; printf '\n' >>"$delegate_log"; }
+  run_proot_installer() { shift; printf '%q ' "$@" >>"$delegate_log"; printf '\n' >>"$delegate_log"; }
   delegate_to_proot
 )
 assert_file_contains "$delegate_log" 'proot-distro login ubuntu' "Termux delegates to selected Proot distribution"
@@ -440,9 +452,23 @@ missing_delegate_log="$TEST_TMP/missing-delegate.log"
   mkdir -p "$TEMP_DIR"
   ensure_command_package() { :; }
   run() { printf '%q ' "$@" >>"$missing_delegate_log"; printf '\n' >>"$missing_delegate_log"; }
+  run_proot_installer() { shift; printf '%q ' "$@" >>"$missing_delegate_log"; printf '\n' >>"$missing_delegate_log"; }
   delegate_to_proot
 )
 assert_file_contains "$missing_delegate_log" 'proot-distro install debian' "missing Proot distribution is installed"
+
+proot_runner_input="$TEST_TMP/proot-runner-input"
+proot_runner_log="$TEST_TMP/proot-runner.log"
+printf 'candidate input\n' >"$proot_runner_input"
+set +e
+(
+  DRY_RUN=0; LOG_FILE="$proot_runner_log"; : >"$LOG_FILE"
+  run_proot_installer "$proot_runner_input" bash -c 'cat; exit 23'
+)
+code=$?
+set -e
+assert_eq 23 "$code" "Proot logging pipeline propagates delegated exit status"
+assert_file_contains "$proot_runner_log" 'candidate input' "Proot logging pipeline records delegated output"
 
 sc302_log="$TEST_TMP/sc302.log"
 (

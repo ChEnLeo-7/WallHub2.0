@@ -422,6 +422,9 @@ restore-mirrors
 - [ ] 修复 Proot 委派继承原生 Termux `PATH`、Python、Node 和 .NET 运行时的问题，确保 Debian/Ubuntu 只使用容器内 glibc 工具链。
 - [ ] 兼容 `proot-distro 5.4` 的 `containers/<发行版>/rootfs` 存储布局，避免已创建容器被误判为不存在。
 - [x] 为 Proot 运行时隔离和新旧存储布局完成候选修复及回归门禁。
+- [ ] 修复最小 Proot rootfs 缺少包索引时首次候选查询直接失败的问题，候选检查前只刷新一次索引并传播刷新错误。
+- [ ] 修复通用 `run()` 进程替换包裹 `proot-distro login` 时命令退出后日志管道永久等待的问题。
+- [x] 为最小包索引刷新顺序和Proot委派退出状态完成候选修复及回归门禁。
 - [ ] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -641,6 +644,9 @@ restore-mirrors
 | 2026-07-17 | 阶段 11/12 | Debian Proot宿主运行时泄漏 | 失败待修复 | 首次安装错误复用原生Termux Node、Python和.NET；`etcpak 0.9.15`等四模块均构建为Android ARM64 wheel并安装，但Pillow动态库被Android linker namespace拒绝，联合能力探测退出20 | Debian自身未安装Python/Node；必须隔离宿主PATH并从干净glibc运行时重测；诊断日志SHA-256`cd390e2e7173af60dfb6246236cc325c2399cfa1f6f2713e66bfadd87baa5ea9`且敏感信息扫描零命中 |
 | 2026-07-17 | 阶段 11/12 | Proot 5.4存储布局兼容缺陷 | 失败待修复 | 当前真机`proot-distro 5.4.1`使用`containers/debian/rootfs`，安装器仍检查旧`installed-rootfs/debian`路径 | 首次创建成功，但重复install/repair会误判未安装；与运行时隔离修复一并增加双布局断言 |
 | 2026-07-17 | 阶段 12 | Proot隔离与存储布局候选修复 | 实现完成待干净复测 | 委派使用绝对`/usr/bin/env -i`和`/bin/bash`，仅设置容器HOME、glibc PATH及locale；容器存在性兼容新旧目录并以`list --quiet`兜底 | 真机Termux安装器143/143、Node 256/256、Python 17/17、TypeScript、Vite 2031模块及ShellCheck 0.11零告警；Bash测试日志SHA-256`ac2d092af71363cc459cad585166ed2eee294cc0675bb7f7b1355e98e5f1c241`、ShellCheck日志SHA-256`44f29875b17ffa2315746b329c5e18a5b88fd24cf92181329bd7ffb1e4d4ebe9`且敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11/12 | Debian Proot最小索引缺失 | 失败待修复 | 固定提交`e877fc6`从空Proot列表创建全新Debian成功，但最小OCI rootfs没有apt索引，首次`apt-cache show curl`找不到候选并在base-tools退出20 | Debian未安装任何WallHub依赖；原始日志SHA-256`fca56f5bd211ba1b3a81e4a4f12b1ff03903194c26e6adf0cffb155b0c3e64d0`且敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 11/12 | Proot委派退出日志管道挂起 | 失败待修复 | 内部安装器退出后外层SSH仍不返回；最小复现确认普通Proot退出正常，通用`run()`的两个进程替换`tee`导致超时124 | 普通`pipefail + tee`管道正确返回内部状态20；复现日志SHA-256`a0ed867f541f56277ca0d805dfed150ff0bda4a392579cbe0255c597011e9900`、替代路径日志SHA-256`6973f7ae8507676e828d64a63fe0d3714a1631c5a24ec9475e48452366b4465b`，敏感信息扫描零命中 |
+| 2026-07-17 | 阶段 12 | Proot最小索引与退出管道候选修复 | 实现完成待干净复测 | `install_first_candidate`在候选查询前执行一次缓存刷新；Proot委派改用普通`tee`管道并显式返回内部`PIPESTATUS[0]` | 真机Termux安装器146/146、Node 256/256、Python 17/17、TypeScript、Vite及ShellCheck 0.11零告警；测试日志SHA-256`9aa7b13ff7eb583dd6a92c43cc53db2f62ab94b381e83d62b7ff996fb7d83292`、ShellCheck日志SHA-256`44f29875b17ffa2315746b329c5e18a5b88fd24cf92181329bd7ffb1e4d4ebe9`且敏感信息扫描零命中 |
 
 ## 八、远程测试资源登记
 

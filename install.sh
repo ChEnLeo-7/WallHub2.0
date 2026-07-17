@@ -600,6 +600,7 @@ pkg_search_diagnostic() {
 install_first_candidate() {
   local capability="$1"; shift
   local candidate
+  pkg_refresh || return $?
   if ((DRY_RUN)); then pkg_install "$1"; return 0; fi
   for candidate in "$@"; do
     if pkg_candidate_exists "$candidate"; then
@@ -1833,6 +1834,21 @@ proot_distro_is_installed() {
   proot-distro list --quiet 2>/dev/null | grep -Fxq -- "$PROOT_DISTRO"
 }
 
+run_proot_installer() {
+  local installer="$1" code
+  shift
+  if ((DRY_RUN)); then
+    log DRYRUN "$(printf '%q ' "$@")"
+    return 0
+  fi
+  debug "run: $(printf '%q ' "$@")"
+  set +e
+  "$@" <"$installer" 2>&1 | tee -a "$LOG_FILE"
+  code="${PIPESTATUS[0]}"
+  set -e
+  return "$code"
+}
+
 delegate_to_proot() {
   [[ "$ENVIRONMENT" == "termux" && "$TARGET" == "proot" ]] || return 1
   stage "proot-bootstrap"
@@ -1859,7 +1875,7 @@ delegate_to_proot() {
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     LANG=C.UTF-8 LC_ALL=C.UTF-8
   )
-  run proot-distro login "$PROOT_DISTRO" -- "${clean_env[@]}" /bin/bash -s -- "${args[@]}" <"$installer"
+  run_proot_installer "$installer" proot-distro login "$PROOT_DISTRO" -- "${clean_env[@]}" /bin/bash -s -- "${args[@]}"
 }
 
 main() {
