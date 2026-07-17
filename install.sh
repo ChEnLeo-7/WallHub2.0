@@ -1507,7 +1507,11 @@ EOF
 install_termux_service() {
   SERVICE_KIND="runit"
   command -v sv >/dev/null 2>&1 || install_first_candidate termux-services termux-services || die "$EXIT_SERVICE" "termux-services is unavailable"
-  local service_dir="$PREFIX/var/service/wallhub" run_file="$TEMP_DIR/run" log_run="$TEMP_DIR/log-run"
+  local service_dir="$PREFIX/var/service/wallhub" run_file="$TEMP_DIR/run" log_run="$TEMP_DIR/log-run" status_output="" was_running=0
+  if ((!DRY_RUN)) && [[ -d "$service_dir" ]]; then
+    status_output="$(sv status "$service_dir" 2>/dev/null || true)"
+    [[ "$status_output" == run:* ]] && was_running=1
+  fi
   cat >"$run_file" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
 exec 2>&1
@@ -1529,7 +1533,7 @@ EOF
   ensure_termux_runsvdir
   wait_for_termux_service_supervision "$service_dir"
   run rm -f "$service_dir/down"
-  run sv up "$service_dir"
+  if ((was_running)); then run sv restart "$service_dir"; else run sv up "$service_dir"; fi
 }
 
 wait_for_termux_service_supervision() {

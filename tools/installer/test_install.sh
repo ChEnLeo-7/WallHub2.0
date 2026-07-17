@@ -803,6 +803,9 @@ assert_file_contains "$WALLHUB_SV_CALLS" "sv up $PREFIX/var/service/wallhub" "Te
 [[ ! -e "$PREFIX/var/service/wallhub/down" ]] || fail "Termux service down marker was retained"
 if grep -Fq 'sv-enable' "$WALLHUB_SV_CALLS"; then fail "Termux install depended on sv-enable before supervision"; fi
 pass "Termux install waits for runsv supervision before enabling the service"
+export WALLHUB_SV_STATUS='run: wallhub: (pid 123) 1s'
+install_termux_service
+assert_file_contains "$WALLHUB_SV_CALLS" "sv restart $PREFIX/var/service/wallhub" "Termux reinstall restarts an already-running service"
 unset SVDIR
 SERVICE_KIND=runit; export WALLHUB_SV_STATUS='down: wallhub: 0s, normally up'
 if service_action status >/dev/null 2>&1; then fail "runit down status"; fi

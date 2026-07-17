@@ -416,8 +416,9 @@ restore-mirrors
 - [x] 修复原生 Termux 新进程缺少 `SVDIR` 时 `check` 误报 runit 服务未运行的问题，并完成真机复测。
 - [x] 修复首次隔离安装创建空 `cache-settings.json` 导致运行时 JSON 解析告警的问题，确保不覆盖非空用户设置。
 - [x] 修复 Termux 已自动选择任意第三方镜像时 `--mirror china` 未真正切换清华源的问题，并完成备份恢复真机复测。
-- [ ] 修复默认卸载后继续 purge 时缺失 runit 服务噪声与持久日志重建配置目录的竞态，并从失败现场复测。
-- [ ] 修复长期运行的 `runsvdir` 尚未为重建服务创建 supervise 通道时安装立即失败的问题，并完成卸载后重装复测。
+- [x] 修复默认卸载后继续 purge 时缺失 runit 服务噪声与持久日志重建配置目录的竞态，并完成干净序列复测。
+- [x] 修复长期运行的 `runsvdir` 尚未为重建服务创建 supervise 通道时安装立即失败的问题，并完成卸载后重装复测。
+- [ ] 修复重复 install/repair 对已运行 runit 服务只执行 `sv up`、未重启加载新源码和环境的问题。
 - [ ] 修复后先跑本地门禁，再更新验证分支。
 - [ ] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -630,6 +631,9 @@ restore-mirrors
 | 2026-07-17 | 阶段 12 | Termux连续purge候选修复 | 实现完成待现场复测 | 缺失runit服务不再调用sv；删除config前把后续日志切到受限临时文件，消除tee重建竞态；真实持久日志回归测试通过 | 原生Termux安装器135/135、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏测试日志SHA-256`cc327d05267d059a2068794edd416240195e661602a97208622216daf6af8e7b` |
 | 2026-07-17 | 阶段 11/12 | Termux卸载后重装runit竞态 | 失败待修复 | purge失败已删除state，故不伪造状态续跑；固定修复提交重新安装到service-installation时退出40 | 长期运行的runsvdir尚未创建`supervise/ok`，立即`sv-enable`返回1；code/data/config为本次半成品，保留用于修复后重装 |
 | 2026-07-17 | 阶段 12 | Termux runsv重建候选修复 | 实现完成待现场复测 | 服务先带`down`标记，等待runsv创建supervise通道后移除标记并绝对路径启动；不再依赖sv-enable时序 | 原生Termux安装器136/136、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏测试日志SHA-256`3e42cf7d3c5cf202db6afaa878907c98bdd8572210f2607f2e9459b6bcc90c67` |
+| 2026-07-17 | 阶段 12 | Termux runsv与purge组合真机复测 | 完成 | 固定提交`8779096`从service半成品恢复安装并通过health；随后默认卸载保留data/config，连续purge删除code/data/config/service | 测试前清华源恢复SHA-256`04f0caa3ed57ecd2e33562c409b0f47985e7239696c79aa1a068db5b46714f71`；脱敏日志SHA-256`b278afe99ebded4f6e424597909bac57d88bbf69f28aa9dfe4d2d388369ea6fe` |
+| 2026-07-17 | 阶段 11/12 | Termux重复安装未重启 | 失败待修复 | 半安装服务已由runsv自动启动，固定修复安装完成后sv状态PID与运行时长未变化 | `sv up`不会重启已有服务，可能继续运行旧源码/环境；需区分首次up与已运行restart并补调用断言 |
+| 2026-07-17 | 阶段 12 | Termux重复安装restart候选 | 实现完成待真机复测 | 安装服务前读取绝对路径状态；原先run则restart，未运行则up；连续两次服务安装调用断言通过 | 原生Termux安装器137/137、Node 256/256、TypeScript、Vite、Python 17/17、py_compile及ShellCheck 0.11零告警通过；脱敏测试日志SHA-256`97549a5e5a8114c34453a48ad4b5761372fde5a056d60980289dd2fa8b78f93d` |
 
 ## 八、远程测试资源登记
 
