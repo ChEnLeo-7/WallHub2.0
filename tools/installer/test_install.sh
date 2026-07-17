@@ -249,7 +249,9 @@ shim_dir="$TEST_TMP/shims"; shim_log="$TEST_TMP/shims.log"
 mkdir -p "$shim_dir"
 cat >"$shim_dir/package-shim" <<'SHIM'
 #!/usr/bin/env bash
-printf '%s %s\n' "$(basename "$0")" "$*" >>"$WALLHUB_SHIM_LOG"
+printf '%s %s DEBIAN_FRONTEND=%s UCF_FORCE_CONFFOLD=%s TERMUX_PKG_NO_MIRROR_SELECT=%s\n' \
+  "$(basename "$0")" "$*" "${DEBIAN_FRONTEND:-}" "${UCF_FORCE_CONFFOLD:-}" \
+  "${TERMUX_PKG_NO_MIRROR_SELECT:-}" >>"$WALLHUB_SHIM_LOG"
 exit 0
 SHIM
 chmod 700 "$shim_dir/package-shim"
@@ -304,15 +306,19 @@ assert_eq direct-ok "$(tr -d '\n' <"$TEST_TMP/download.out")" "direct GitHub fal
   PACMAN_KEYRING_READY=1
   for manager in apt dnf pacman zypper pkg; do
     PKG_MANAGER="$manager"; PACKAGE_INDEX_UPDATED=0
+    MIRROR=official
+    [[ "$manager" == pkg ]] && MIRROR=china
     pkg_refresh
     pkg_install wallhub-test-package
   done
 )
-assert_file_contains "$shim_log" 'apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update' "apt command shim"
+assert_file_contains "$shim_log" 'apt-get -o Acquire::Retries=3' "apt command shim"
+assert_file_contains "$shim_log" 'Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold' "apt and dpkg use the default conffile action"
+assert_file_contains "$shim_log" 'DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1' "apt and Termux package operations are non-interactive"
 assert_file_contains "$shim_log" 'dnf -y makecache' "dnf command shim"
 assert_file_contains "$shim_log" 'pacman -Syu --noconfirm' "pacman command shim"
 assert_file_contains "$shim_log" 'zypper --non-interactive refresh' "zypper command shim"
-assert_file_contains "$shim_log" 'pkg update -y' "Termux pkg command shim"
+assert_file_contains "$shim_log" 'pkg update -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -y DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1 TERMUX_PKG_NO_MIRROR_SELECT=1' "Termux pkg accepts the default conffile action without changing the China mirror"
 pass "uname command shim drives arm64 detection"
 
 proot_apt_log="$TEST_TMP/proot-apt.log"

@@ -434,6 +434,7 @@ restore-mirrors
 - [x] 修复Proot内部`nohup`服务随委派登录会话结束被清理的问题，使用可登记、可停止的detached Proot会话保持WallHub运行。
 - [x] 修复宿主委派的install/repair在普通login内重复启动临时服务并执行无持久意义health的问题，由detached宿主控制器承担唯一启动和最终health。
 - [x] 修复 Android Proot 中官方 glibc `.NET 9` 因 GC 自动堆初始化失败而被误判为 SDK/Runtime 不可用的问题，仅为安装器能力探测设置与应用现有兼容层一致的受限堆参数。
+- [x] 修复清华源切换后的 Termux `pkg` / Debian `apt` 配置文件确认仍等待终端输入的问题；自动采用默认项，并防止 Termux 自动改选其他镜像。
 - [x] 修复后先跑本地门禁，再更新验证分支。
 - [x] 受影响平台重新从干净环境执行远程一键安装。
 - [ ] 所有必需验证通过后，将 `installer-validation` 正常合并到 `main`。
@@ -681,6 +682,7 @@ restore-mirrors
 | 2026-07-17 | 阶段 11 | Ubuntu Proot双镜像无副作用矩阵 | 完成 | 固定Raw脚本执行官方源、国内源dry-run均退出0；断言Ubuntu创建、resolver、CA、host-managed及镜像参数 | 前后Proot列表、Termux dpkg状态哈希、Ubuntu宿主配置均不变，既有Debian health正常；两份日志SHA-256分别为`68800b27bca3451294f065b1d1281fc48cd83aed719fc323dd1552ea86df8469`、`f691b6779473b5d954b0a48f41ee3c0a9f07ac6bb827e1c8dc38112e8d6a9b1d`；最终八份日志敏感匹配0 |
 | 2026-07-17 | 阶段 11/12 | Termux Proot最终门禁与资源清理 | 完成 | Ubuntu官方源转换/恢复断言加入后安装器175/175；ShellCheck 0.11.0零诊断；最终purge退出0 | 测试日志`48b31a7b90af8d180c53805ba8d182a02821e7d40304cc850c5da529bd31ff1a`；ShellCheck`3a7a725e42f51138c21f675ed4d503a12da1288320823ed8d47009f56643aedc`；purge`159bcd835d039a191c2b5e4fc84c374b7b4ea7c27b3ffb19281f229849da6829`；敏感匹配0 |
 | 2026-07-17 | 阶段 11 | Android最终状态审计 | 完成 | Proot列表空、WallHub/宿主控制器/验证缓存均不存在、相关进程0 | Termux主源SHA-256恢复为测试前`04f0caa3ed57ecd2e33562c409b0f47985e7239696c79aa1a068db5b46714f71`；仅移除本次登记Debian及测试路径 |
+| 2026-07-17 | 阶段 12 | 清华源包管理确认自动化 | 完成 | apt/Termux pkg统一传入dpkg默认配置动作；无默认动作时保留当前配置；清华源模式禁止pkg自动改选镜像 | 两个脚本Bash语法通过；新增包管理断言全部通过；完整Git Bash测试运行至既有Windows符号链接语义节点，非本次回归 |
 
 ## 八、远程测试资源登记
 

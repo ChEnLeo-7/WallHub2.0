@@ -77,6 +77,10 @@ PACMAN_KEYRING_SOURCE_DIR="${WALLHUB_PACMAN_KEYRING_SOURCE_DIR:-/usr/share/pacma
 
 declare -a ROOT_PREFIX=()
 declare -a TEMP_PATHS=()
+declare -a DPKG_DEFAULT_OPTIONS=(
+  -o Dpkg::Options::=--force-confdef
+  -o Dpkg::Options::=--force-confold
+)
 
 usage() {
   cat <<'EOF'
@@ -543,6 +547,19 @@ ensure_pacman_keyring() {
   PACMAN_KEYRING_READY=1
 }
 
+termux_pkg() {
+  local command="$1"
+  shift
+  local -a environment=(
+    DEBIAN_FRONTEND=noninteractive
+    UCF_FORCE_CONFFOLD=1
+  )
+  if [[ "$MIRROR" == "china" ]]; then
+    environment+=(TERMUX_PKG_NO_MIRROR_SELECT=1)
+  fi
+  run env "${environment[@]}" pkg "$command" "${DPKG_DEFAULT_OPTIONS[@]}" "$@"
+}
+
 pkg_refresh() {
   ((PACKAGE_INDEX_UPDATED)) && return 0
   stage "package-index"
@@ -562,7 +579,7 @@ pkg_refresh() {
       fi
       ;;
     zypper) as_root zypper --non-interactive refresh ;;
-    pkg) run pkg update -y ;;
+    pkg) termux_pkg update -y ;;
   esac || return $?
   PACKAGE_INDEX_UPDATED=1
 }
@@ -570,19 +587,19 @@ pkg_refresh() {
 apt_get() {
   local retries=3
   [[ "$ENVIRONMENT" == "proot" ]] && retries=1
-  local -a options=(-o "Acquire::Retries=$retries")
+  local -a options=(-o "Acquire::Retries=$retries" "${DPKG_DEFAULT_OPTIONS[@]}")
   if [[ "$ENVIRONMENT" == "proot" && -r "${WALLHUB_PROOT_BOOTSTRAP_CA:-}" ]]; then
     options+=(-o "Acquire::https::CaInfo=$WALLHUB_PROOT_BOOTSTRAP_CA")
   fi
   local code
-  if as_root env DEBIAN_FRONTEND=noninteractive apt-get "${options[@]}" "$@"; then return 0; else code=$?; fi
+  if as_root env DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1 apt-get "${options[@]}" "$@"; then return 0; else code=$?; fi
   [[ "$ENVIRONMENT" == "proot" ]] || return "$code"
   log WARN "Proot apt failed on the detected dual-stack route; retrying this command over IPv4"
-  options=(-o Acquire::Retries=3 -o Acquire::ForceIPv4=true)
+  options=(-o Acquire::Retries=3 -o Acquire::ForceIPv4=true "${DPKG_DEFAULT_OPTIONS[@]}")
   if [[ -r "${WALLHUB_PROOT_BOOTSTRAP_CA:-}" ]]; then
     options+=(-o "Acquire::https::CaInfo=$WALLHUB_PROOT_BOOTSTRAP_CA")
   fi
-  as_root env DEBIAN_FRONTEND=noninteractive apt-get "${options[@]}" "$@"
+  as_root env DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1 apt-get "${options[@]}" "$@"
 }
 
 pkg_candidate_exists() {
@@ -604,7 +621,7 @@ pkg_install() {
     dnf) as_root dnf install -y "$@" ;;
     pacman) ensure_pacman_keyring && pacman_run -S --needed --noconfirm "$@" ;;
     zypper) as_root zypper --non-interactive install -y "$@" ;;
-    pkg) run pkg install -y "$@" ;;
+    pkg) termux_pkg install -y "$@" ;;
   esac
 }
 
