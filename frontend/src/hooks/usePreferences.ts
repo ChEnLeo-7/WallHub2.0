@@ -11,10 +11,13 @@ import {
   type Filters,
 } from '@/lib/normalizers';
 import { DEFAULT_DETAILS_PRESENTATION, normalizeDetailsPresentation } from '../../../src/shared/detailsPresentation.mjs';
+import { DEFAULT_VIDEO_PLAYER_MODE, normalizeVideoPlayerMode } from '../../../src/shared/videoControls.mjs';
 
 export const PREFS_KEY = 'wallhub-react-prefs-v1';
 export const SEARCH_SESSION_KEY = 'wallhub-search-session-v1';
 export const SEARCH_SESSION_TTL_MS = 60 * 60 * 1000;
+
+export type VideoPlayerMode = 'native' | 'compatibility';
 
 const DEFAULT_GENRES = [
   { id: 'Abstract' },
@@ -63,10 +66,11 @@ export type AppPrefs = {
   desktopColumns: number;
   homePageSize: number;
   prefetchNextPage: boolean;
+  videoPlayerMode: VideoPlayerMode;
   language: 'zh' | 'en';
   fixedPanelHeight: boolean;
   detailsPresentation: 'classic' | 'redesigned';
-  homeCardDefaultAction: 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage';
+  homeCardDefaultAction: 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage' | 'remoteSubscribe';
   homeCardDefaultActionVersion: number;
 };
 
@@ -109,11 +113,12 @@ export function readPrefs(): AppPrefs {
     desktopColumns: 0,
     homePageSize: 30,
     prefetchNextPage: false,
+    videoPlayerMode: DEFAULT_VIDEO_PLAYER_MODE as VideoPlayerMode,
     language: 'zh' as const,
     fixedPanelHeight: false,
     detailsPresentation: DEFAULT_DETAILS_PRESENTATION,
     homeCardDefaultAction: 'clientDownload' as const,
-    homeCardDefaultActionVersion: 3,
+    homeCardDefaultActionVersion: 4,
   };
   try {
     const parsed = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
@@ -131,6 +136,7 @@ export function readPrefs(): AppPrefs {
       desktopColumns: normalizeDesktopColumns(parsed.desktopColumns),
       homePageSize: normalizeHomePageSize(parsed.homePageSize),
       prefetchNextPage: !!parsed.prefetchNextPage,
+      videoPlayerMode: normalizeVideoPlayerMode(parsed.videoPlayerMode) as VideoPlayerMode,
       language: normalizeLanguage(parsed.language),
       fixedPanelHeight: !!parsed.fixedPanelHeight,
       detailsPresentation: normalizeDetailsPresentation(parsed.detailsPresentation),

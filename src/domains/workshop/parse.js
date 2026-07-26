@@ -189,7 +189,8 @@ function parseWorkshopBrowseHtml(html) {
   let totalCount = 0;
   let totalPages = 0;
 
-  const showingM = source.match(/[Ss]howing\s+[\d,]+-[\d,]+\s+of\s+([\d,]+)/);
+  const showingM = source.match(/[Ss]howing\s+[\d,]+-[\d,]+\s+of\s+([\d,]+)/) ||
+    source.match(/(?:正在)?显示(?:第)?\s*[\d,]+\s*-\s*[\d,]+\s*项?\s*[,，]?\s*共\s*([\d,]+)\s*项?/);
   if (showingM) totalCount = parseInt(showingM[1].replace(/,/g, ''));
 
   if (!totalCount) {
@@ -311,149 +312,8 @@ function parseWorkshopBrowseHtml(html) {
   };
 }
 
-function decodeJsonScriptText(value) {
-  return decodeHtml(String(value || '')
-    .replace(/\\\//g, '/')
-    .replace(/\u0026/g, '&')
-    .replace(/\u003c/gi, '<')
-    .replace(/\u003e/gi, '>'));
-}
-
-function extractBalancedJson(source, start) {
-  let depth = 0;
-  let quote = '';
-  let escaped = false;
-  for (let i = start; i < source.length; i += 1) {
-    const ch = source[i];
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === '\\') {
-        escaped = true;
-      } else if (ch === quote) {
-        quote = '';
-      }
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === '{' || ch === '[') depth += 1;
-    if (ch === '}' || ch === ']') {
-      depth -= 1;
-      if (depth === 0) return source.slice(start, i + 1);
-    }
-  }
-  return '';
-}
-
-function parseNumber(value) {
-  const n = parseInt(String(value == null ? '' : value).replace(/[^\d]/g, ''), 10);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
-
-function normalizeSsrItem(item) {
-  if (!item || typeof item !== 'object') return null;
-  const id = String(item.publishedfileid || item.fileid || item.id || '').replace(/[^\d]/g, '');
-  if (!id) return null;
-  const preview = item.preview_url || item.preview || item.previewurl || item.image || item.img || '';
-  const title = item.title || item.name || item.file_title || '';
-  const tags = Array.isArray(item.tags)
-    ? item.tags.map(tag => (typeof tag === 'string' ? { tag } : tag)).filter(Boolean)
-    : [];
-  return {
-    publishedfileid: id,
-    title: cleanText(title) || `壁纸 ${id}`,
-    preview_url: cleanText(preview),
-    creator: String(item.creator || item.creator_id || item.steamid || item.owner || ''),
-    author: cleanText(item.author || item.creator_name || item.username || ''),
-    time_created: parseNumber(item.time_created || item.created),
-    time_updated: parseNumber(item.time_updated || item.updated),
-    subscriptions: parseNumber(item.subscriptions || item.subs),
-    lifetime_subscriptions: parseNumber(item.lifetime_subscriptions || item.subscriptions || item.subs),
-    views: parseNumber(item.views),
-    favorited: parseNumber(item.favorited || item.favorites),
-    lifetime_favorited: parseNumber(item.lifetime_favorited || item.favorited || item.favorites),
-    file_size: parseNumber(item.file_size || item.size),
-    short_description: cleanText(item.short_description || item.description || ''),
-    tags,
-  };
-}
-
-function findSsrPayload(value) {
-  if (typeof value === 'string' && /workshop_browse|publishedfiledetails|results|total_pages|total_count/.test(value)) {
-    try {
-      return findSsrPayload(JSON.parse(value));
-    } catch {}
-  }
-  if (!value || typeof value !== 'object') return null;
-  if (Array.isArray(value.queryKey) && value.queryKey[0] === 'workshop_browse' && value.state && value.state.data) {
-    return findSsrPayload(value.state.data);
-  }
-  const results = Array.isArray(value.results) ? value.results
-    : Array.isArray(value.items) ? value.items
-    : Array.isArray(value.publishedfiledetails) ? value.publishedfiledetails
-    : null;
-  if (results) {
-    return {
-      results,
-      totalCount: parseNumber(value.total_count || value.total || value.num_results || value.totalItems),
-      totalPages: parseNumber(value.total_pages || value.pages || value.num_pages),
-      currentPage: parseNumber(value.current_page || value.page || value.p) || 1,
-    };
-  }
-  for (const child of Object.values(value)) {
-    const found = findSsrPayload(child);
-    if (found) return found;
-  }
-  return null;
-}
-
-function parseWorkshopBrowseSsr(html) {
-  const source = String(html || '');
-  const candidates = [];
-  const jsonScriptRe = /<script[^>]+type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  for (const match of source.matchAll(jsonScriptRe)) {
-    candidates.push(decodeJsonScriptText(match[1]));
-  }
-  const jsonParseRe = /JSON\.parse\("((?:\\.|[^"\\])*)"\)/g;
-  for (const match of source.matchAll(jsonParseRe)) {
-    try {
-      candidates.push(JSON.parse(`"${match[1]}"`));
-    } catch {}
-  }
-  const markerRe = /(?:results|total_count|total_pages)["']?\s*:/gi;
-  for (const marker of source.matchAll(markerRe)) {
-    const prefix = source.lastIndexOf('{', marker.index);
-    if (prefix >= 0) {
-      const json = extractBalancedJson(source, prefix);
-      if (json) candidates.push(decodeJsonScriptText(json));
-    }
-  }
-
-  for (const raw of candidates) {
-    try {
-      const payload = findSsrPayload(JSON.parse(raw));
-      if (!payload || !Array.isArray(payload.results)) continue;
-      const results = payload.results.map(normalizeSsrItem).filter(Boolean);
-      return {
-        ok: true,
-        source: 'community-ssr',
-        currentPage: payload.currentPage || 1,
-        totalPages: payload.totalPages || 0,
-        totalCount: payload.totalCount || 0,
-        results,
-      };
-    } catch {}
-  }
-
-  return { ok: false, source: 'community-ssr', currentPage: 1, totalPages: 0, totalCount: 0, results: [] };
-}
-
 module.exports = {
   parseDetailHtml,
   parseComments,
   parseWorkshopBrowseHtml,
-  parseWorkshopBrowseSsr,
 };

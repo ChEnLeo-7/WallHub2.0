@@ -135,6 +135,8 @@ function createDownloadsController(deps = {}) {
       status,
     };
     if (status === 'preparing') {
+      const stage = String(snapshot.stage || '').trim().toLowerCase();
+      if (stage === 'downloading' || stage === 'converting') result.stage = stage;
       const elapsedMs = Number(snapshot.elapsedMs);
       if (Number.isFinite(elapsedMs) && elapsedMs >= 0) result.elapsedMs = Math.floor(elapsedMs);
     } else if (status === 'ready') {

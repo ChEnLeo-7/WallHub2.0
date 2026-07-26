@@ -56,34 +56,39 @@ function createMpkgConversionService(options = {}) {
     }
   }
 
-  function pythonDependencyStatus(python) {
+  function pythonDependencyStatus(python, options = {}) {
     const command = String(python || '').trim();
     if (!command) return { ok: false, error: 'empty python command' };
+    const requireSceneDependencies = options.requireSceneDependencies !== false;
     try {
       const script = [
         'import json',
         'import sys',
         'missing=[]',
-        'try:',
-        ' from PIL import Image',
-        'except Exception:',
-        ' missing.append("Pillow")',
-        'try:',
-        ' import lz4.block',
-        'except Exception:',
-        ' missing.append("lz4")',
+        ...(requireSceneDependencies ? [
+          'try:',
+          ' from PIL import Image',
+          'except Exception:',
+          ' missing.append("Pillow")',
+          'try:',
+          ' import lz4.block',
+          'except Exception:',
+          ' missing.append("lz4")',
+        ] : []),
         'accelerated_dxt=False',
-        'try:',
-        ' import texture2ddecoder',
-        ' accelerated_dxt=hasattr(texture2ddecoder, "decode_bc3")',
-        'except Exception:',
-        ' pass',
         'etcpak_available=False',
-        'try:',
-        ' import etcpak',
-        ' etcpak_available=True',
-        'except Exception:',
-        ' pass',
+        ...(requireSceneDependencies ? [
+          'try:',
+          ' import texture2ddecoder',
+          ' accelerated_dxt=hasattr(texture2ddecoder, "decode_bc3")',
+          'except Exception:',
+          ' pass',
+          'try:',
+          ' import etcpak',
+          ' etcpak_available=True',
+          'except Exception:',
+          ' pass',
+        ] : []),
         'print(json.dumps({"executable": sys.executable, "acceleratedDxt": accelerated_dxt, "etcpakAvailable": etcpak_available}))',
         'raise SystemExit(1 if missing else 0)',
       ].join('\n');
@@ -106,7 +111,8 @@ function createMpkgConversionService(options = {}) {
     }
   }
 
-  function findPythonExecutable() {
+  function findPythonExecutable(options = {}) {
+    const requireSceneDependencies = options.requireSceneDependencies !== false;
     const candidates = [
       process.env.PYTHON || '',
       process.env.PYTHON3 || '',
@@ -115,12 +121,13 @@ function createMpkgConversionService(options = {}) {
       process.platform === 'win32' ? 'py' : ''
     ].filter(Boolean);
     const missing = [];
+    pythonLastError = '';
     for (const candidate of candidates) {
       const found = commandExists(candidate);
       if (!found) continue;
-      const status = checkPythonDependencies(found);
+      const status = checkPythonDependencies(found, { requireSceneDependencies });
       if (status.ok) {
-        if (status.acceleratedDxt === false) {
+        if (requireSceneDependencies && status.acceleratedDxt === false) {
           logger.warn('[MPKG] Selected Python lacks texture2ddecoder; DXT1/DXT5 conversion will be much slower. Install it with: pip install texture2ddecoder');
         }
         return found;
@@ -128,7 +135,10 @@ function createMpkgConversionService(options = {}) {
       missing.push(`${found}: ${status.error}`);
     }
     pythonLastError = missing.join(' | ');
-    if (missing.length) logger.warn(`[MPKG] No Python with Pillow/lz4 found. Checked: ${pythonLastError}`);
+    if (missing.length) {
+      const requirement = requireSceneDependencies ? 'Pillow/lz4' : 'the standard library';
+      logger.warn(`[MPKG] No Python with ${requirement} found. Checked: ${pythonLastError}`);
+    }
     return '';
   }
 
@@ -168,8 +178,44 @@ function createMpkgConversionService(options = {}) {
     }
   }
 
+  function readWorkshopProject(dir) {
+    try {
+      if (!hasWorkshopFile(dir, 'project.json')) return null;
+      const raw = fs.readFileSync(path.join(dir, 'project.json'), 'utf8').replace(/^\uFEFF/, '');
+      const project = JSON.parse(raw);
+      return project && typeof project === 'object' && !Array.isArray(project) ? project : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function hasWorkshopProjectFile(dir, fileName) {
+    try {
+      const root = path.resolve(String(dir || ''));
+      const rawName = String(fileName || '').trim();
+      if (!root || !rawName || path.isAbsolute(rawName)) return false;
+      const relativeName = rawName.replace(/[\\/]+/g, path.sep);
+      const filePath = path.resolve(root, relativeName);
+      const relativePath = path.relative(root, filePath);
+      if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) return false;
+      return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+    } catch {
+      return false;
+    }
+  }
+
   function isSceneWorkshopDir(dir) {
     return hasWorkshopFile(dir, 'scene.pkg') && hasWorkshopFile(dir, 'project.json') && hasWorkshopPreview(dir);
+  }
+
+  function isVideoWorkshopDir(dir) {
+    const project = readWorkshopProject(dir);
+    return !!(
+      project &&
+      String(project.type || '').trim().toLowerCase() === 'video' &&
+      hasWorkshopPreview(dir) &&
+      hasWorkshopProjectFile(dir, project.file)
+    );
   }
 
   function outputPathForItem(itemDir, id, textureProfile = currentTextureProfile()) {
@@ -179,11 +225,13 @@ function createMpkgConversionService(options = {}) {
     return path.join(outDir, `${safeId}${suffix}.mpkg`);
   }
 
-  function normalizeError(error) {
+  function normalizeError(error, options = {}) {
     const message = String(error && error.message || error || '').trim();
     if (/Pillow is required|No module named ['"]PIL|ModuleNotFoundError.*PIL/i.test(message)) return 'MPKG 转换需要 Python Pillow：pip install Pillow';
     if (/lz4 is required|No module named ['"]lz4|ModuleNotFoundError.*lz4/i.test(message)) return 'MPKG 转换需要 Python lz4：pip install lz4';
-    if (/not recognized|not found|ENOENT|No such file or directory/i.test(message)) return '未找到 Python，请先安装 Python 3，并安装 Pillow、lz4。';
+    if (/not recognized|not found|ENOENT|No such file or directory/i.test(message)) {
+      return options.isVideo ? '未找到 Python，请先安装 Python 3。' : '未找到 Python，请先安装 Python 3，并安装 Pillow、lz4。';
+    }
     return message || 'MPKG 转换失败';
   }
 
@@ -201,12 +249,15 @@ function createMpkgConversionService(options = {}) {
 
   async function buildForItem(itemDir, id, outputPath, textureProfile = currentTextureProfile()) {
     const itemLabel = String(id || path.basename(itemDir) || 'unknown');
-    const profile = textureProfile === 'compact' ? 'compact' : 'fast';
+    const isVideoProject = isVideoWorkshopDir(itemDir);
+    const profile = isVideoProject ? 'fast' : (textureProfile === 'compact' ? 'compact' : 'fast');
+    const sourceLabel = isVideoProject ? 'video -> MPKG' : 'PKG -> MPKG';
     const startedAt = Date.now();
-    const python = findPythonExecutable();
+    const python = findPythonExecutable({ requireSceneDependencies: !isVideoProject });
     if (!python) {
       const detail = pythonLastError ? `；已检查：${pythonLastError}` : '';
-      throw Object.assign(new Error(`未找到可用于 MPKG 转换的 Python，请安装 Pillow 和 lz4：pip install Pillow lz4${detail}`), { statusCode: 500 });
+      const requirement = isVideoProject ? '请安装 Python 3' : '请安装 Pillow 和 lz4：pip install Pillow lz4';
+      throw Object.assign(new Error(`未找到可用于 MPKG 转换的 Python，${requirement}${detail}`), { statusCode: 500 });
     }
     ensureDir(path.dirname(outputPath));
     if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
@@ -228,7 +279,7 @@ function createMpkgConversionService(options = {}) {
     ];
     const timeoutMs = Math.max(60000, parseInt(process.env.WALLHUB_MPKG_TIMEOUT || '900000', 10) || 900000);
     try {
-      logger.log(`[MPKG] Starting ${profile} PKG -> MPKG conversion for item ${itemLabel}: ${itemDir} -> ${outputPath}`);
+      logger.log(`[MPKG] Starting ${profile} ${sourceLabel} conversion for item ${itemLabel}: ${itemDir} -> ${outputPath}`);
       debugLog(`conversion process start item=${itemLabel} python=selected timeoutMs=${timeoutMs} tempFile=${path.basename(tempPath)}`);
       const result = await runProcess(python, args, timeoutMs, {
         cwd: toolDir,
@@ -247,7 +298,7 @@ function createMpkgConversionService(options = {}) {
     } catch (error) {
       debugLog(`conversion process failed item=${itemLabel} elapsedMs=${Date.now() - startedAt} error=${String(error && error.message || error || 'unknown')}`);
       try { fs.rmSync(tempPath, { force: true }); } catch {}
-      throw Object.assign(new Error(normalizeError(error)), { statusCode: error.statusCode || 500 });
+      throw Object.assign(new Error(normalizeError(error, { isVideo: isVideoProject })), { statusCode: error.statusCode || 500 });
     }
     if (!fs.existsSync(tempPath) || fs.statSync(tempPath).size <= 0) {
       try { fs.rmSync(tempPath, { force: true }); } catch {}
@@ -259,7 +310,7 @@ function createMpkgConversionService(options = {}) {
     fs.renameSync(tempPath, outputPath);
     const outputStat = fs.statSync(outputPath);
     debugLog(`MPKG output published item=${itemLabel} bytes=${outputStat.size} elapsedMs=${Date.now() - startedAt}`);
-    logger.log(`[MPKG] Finished PKG -> MPKG conversion for item ${itemLabel}: ${outputPath} (${outputStat.size} bytes)`);
+    logger.log(`[MPKG] Finished ${sourceLabel} conversion for item ${itemLabel}: ${outputPath} (${outputStat.size} bytes)`);
     return outputPath;
   }
 
@@ -267,13 +318,15 @@ function createMpkgConversionService(options = {}) {
     if (!itemDir || !fs.existsSync(itemDir) || !fs.statSync(itemDir).isDirectory()) {
       throw Object.assign(new Error('项目文件夹不存在，无法转换 MPKG'), { statusCode: 404 });
     }
-    if (!isSceneWorkshopDir(itemDir)) {
-      throw Object.assign(new Error('仅场景类 Wallpaper 项目支持 MPKG 转换，需要包含 scene.pkg、project.json 和 preview.*'), { statusCode: 400 });
+    const isVideoProject = isVideoWorkshopDir(itemDir);
+    const isSceneProject = isSceneWorkshopDir(itemDir);
+    if (!isSceneProject && !isVideoProject) {
+      throw Object.assign(new Error('仅场景类或视频类 Wallpaper 项目支持 MPKG 转换；场景项目需要 scene.pkg、project.json 和 preview.*，视频项目需要 project.json 指向的视频文件和 preview.*'), { statusCode: 400 });
     }
     if (!fs.existsSync(toolScript)) {
       throw Object.assign(new Error('MPKG 转换工具缺失：tools/mpkg/mobile_mpkg.py'), { statusCode: 500 });
     }
-    const textureProfile = normalizeTextureProfile(requestedTextureProfile);
+    const textureProfile = isVideoProject ? 'fast' : normalizeTextureProfile(requestedTextureProfile);
     const outputPath = outputPathForItem(itemDir, id, textureProfile);
     if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
       debugLog(`existing MPKG ready item=${id} bytes=${fs.statSync(outputPath).size}`);
@@ -293,18 +346,27 @@ function createMpkgConversionService(options = {}) {
     return promise;
   }
 
-  async function ensureDownloadedItem(id, title) {
+  function notifyPreparationStage(options, stage) {
+    try {
+      if (typeof options?.onStageChange === 'function') options.onStageChange(stage);
+    } catch {}
+  }
+
+  async function ensureDownloadedItem(id, title, options = {}) {
     const existing = findDownloadedItemPath(id);
     if (existing && fs.existsSync(existing)) {
       const dir = fs.statSync(existing).isDirectory() ? existing : path.dirname(existing);
+      notifyPreparationStage(options, 'converting');
       return { itemDir: dir, title: title || `Wallpaper ${id}` };
     }
     const task = await createWorkshopQueueTask(id, title, { isVideo: false, videoOnly: false });
+    notifyPreparationStage(options, 'downloading');
     const startedAt = Date.now();
     while (true) {
       const sourcePath = findDownloadedItemPath(id);
       if (sourcePath && fs.existsSync(sourcePath)) {
         const dir = fs.statSync(sourcePath).isDirectory() ? sourcePath : path.dirname(sourcePath);
+        notifyPreparationStage(options, 'converting');
         return { itemDir: dir, title: task.title || title || `Wallpaper ${id}` };
       }
       if (task.status === 'error') {
@@ -325,7 +387,7 @@ function createMpkgConversionService(options = {}) {
     }
   }
 
-  async function prepareDownloadFile(id, title, requestedTextureProfile = currentTextureProfile()) {
+  async function prepareDownloadFile(id, title, requestedTextureProfile = currentTextureProfile(), options = {}) {
     const wantId = parseInt(id);
     if (!wantId) {
       const error = new Error('Invalid id');
@@ -335,7 +397,7 @@ function createMpkgConversionService(options = {}) {
     const startedAt = Date.now();
     const textureProfile = normalizeTextureProfile(requestedTextureProfile);
     debugLog(`prepare request item=${wantId} profile=${textureProfile}`);
-    const { itemDir, title: resolvedTitle } = await ensureDownloadedItem(wantId, title);
+    const { itemDir, title: resolvedTitle } = await ensureDownloadedItem(wantId, title, options);
     debugLog(`source ready item=${wantId} source=available`);
     const mpkgPath = await ensureForItem(itemDir, wantId, textureProfile);
     const stat = fs.statSync(mpkgPath);
@@ -349,7 +411,7 @@ function createMpkgConversionService(options = {}) {
 
   function isBuildingForDir(itemDir, id, requestedTextureProfile = currentTextureProfile()) {
     if (!itemDir) return false;
-    const textureProfile = normalizeTextureProfile(requestedTextureProfile);
+    const textureProfile = isVideoWorkshopDir(itemDir) ? 'fast' : normalizeTextureProfile(requestedTextureProfile);
     const buildKey = `${path.resolve(itemDir)}|${String(id || '')}|${textureProfile}`;
     return buildPromises.has(buildKey);
   }
@@ -361,6 +423,7 @@ function createMpkgConversionService(options = {}) {
     getCapabilities,
     hasWorkshopFile,
     hasWorkshopPreview,
+    isVideoWorkshopDir,
     isSceneWorkshopDir,
     outputPathForItem,
     normalizeError,

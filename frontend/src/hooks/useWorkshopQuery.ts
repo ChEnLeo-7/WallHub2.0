@@ -37,7 +37,8 @@ const ALL_RESOLUTION_TAGS = [
   'Other resolution',
   'Dynamic resolution',
 ];
-const PERSONAL_FILTER_PARAM_MAP: Record<string, { browsefilter?: string; special_filter?: number; path?: string }> = {
+const PERSONAL_FILTER_PARAM_MAP: Record<string, { browsefilter?: string; special_filter?: number; path?: string; browsesort?: string; actualsort?: string; section?: string }> = {
+  mysubscriptions: { browsefilter: 'mysubscriptions', path: 'myfiles' },
   myfavorites: { browsefilter: 'myfavorites', path: 'myfiles' },
   voted: { browsefilter: 'myvotes', path: 'myfiles' },
   // Steam's current Workshop UI exposes friend/follow filters through
@@ -98,12 +99,15 @@ export function buildQuery(filters: Filters, page: number, pageSize: number, exa
   else if (detailTagSearch.length === 0 && search) params.search_text = search;
   if (exactPhrase && search && !workshopId && !search.startsWith('author:') && detailTagSearch.length === 0) params.exact_phrase = 1;
   if (filters.personalFilter) {
-    const personal: { browsefilter?: string; special_filter?: number; path?: string } = PERSONAL_FILTER_PARAM_MAP[filters.personalFilter] || { browsefilter: filters.personalFilter };
+    const personal = PERSONAL_FILTER_PARAM_MAP[filters.personalFilter] || { browsefilter: filters.personalFilter };
     if (personal.browsefilter) params.browsefilter = personal.browsefilter;
     if (personal.special_filter != null) params.special_filter = personal.special_filter;
     if (personal.path) params.path = personal.path;
+    if (personal.browsesort) params.browsesort = personal.browsesort;
+    if (personal.actualsort) params.actualsort = personal.actualsort;
+    if (personal.section) params.section = personal.section;
   }
-  if (filters.days && filters.sort === 'trend' && filters.days !== '0') params.days = Number(filters.days);
+  if (!filters.personalFilter && filters.days && filters.sort === 'trend' && filters.days !== '0') params.days = Number(filters.days);
 
   const tags: string[] = [...detailTagSearch];
   const validTypes = normalizeFilterTypes(filters.types);
@@ -148,9 +152,7 @@ export function buildQuery(filters: Filters, page: number, pageSize: number, exa
     if (!tags.includes(tag)) params[`requiredtags[${Object.keys(params).filter((key) => /^requiredtags/.test(key)).length}]`] = tag;
   }
   const hasPartialGenreSelection = validGenres.length > 0 && validGenres.length < 25;
-  // Only explicit Workshop tag selections require Steam Community's official
-  // Browse result set. Type/rating and sorting stay on the normal query path
-  // unless the user enables Community page ordering.
+  // Explicit Workshop tag selections keep their Community-compatible query marker.
   if (detailTagSearch.length > 0 || hasPartialGenreSelection || filters.officialTags.length > 0 || resolutionTags.length > 0) {
     params.community_tag_filter = '1';
   }

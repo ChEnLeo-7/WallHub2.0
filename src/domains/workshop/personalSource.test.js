@@ -15,6 +15,7 @@ test('parseFriendFavoriteNames extracts unique persona names from Steam friend f
 });
 
 test('buildPersonalSourceLabel describes only personal filter provenance', () => {
+  assert.equal(buildPersonalSourceLabel('mysubscriptions', {}), '个人订阅');
   assert.equal(buildPersonalSourceLabel('myfavorites', {}), '我的收藏');
   assert.equal(buildPersonalSourceLabel('voted', {}), '我的投票');
   assert.equal(buildPersonalSourceLabel('friendsfavorites', { names: ['Alice', 'Bob'] }), '好友 Alice、Bob 收藏');

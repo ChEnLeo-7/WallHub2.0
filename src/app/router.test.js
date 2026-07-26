@@ -27,6 +27,12 @@ function baseDeps(overrides = {}) {
       handleQuery: async () => {},
       handleSteamAccessReady: async () => {},
       handleDetails: async () => {},
+      handlePersonalSource: async () => {},
+      handleSteamSubscribe: async () => {},
+      handleSteamUnsubscribe: async () => {},
+      handleSteamFavorite: async () => {},
+      handleSteamUnfavorite: async () => {},
+      handleSteamSubscriptionStatus: async () => {},
       handleDetailsBatch: async () => {},
       handleCommentsPage: async () => {},
       handleClientDownload: async () => {},
@@ -162,6 +168,41 @@ test('router starts and polls tracked Steam password logins before the legacy lo
   await router({ method: 'POST', url: '/api/steam/login' }, {});
 
   assert.deepEqual(called, ['start', 'status', 'legacy']);
+});
+
+test('router dispatches remote Steam Workshop subscriptions', async () => {
+  const { called, deps } = baseDeps({
+    handleSteamSubscribe: async () => { called.push('subscribe'); },
+  });
+  const router = createAppRouter(deps);
+
+  await router({ method: 'POST', url: '/api/steam/subscribe' }, {});
+
+  assert.deepEqual(called, ['subscribe']);
+});
+
+test('router dispatches remote Steam Workshop unsubscriptions', async () => {
+  const { called, deps } = baseDeps({
+    handleSteamUnsubscribe: async () => { called.push('unsubscribe'); },
+  });
+  const router = createAppRouter(deps);
+
+  await router({ method: 'POST', url: '/api/steam/unsubscribe' }, {});
+
+  assert.deepEqual(called, ['unsubscribe']);
+});
+
+test('router dispatches remote Steam Workshop favorite actions', async () => {
+  const { called, deps } = baseDeps({
+    handleSteamFavorite: async () => { called.push('favorite'); },
+    handleSteamUnfavorite: async () => { called.push('unfavorite'); },
+  });
+  const router = createAppRouter(deps);
+
+  await router({ method: 'POST', url: '/api/steam/favorite' }, {});
+  await router({ method: 'POST', url: '/api/steam/unfavorite' }, {});
+
+  assert.deepEqual(called, ['favorite', 'unfavorite']);
 });
 
 test('router marks queue snapshots as non-cacheable', async () => {

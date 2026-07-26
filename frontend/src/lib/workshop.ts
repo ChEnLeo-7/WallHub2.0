@@ -17,6 +17,53 @@ export function localizedItemType(type: string, text: { video: string; web: stri
   return text.scene;
 }
 
+const WORKSHOP_TAG_ZH: Record<string, string> = {
+  Approved: '广受好评',
+  'Audio responsive': '音频响应',
+  Customizable: '可自定义',
+  'Puppet Warp': '木偶变形',
+  'Media Integration': '媒体集成',
+  'User Shortcut': '用户快捷键',
+  'Video Texture': '视频纹理',
+  'Asset Pack': '资源包',
+  Standard: '标准分辨率',
+  Ultrawide: '超宽屏',
+  'Dual monitor': '双显示器',
+  'Triple monitor': '三显示器',
+  Portrait: '竖屏',
+  'Other resolution': '其他分辨率',
+  'Dynamic resolution': '动态分辨率',
+  Mobile: '移动端',
+};
+
+export function localizedWorkshopTag(
+  value: string,
+  language: 'zh' | 'en',
+  text: {
+    genres: Record<string, string> | object;
+    scene: string;
+    video: string;
+    web: string;
+    application: string;
+    ratingEveryone: string;
+    ratingQuestionable: string;
+    ratingMature: string;
+  },
+) {
+  const tag = String(value || '').trim();
+  if (language !== 'zh' || !tag) return tag;
+  const genre = (text.genres as Record<string, string>)[tag];
+  if (genre) return genre;
+  if (tag === 'Scene') return text.scene;
+  if (tag === 'Video') return text.video;
+  if (tag === 'Web') return text.web;
+  if (tag === 'Application') return text.application;
+  if (tag === 'Everyone') return text.ratingEveryone;
+  if (tag === 'Questionable') return text.ratingQuestionable;
+  if (tag === 'Mature') return text.ratingMature;
+  return WORKSHOP_TAG_ZH[tag] || tag;
+}
+
 export function steamProxyUrl(url: string) {
   try {
     const target = new URL(url);

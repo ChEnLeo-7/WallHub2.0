@@ -178,7 +178,7 @@ function createHttpClient(options = {}) {
         return doRequest(Object.assign({}, opts, { disableSteamAccessGateway: true, timeout: fallbackTimeout }), body, redirectCount, currentProxyIndex);
       });
     }
-    if (process.env.WALLHUB_DISABLE_CURL_PROXY !== '1') {
+    if (process.env.WALLHUB_DISABLE_CURL_PROXY !== '1' && !opts.disableCurlProxy) {
       return doRequestByCurlCascade(opts, body, attemptTimeout, proxies, currentProxyIndex, Object.assign({}, helpers, { shouldRetryWithNextProxy }));
     }
     return new Promise((resolve, reject) => {
@@ -341,6 +341,8 @@ function createHttpClient(options = {}) {
     const extraHeaders = Object.assign({}, extra || {});
     const signal = extraHeaders.signal;
     delete extraHeaders.signal;
+    const disableCurlProxy = !!extraHeaders.wallhubDisableCurlProxy;
+    delete extraHeaders.wallhubDisableCurlProxy;
     const routeOptions = extraHeaders.steamAccessRouteOptions;
     delete extraHeaders.steamAccessRouteOptions;
     const baseHeaders = {
@@ -364,6 +366,7 @@ function createHttpClient(options = {}) {
       timeout: timeout || 22000,
       signal,
       routeOptions,
+      disableCurlProxy,
     });
   }
 

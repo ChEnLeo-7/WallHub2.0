@@ -309,6 +309,43 @@ class MobileMpkgDebugTests(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_convert_video_workshop_keeps_media_bytes_and_matches_official_video_layout(self):
+        root = Path(tempfile.mkdtemp(prefix='wallhub-mpkg-video-convert-'))
+        try:
+            video_name = 'horizon.mp4'
+            video_bytes = b'original-video-bytes\x00\x01\x02'
+            preview_bytes = b'original-preview-bytes\xff'
+            (root / video_name).write_bytes(video_bytes)
+            (root / 'preview.jpg').write_bytes(preview_bytes)
+            (root / 'project.json').write_text(
+                '{"contentrating":"Everyone","file":"horizon.mp4","preview":"preview.jpg",'
+                '"tags":["Landscape"],"title":"Horizon","type":"video"}',
+                encoding='utf-8',
+            )
+            output = root / 'output.mpkg'
+
+            # Video packages do not parse scene.pkg or require texture libraries.
+            with patch.object(mobile_mpkg, 'PIL_AVAILABLE', False), \
+                 patch.object(mobile_mpkg, 'LZ4_AVAILABLE', False), \
+                 patch.object(mobile_mpkg.logger, 'info'), \
+                 patch.object(mobile_mpkg.logger, 'warning'):
+                mobile_mpkg.convert_workshop(root, output, overwrite=True, texture_profile='compact')
+
+            data = output.read_bytes()
+            self.assertEqual(mobile_mpkg.parse_mpkg_header(data)[:2], (mobile_mpkg.VIDEO_MPKG_MAGIC, 3))
+            files = mobile_mpkg.parse_mpkg_file_list(data)
+            self.assertEqual([file.file_name for file in files], [video_name, 'preview.jpg', 'project.json'])
+            payloads = {file.file_name: data[file.file_start:file.file_stop + 1] for file in files}
+            self.assertEqual(payloads[video_name], video_bytes)
+            self.assertEqual(payloads['preview.jpg'], preview_bytes)
+            self.assertEqual(
+                payloads['project.json'],
+                b'{\r\n\t"file" : "horizon.mp4",\r\n\t"preview" : "preview.jpg",\r\n'
+                b'\t"title" : "Horizon",\r\n\t"type" : "video"\r\n}',
+            )
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_texture_profile_keeps_decoder_totals_and_only_five_slowest_entries(self):
         report = mobile_mpkg.ConvertReport()
         report.add_dxt_decode('texture2ddecoder-bc3', 17)

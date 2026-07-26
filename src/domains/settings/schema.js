@@ -38,14 +38,12 @@ const DEFAULT_CACHE_SETTINGS = {
   steamApiKey: '',
   wallhubLogLevel: 'info',
   mpkgTextureProfile: 'fast',
-  useSteamApi: false,
   downloadDir: '',
   maxConcurrentDownloads: 1,
   steamCdnRouteStrategy: 'nearest',
   steamHttpProxyUrl: '',
   steamKitMaxDownloads: 0,
   steamKitDepotStreaming: false,
-  workshopHtmlOrderMode: false,
   wallhubSteamAccessEnhance: false,
   wallhubSteamAccessDirectWebApi: false,
   wallhubSteamWebApiRoute: 'follow',
@@ -161,6 +159,10 @@ function pruneRemovedSteamAccessSettings(settings) {
   delete settings.wallhubSteamAccessMigrationNotice;
   delete settings.wallhubSteamAccessSniMode;
   delete settings.wallhubSteamAccessSniHostname;
+  delete settings.steamRemoteSubscribeEnabled;
+  delete settings.useSteamApi;
+  delete settings.workshopQueryMode;
+  delete settings.workshopHtmlOrderMode;
   return settings;
 }
 
@@ -312,6 +314,7 @@ function normalizeLoadedCacheSettings(settings, options = {}) {
   const rawMode = String(settings && settings.wallhubSteamAccessMode || '').trim().toLowerCase();
   const hadStaticCdnHostControls = !!(settings && Object.prototype.hasOwnProperty.call(settings, 'wallhubSteamAccessStaticCdnHosts'));
   const next = Object.assign({}, DEFAULT_CACHE_SETTINGS, settings || {});
+  next.steamApiKey = String(next.steamApiKey || '').trim();
   next.wallhubLogLevel = normalizeWallhubLogLevel(next.wallhubLogLevel);
   next.mpkgTextureProfile = normalizeMpkgTextureProfile(next.mpkgTextureProfile);
   delete next.mpkgMaxConcurrentBuilds;
@@ -321,7 +324,6 @@ function normalizeLoadedCacheSettings(settings, options = {}) {
   pruneRemovedSteamAccessSettings(next);
   next.steamKitMaxDownloads = normalizeSteamKitMaxDownloads(next.steamKitMaxDownloads);
   next.steamKitDepotStreaming = !!next.steamKitDepotStreaming;
-  next.workshopHtmlOrderMode = !!next.workshopHtmlOrderMode;
   next.wallhubSteamAccessEnhance = !!next.wallhubSteamAccessEnhance;
   next.wallhubSteamAccessDirectWebApi = !!next.wallhubSteamAccessDirectWebApi;
   next.wallhubSteamWebApiRoute = normalizeSteamWebApiRoute(next.wallhubSteamWebApiRoute || (next.wallhubSteamAccessDirectWebApi ? 'direct' : 'follow'));
@@ -364,11 +366,9 @@ function normalizeLoadedCacheSettings(settings, options = {}) {
 }
 
 function applyCacheSettingsPatch(settings, data, options = {}) {
-  const next = pruneRemovedSteamAccessSettings(settings || {});
+  const next = pruneRemovedSteamAccessSettings(Object.assign({}, settings || {}));
   const has = (key) => Object.prototype.hasOwnProperty.call(data || {}, key);
   const previousSteamApiKey = String(settings && settings.steamApiKey || '').trim();
-  const previousUseSteamApi = !!(settings && settings.useSteamApi);
-  const previousWorkshopHtmlOrderMode = !!(settings && settings.workshopHtmlOrderMode);
   const previousSteamAccessSnapshot = {
     enhance: !!next.wallhubSteamAccessEnhance,
     webApiRoute: normalizeSteamWebApiRoute(next.wallhubSteamWebApiRoute || (next.wallhubSteamAccessDirectWebApi ? 'direct' : 'follow')),
@@ -394,13 +394,11 @@ function applyCacheSettingsPatch(settings, data, options = {}) {
     staticCdnHosts: normalizeSteamAccessStaticCdnHosts(next.wallhubSteamAccessStaticCdnHosts),
   };
 
-  if (has('steamApiKey')) next.steamApiKey = String(data.steamApiKey || '').trim();
   if (has('wallhubLogLevel')) next.wallhubLogLevel = normalizeWallhubLogLevel(data.wallhubLogLevel);
   else next.wallhubLogLevel = normalizeWallhubLogLevel(next.wallhubLogLevel);
   if (has('mpkgTextureProfile')) next.mpkgTextureProfile = normalizeMpkgTextureProfile(data.mpkgTextureProfile);
   else next.mpkgTextureProfile = normalizeMpkgTextureProfile(next.mpkgTextureProfile);
   delete next.mpkgMaxConcurrentBuilds;
-  if (has('useSteamApi')) next.useSteamApi = !!data.useSteamApi;
   if (has('downloadDir') && typeof options.applyDownloadDir === 'function') next.downloadDir = options.applyDownloadDir(data.downloadDir);
   if (has('maxConcurrentDownloads') && typeof options.normalizeMaxConcurrentDownloads === 'function') next.maxConcurrentDownloads = options.normalizeMaxConcurrentDownloads(data.maxConcurrentDownloads);
   if (has('steamCdnRouteStrategy')) {
@@ -410,6 +408,8 @@ function applyCacheSettingsPatch(settings, data, options = {}) {
   } else if (has('downloadProxyMode')) {
     next.steamCdnRouteStrategy = String(data.downloadProxyMode || '').trim().toLowerCase() === 'manual' ? 'proxy' : normalizeSteamCdnRouteStrategy(next.steamCdnRouteStrategy);
   }
+  if (has('steamApiKey')) next.steamApiKey = String(data.steamApiKey || '').trim();
+  else next.steamApiKey = String(next.steamApiKey || '').trim();
   if (has('steamHttpProxyUrl')) next.steamHttpProxyUrl = String(data.steamHttpProxyUrl || '').trim();
   else if (has('downloadProxyUrl')) next.steamHttpProxyUrl = String(data.downloadProxyUrl || '').trim();
   if (next.steamHttpProxyUrl) {
@@ -420,7 +420,6 @@ function applyCacheSettingsPatch(settings, data, options = {}) {
   }
   if (has('steamKitMaxDownloads')) next.steamKitMaxDownloads = normalizeSteamKitMaxDownloads(data.steamKitMaxDownloads);
   if (has('steamKitDepotStreaming')) next.steamKitDepotStreaming = !!data.steamKitDepotStreaming;
-  if (has('workshopHtmlOrderMode')) next.workshopHtmlOrderMode = !!data.workshopHtmlOrderMode;
 
   if (has('wallhubSteamAccessEnhance')) {
     next.wallhubSteamAccessEnhance = !!data.wallhubSteamAccessEnhance;
@@ -527,12 +526,7 @@ function applyCacheSettingsPatch(settings, data, options = {}) {
     stableStringify(previousSteamAccessSnapshot.staticCdnHosts) !== stableStringify(currentSteamAccessSnapshot.staticCdnHosts) ||
     steamAccessModeChanged || steamAccessHostsChanged;
 
-  const newSteamApiKey = String(next.steamApiKey || '').trim();
-  const newUseSteamApi = !!next.useSteamApi;
-  const newWorkshopHtmlOrderMode = !!next.workshopHtmlOrderMode;
-  const steamApiKeyChanged = has('steamApiKey') && previousSteamApiKey !== newSteamApiKey;
-  const useSteamApiChanged = has('useSteamApi') && previousUseSteamApi !== newUseSteamApi;
-  const workshopHtmlOrderModeChanged = has('workshopHtmlOrderMode') && previousWorkshopHtmlOrderMode !== newWorkshopHtmlOrderMode;
+  const steamApiKeyChanged = has('steamApiKey') && previousSteamApiKey !== next.steamApiKey;
 
   return {
     settings: next,
@@ -543,8 +537,6 @@ function applyCacheSettingsPatch(settings, data, options = {}) {
     steamAccessDohChanged: steamAccessResolverChanged,
     steamAccessResolverChanged,
     steamApiKeyChanged,
-    useSteamApiChanged,
-    workshopHtmlOrderModeChanged,
   };
 }
 

@@ -67,6 +67,7 @@ function buildPersonalSourceLabel(filter, options = {}) {
   const key = String(filter || '').trim().toLowerCase();
   const author = cleanPersonaName(options.author || '');
   const names = Array.from(new Set((options.names || []).map(cleanPersonaName).filter(Boolean)));
+  if (key === 'mysubscriptions') return '个人订阅';
   if (key === 'myfavorites') return '我的收藏';
   if (key === 'voted') return '我的投票';
   if (key === 'friendsfavorites') {

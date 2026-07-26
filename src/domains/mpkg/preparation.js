@@ -8,6 +8,10 @@ function normalizeTextureProfile(value) {
   return String(value || '').trim().toLowerCase() === 'compact' ? 'compact' : 'fast';
 }
 
+function normalizePreparationStage(value) {
+  return String(value || '').trim().toLowerCase() === 'converting' ? 'converting' : 'downloading';
+}
+
 function jobKey(id, textureProfile) {
   return `${id}|${textureProfile}`;
 }
@@ -66,6 +70,7 @@ function createMpkgPreparationService(options = {}) {
       textureProfile: profile,
       title: String(title || ''),
       status: 'preparing',
+      stage: 'downloading',
       startedAt,
       updatedAt: startedAt,
       filePath: '',
@@ -79,9 +84,17 @@ function createMpkgPreparationService(options = {}) {
     };
     jobs.set(key, job);
 
+    const setStage = (stage) => {
+      if (job.status !== 'preparing') return;
+      const nextStage = normalizePreparationStage(stage);
+      if (job.stage === nextStage) return;
+      job.stage = nextStage;
+      job.updatedAt = now();
+    };
+
     let work;
     try {
-      work = prepareDownloadFile(jobId, job.title, profile);
+      work = prepareDownloadFile(jobId, job.title, profile, { onStageChange: setStage });
     } catch (error) {
       work = Promise.reject(error);
     }
@@ -125,6 +138,7 @@ function createMpkgPreparationService(options = {}) {
       status: String(job.status || 'error'),
     };
     if (job.status === 'preparing') {
+      result.stage = normalizePreparationStage(job.stage);
       const startedAt = Number(job.startedAt);
       const current = now();
       result.elapsedMs = Math.max(0, current - (Number.isFinite(startedAt) ? startedAt : current));

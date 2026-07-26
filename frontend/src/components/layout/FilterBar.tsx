@@ -61,13 +61,18 @@ export function FilterBar({
     ? text.all
     : ageOptions.filter((option) => selectedRatings.has(option.value)).map((option) => option.label).join(' / ') || text.all;
   const personalSortValue = filters.personalFilter ? `personal:${filters.personalFilter}` : filters.sort;
+  const personalTypeFilter = !!filters.personalFilter;
+  const timeSortEnabled = !filters.personalFilter && filters.sort === 'trend';
   const handleSortChange = (value: string) => {
     if (value.startsWith('personal:')) {
       if (!steamLoggedIn) {
         onLoginRequired();
         return;
       }
-      setFilters({ personalFilter: value.replace(/^personal:/, '') });
+      setFilters({
+        personalFilter: value.replace(/^personal:/, ''),
+        types: filters.types.slice(0, 1),
+      });
       return;
     }
     setFilters({ sort: value, personalFilter: '' });
@@ -142,6 +147,7 @@ export function FilterBar({
               { value: 'mostvotes', label: text.sortVotes },
               { value: 'totaluniquesubscribers', label: text.sortSubscribers },
               { separator: true },
+              { value: 'personal:mysubscriptions', label: text.sortPersonalSubscriptions },
               { value: 'personal:myfavorites', label: text.sortMyFavorites },
               { value: 'personal:voted', label: text.sortVoted },
               { value: 'personal:friendsfavorites', label: text.sortFriendsFavorites },
@@ -153,7 +159,7 @@ export function FilterBar({
             label={text.timeSort}
             value={filters.days}
             onChange={(days) => {
-              if (filters.sort === 'trend') setFilters({ days });
+              if (timeSortEnabled) setFilters({ days });
             }}
             options={[
               { value: '1', label: text.today },
@@ -164,8 +170,8 @@ export function FilterBar({
               { value: '365', label: text.year },
               { value: '0', label: text.allTime },
             ]}
-            disabled={filters.sort !== 'trend'}
-            className={filters.sort === 'trend' ? '' : 'pointer-events-none opacity-45'}
+            disabled={!timeSortEnabled}
+            className={timeSortEnabled ? '' : 'pointer-events-none opacity-45'}
           />
           <div ref={typeRootRef} className="relative grid gap-1.5 text-xs font-medium text-muted-foreground">
             <span>{text.typeSelect}</span>
@@ -197,7 +203,7 @@ export function FilterBar({
                         key={option.value}
                         type="button"
                         className={typeButtonClass(active)}
-                        onClick={() => (homeFilterMultiSelect ? toggleType(option.value) : setSingleType(option.value))}
+                        onClick={() => (homeFilterMultiSelect && !personalTypeFilter ? toggleType(option.value) : setSingleType(option.value))}
                       >
                         <span>{option.label}</span>
                         {active ? <Check className="h-4 w-4" /> : null}

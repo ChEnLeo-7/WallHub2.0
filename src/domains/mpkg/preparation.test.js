@@ -65,9 +65,30 @@ test('MPKG preparation exposes elapsed wait time while conversion is still prepa
   assert.deepEqual(publicJob, {
     id: '3750175441',
     status: 'preparing',
+    stage: 'downloading',
     elapsedMs: 5_400,
   });
   assert.equal(JSON.stringify(publicJob).includes('filePath'), false);
+});
+
+test('MPKG preparation switches its public stage from source download to conversion', async () => {
+  const pending = deferred();
+  let onStageChange;
+  const service = createMpkgPreparationService({
+    prepareDownloadFile: (_id, _title, _profile, options) => {
+      onStageChange = options.onStageChange;
+      return pending.promise;
+    },
+  });
+
+  const job = service.start('3750175441', 'Demo');
+  assert.equal(service.toPublic(job).stage, 'downloading');
+
+  onStageChange('converting');
+  assert.equal(service.toPublic(job).stage, 'converting');
+
+  pending.resolve({ filePath: '/private/demo.mpkg', fileName: 'demo.mpkg' });
+  await job.promise;
 });
 
 test('MPKG preparation keeps fast and compact profile jobs separate', async () => {

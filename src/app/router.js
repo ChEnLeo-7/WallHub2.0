@@ -56,6 +56,11 @@ function createAppRouter(deps) {
     handleSteamAccessReady,
     handleDetails,
     handlePersonalSource,
+    handleSteamSubscribe,
+    handleSteamUnsubscribe,
+    handleSteamFavorite,
+    handleSteamUnfavorite,
+    handleSteamSubscriptionStatus,
     handleDetailsBatch,
     handleCommentsPage,
     handleClientDownload,
@@ -144,7 +149,34 @@ function createAppRouter(deps) {
       const id = q.get('id');
       const filter = q.get('filter');
       if (!id || !filter) return jsonRes(res, 400, { error: 'Missing id or filter' }), true;
-      await handlePersonalSource(res, id, filter);
+      await handlePersonalSource(req, res, id, filter);
+      return true;
+    }
+
+    if (pn === '/api/steam/subscription-status' && methodIs(req, 'GET')) {
+      const id = queryFromRequest(req).get('id');
+      if (!id) return jsonRes(res, 400, { error: 'Missing id' }), true;
+      await handleSteamSubscriptionStatus(req, res, id);
+      return true;
+    }
+
+    if (pn === '/api/steam/subscribe' && methodIs(req, 'POST')) {
+      await handleSteamSubscribe(req, res);
+      return true;
+    }
+
+    if (pn === '/api/steam/unsubscribe' && methodIs(req, 'POST')) {
+      await handleSteamUnsubscribe(req, res);
+      return true;
+    }
+
+    if (pn === '/api/steam/favorite' && methodIs(req, 'POST')) {
+      await handleSteamFavorite(req, res);
+      return true;
+    }
+
+    if (pn === '/api/steam/unfavorite' && methodIs(req, 'POST')) {
+      await handleSteamUnfavorite(req, res);
       return true;
     }
 

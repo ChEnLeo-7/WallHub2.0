@@ -16,13 +16,19 @@ import {
   getRuntimeDiagnostics,
   getSettings,
   getSettingsDetails,
+  getSubscriptionStatus,
   getSteamStatus,
   logoutSteam,
+  mpkgConvertOnly,
   mpkgDownload,
   playVideo,
   queryWorkshop,
   queueAction,
   releaseDepotVideoStream,
+  remoteFavorite,
+  remoteSubscribe,
+  remoteUnfavorite,
+  remoteUnsubscribe,
   reportClientEvent,
   restartServer,
   saveSettings,
@@ -37,12 +43,15 @@ import {
 } from '@/lib/api';
 import { PREFS_KEY, readPrefs, markSearchSessionActive } from '@/hooks/usePreferences';
 import { usePageVisible } from '@/hooks/usePageVisible';
+import { useOverlayHistory, type OverlayHistoryLayer } from '@/hooks/useOverlayHistory';
 import { useSystemTheme } from '@/hooks/useSystemTheme';
 import { useWallpaperLayout } from '@/hooks/useWallpaperLayout';
 import { FilterBar } from '@/components/layout/FilterBar';
 import { Header } from '@/components/layout/Header';
 import { Pagination } from '@/components/layout/Pagination';
 import { ViewToggle } from '@/components/layout/ViewToggle';
+import { WallpaperContextMenu } from '@/components/layout/WallpaperContextMenu';
+import type { WallpaperContextMenuAnchor } from '@/components/layout/WallpaperCard';
 import { WallpaperGrid } from '@/components/layout/WallpaperGrid';
 import { GenreSheet, GENRES } from '@/components/dialogs/GenreSheet';
 import { DownloadChoiceDialog } from '@/components/dialogs/DownloadChoiceDialog';
@@ -159,9 +168,26 @@ function normalizeStaticCdnHostControls(value: unknown): SettingsForm['wallhubSt
 type ThemeMode = 'system' | 'light' | 'dark';
 type AccentTheme = 'mono' | 'blue' | 'green' | 'rose' | 'violet' | 'custom';
 type DetailsPresentation = 'classic' | 'redesigned';
-type HomeCardDefaultAction = 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage';
+type HomeCardDefaultAction = 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage' | 'remoteSubscribe';
+type DownloadChoiceState = { item: WorkshopItem; stage: 'start' | 'format' };
+type DelayedSteamActionKind = 'subscribe' | 'favorite';
+type PendingSteamAction = { kind: DelayedSteamActionKind; step: 0 | 1 | 2 };
 
 type Toast = { id: number; message: string; type: 'info' | 'ok' | 'warn' };
+type WallpaperContextMenuState = { item: WorkshopItem; anchor: WallpaperContextMenuAnchor };
+
+type AuthorNavigationSnapshot = {
+  filters: Filters;
+  exactPhrase: boolean;
+  page: number;
+  items: WorkshopItem[];
+  total: number;
+  serverTotalPages: number;
+  dataSource: string;
+  fallbackUsed: boolean;
+  error: string;
+  scrollY: number;
+};
 
 type DetailsCacheEntry = {
   value: Details;
@@ -171,6 +197,10 @@ type DetailsCacheEntry = {
 const DETAILS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DETAILS_CACHE_MAX_ENTRIES = 150;
 const DETAILS_CACHE_MAX_COMMENTS = 100;
+
+function delayedSteamActionKey(kind: DelayedSteamActionKind, id: string) {
+  return `${kind}:${id}`;
+}
 
 function mergeQueueItems(tasks: QueueTask[], cachedItems: QueueTask[]) {
   const taskIds = new Set(tasks.map((task) => String(task.id || task.cacheKey || '')));
@@ -227,6 +257,7 @@ export default function App() {
   const [desktopColumns, setDesktopColumns] = React.useState(initial.desktopColumns);
   const [homePageSize, setHomePageSize] = React.useState(initial.homePageSize);
   const [prefetchNextPage, setPrefetchNextPage] = React.useState(initial.prefetchNextPage);
+  const [videoPlayerMode, setVideoPlayerMode] = React.useState(initial.videoPlayerMode);
   const [language, setLanguage] = React.useState<Language>(initial.language);
   const [fixedPanelHeight, setFixedPanelHeight] = React.useState(initial.fixedPanelHeight);
   const [detailsPresentation, setDetailsPresentation] = React.useState<DetailsPresentation>(normalizeDetailsPresentation(initial.detailsPresentation));
@@ -241,10 +272,13 @@ export default function App() {
   const [filterRefreshToken, setFilterRefreshToken] = React.useState(0);
   const [warmingSteamIp, setWarmingSteamIp] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [authorNavigationActive, setAuthorNavigationActive] = React.useState(false);
   const [runtime, setRuntime] = React.useState<RuntimeStatus | null>(null);
   const [runtimeDiagnostics, setRuntimeDiagnostics] = React.useState<RuntimeDiagnostics | null>(null);
   const [queue, setQueue] = React.useState<QueueTask[]>([]);
   const [steam, setSteam] = React.useState<SteamStatus | null>(null);
+  const [subscriptionStates, setSubscriptionStates] = React.useState<Record<string, boolean>>({});
+  const [favoriteStates, setFavoriteStates] = React.useState<Record<string, boolean>>({});
   const [selected, setSelected] = React.useState<WorkshopItem | null>(null);
   const [details, setDetails] = React.useState<Details | null>(null);
   const [detailsLoading, setDetailsLoading] = React.useState(false);
@@ -258,15 +292,18 @@ export default function App() {
   const [genreOpen, setGenreOpen] = React.useState(false);
   const [toasts, setToasts] = React.useState<Toast[]>([]);
   const [video, setVideo] = React.useState<VideoState | null>(null);
-  const [downloadChoice, setDownloadChoice] = React.useState<WorkshopItem | null>(null);
+  const [downloadChoice, setDownloadChoice] = React.useState<DownloadChoiceState | null>(null);
+  const [pendingSteamActions, setPendingSteamActions] = React.useState<Record<string, PendingSteamAction>>({});
+  const [submittingSteamActions, setSubmittingSteamActions] = React.useState<Record<string, DelayedSteamActionKind>>({});
+  const [wallpaperContextMenu, setWallpaperContextMenu] = React.useState<WallpaperContextMenuState | null>(null);
   const [suppressGridLayoutAnimation, setSuppressGridLayoutAnimation] = React.useState(false);
+  const [suppressGridLayoutForDialog, setSuppressGridLayoutForDialog] = React.useState(false);
   const [showHomeScrollTop, setShowHomeScrollTop] = React.useState(false);
   const [loadedDialogs, setLoadedDialogs] = React.useState({ settings: false, queue: false, details: false, login: false, video: false });
   const [settingsForm, setSettingsForm] = React.useState<SettingsForm>({
     steamApiKey: '',
     wallhubLogLevel: 'info',
     mpkgTextureProfile: 'fast',
-    useSteamApi: false,
     downloadDir: '',
     maxConcurrentDownloads: 1,
     steamCdnRouteStrategy: 'nearest',
@@ -274,7 +311,6 @@ export default function App() {
     steamKitMaxDownloads: 0,
     effectiveSteamKitMaxDownloads: 0,
     steamKitDepotStreaming: false,
-    workshopHtmlOrderMode: false,
     wallhubSteamAccessEnhance: false,
     wallhubSteamAccessDirectWebApi: false,
     wallhubSteamWebApiRoute: 'follow',
@@ -324,7 +360,14 @@ export default function App() {
   const queryCacheRef = React.useRef(new Map<string, WorkshopCacheEntry & { cachedAt: number }>());
   const detailsCacheRef = React.useRef(new Map<string, DetailsCacheEntry>());
   const personalSourceCacheRef = React.useRef(new Map<string, string>());
+  const subscriptionStatusRequestsRef = React.useRef(new Set<string>());
   const queryRequestRef = React.useRef(0);
+  const authorNavigationSnapshotRef = React.useRef<AuthorNavigationSnapshot | null>(null);
+  const restoringAuthorSnapshotRef = React.useRef<{
+    filters: Filters;
+    effectiveExactPhrase: boolean;
+    page: number;
+  } | null>(null);
   const loginPromptRef = React.useRef({ lastAt: 0, lastKey: '' });
   const queueOptimisticRef = React.useRef<{ until: number; ids: string[] } | null>(null);
   const queueDeleteTombstonesRef = React.useRef(new Map<string, QueueDeleteTombstone>());
@@ -335,6 +378,7 @@ export default function App() {
   const cachedItemsRefreshPendingRef = React.useRef(false);
   const cachedQueueItemsRef = React.useRef<QueueTask[]>([]);
   const queueStatusRef = React.useRef(new Map<string, string>());
+  const queueCompletionNotificationReadyRef = React.useRef(false);
   const visibleRefreshReadyRef = React.useRef(false);
   const runtimeRequestRef = React.useRef<Promise<RuntimeStatus> | null>(null);
   const runtimeDiagnosticsRequestRef = React.useRef<Promise<void> | null>(null);
@@ -346,19 +390,40 @@ export default function App() {
   const prefetchRequestTokenRef = React.useRef(0);
   const videoCdnToastRef = React.useRef('');
   const steamWebApiToastRef = React.useRef(0);
+  const pendingSteamActionTimersRef = React.useRef(new Map<string, { interval: number; timeout: number }>());
   const forceRefreshRef = React.useRef(false); // logo 点击强制刷新（跳过后端缓存）
   const backgroundDetailsTokenRef = React.useRef(0);
   const backgroundDetailsCancelRef = React.useRef<(() => void) | null>(null);
   const homeCardActionRef = React.useRef<(item: WorkshopItem) => void>(() => {});
   const text = React.useMemo(() => textFor(language), [language]);
 
+  React.useEffect(() => () => {
+    pendingSteamActionTimersRef.current.forEach(({ interval, timeout }) => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    });
+    pendingSteamActionTimersRef.current.clear();
+  }, []);
+
   const nsfw = !!runtime?.nsfwEnabled;
   const { containerRef, columns: gridColumns } = useWallpaperLayout(view, mobileColumns, desktopColumns);
   const pageSize = homePageSize;
   const totalPages = Math.max(1, serverTotalPages || Math.ceil(total / pageSize));
   const activeTasks = queue.filter((task) => ['pending', 'downloading', 'moving'].includes(task.status || '')).length;
+  const effectiveHomeCardDefaultAction = homeCardDefaultAction;
+  const detailsDialogOpen = !!selected;
   const runtimeSetupBusy = isRuntimeSetupActive(runtime?.runtimeSetup?.status);
   const resolvedTheme = themeMode === 'system' ? systemTheme : themeMode;
+  const selectedItemId = String(selected?.publishedfileid || '');
+  const contextMenuItemId = String(wallpaperContextMenu?.item.publishedfileid || '');
+  const subscriptionPendingStep = pendingSteamActions[delayedSteamActionKey('subscribe', selectedItemId)]?.step;
+  const favoritePendingStep = pendingSteamActions[delayedSteamActionKey('favorite', selectedItemId)]?.step;
+  const subscriptionSubmitting = !!submittingSteamActions[delayedSteamActionKey('subscribe', selectedItemId)];
+  const favoriteSubmitting = !!submittingSteamActions[delayedSteamActionKey('favorite', selectedItemId)];
+  const contextSubscriptionPendingStep = pendingSteamActions[delayedSteamActionKey('subscribe', contextMenuItemId)]?.step;
+  const contextFavoritePendingStep = pendingSteamActions[delayedSteamActionKey('favorite', contextMenuItemId)]?.step;
+  const contextSubscriptionSubmitting = !!submittingSteamActions[delayedSteamActionKey('subscribe', contextMenuItemId)];
+  const contextFavoriteSubmitting = !!submittingSteamActions[delayedSteamActionKey('favorite', contextMenuItemId)];
 
   const toast = React.useCallback((message: string, type: Toast['type'] = 'info', timeoutMs = 3200) => {
     const id = Date.now() + Math.random();
@@ -394,6 +459,21 @@ export default function App() {
     [loginOpen, steam?.loggedIn, text.loginRequired, toast],
   );
 
+  const refreshSubscriptionStatus = React.useCallback(async (publishedFileId: string | number) => {
+    const id = String(publishedFileId || '').replace(/[^\d]/g, '');
+    if (!id || !steam?.loggedIn || subscriptionStatusRequestsRef.current.has(id)) return;
+    subscriptionStatusRequestsRef.current.add(id);
+    try {
+      const result = await getSubscriptionStatus(id);
+      setSubscriptionStates((current) => current[id] === result.subscribed ? current : { ...current, [id]: result.subscribed });
+      setFavoriteStates((current) => current[id] === result.favorited ? current : { ...current, [id]: result.favorited });
+    } catch (error) {
+      if (!isSteamLoginError(error)) console.warn('[subscription-status]', error);
+    } finally {
+      subscriptionStatusRequestsRef.current.delete(id);
+    }
+  }, [steam?.loggedIn]);
+
   React.useEffect(() => {
     if (homeFilterMultiSelect) return;
     setFilters((current) => {
@@ -428,14 +508,15 @@ export default function App() {
         desktopColumns,
         homePageSize,
         prefetchNextPage,
+        videoPlayerMode,
         language,
         fixedPanelHeight,
         detailsPresentation,
         homeCardDefaultAction,
-        homeCardDefaultActionVersion: 3,
+        homeCardDefaultActionVersion: 4,
       }),
     );
-  }, [accentTheme, customAccentColor, desktopColumns, detailsPresentation, exactPhrase, filters, fixedPanelHeight, homeCardDefaultAction, homeFilterMultiSelect, homePageSize, language, mobileColumns, prefetchNextPage, resolvedTheme, themeMode, view]);
+  }, [accentTheme, customAccentColor, desktopColumns, detailsPresentation, exactPhrase, filters, fixedPanelHeight, homeCardDefaultAction, homeFilterMultiSelect, homePageSize, language, mobileColumns, prefetchNextPage, resolvedTheme, themeMode, videoPlayerMode, view]);
   const fetchRuntime = React.useCallback(() => {
     if (runtimeRequestRef.current) return runtimeRequestRef.current;
     const request = getRuntime().finally(() => {
@@ -541,10 +622,9 @@ export default function App() {
         setMpkgCompactAvailable(data.mpkgCompactAvailable === true);
         setMpkgCompactUnavailableReason(String(data.mpkgCompactUnavailableReason || ''));
         setSettingsForm({
-          steamApiKey: data.steamApiKey || '',
+          steamApiKey: String(data.steamApiKey || ''),
           wallhubLogLevel: normalizeWallhubLogLevel(data.wallhubLogLevel),
           mpkgTextureProfile: data.mpkgCompactAvailable === true && data.mpkgTextureProfile === 'compact' ? 'compact' : 'fast',
-          useSteamApi: !!data.useSteamApi,
           downloadDir: data.downloadDir || '',
           maxConcurrentDownloads: normalizeConcurrentDownloads(data.maxConcurrentDownloads),
           steamCdnRouteStrategy: normalizeSteamCdnRouteStrategy(data.steamCdnRouteStrategy),
@@ -552,7 +632,6 @@ export default function App() {
           steamKitMaxDownloads: normalizeSteamKitMaxDownloads(data.steamKitMaxDownloads),
           effectiveSteamKitMaxDownloads: normalizeSteamKitMaxDownloads(data.effectiveSteamKitMaxDownloads),
           steamKitDepotStreaming: !!data.steamKitDepotStreaming,
-          workshopHtmlOrderMode: !!data.workshopHtmlOrderMode,
           wallhubSteamAccessEnhance: accessEnhance,
           wallhubSteamAccessDirectWebApi: !!data.wallhubSteamAccessDirectWebApi,
           wallhubSteamWebApiRoute: data.wallhubSteamWebApiRoute || (data.wallhubSteamAccessDirectWebApi ? 'direct' : 'follow'),
@@ -640,11 +719,20 @@ export default function App() {
       const previousStatuses = queueStatusRef.current;
       const nextStatuses = new Map(nextTasks.map((task) => [String(task.id || task.cacheKey || ''), String(task.status || '')]));
       queueStatusRef.current = nextStatuses;
-      const completedNow = nextTasks.some((task) => {
+      const completedTasks = nextTasks.filter((task) => {
         const id = String(task.id || task.cacheKey || '');
         return task.status === 'completed' && previousStatuses.get(id) !== 'completed';
       });
-      if (completedNow) void refreshCachedItems();
+      if (completedTasks.length) {
+        void refreshCachedItems();
+        if (queueCompletionNotificationReadyRef.current) {
+          completedTasks.forEach((task) => {
+            const title = String(task.title || task.name || text.untitledWallpaper);
+            toast(text.downloadCompleted.replace('{title}', title), 'ok', 2600);
+          });
+        }
+      }
+      queueCompletionNotificationReadyRef.current = true;
       const nextItems = filterQueueTasksAfterDelete(
         mergeQueueItems(nextTasks, cachedQueueItemsRef.current),
         queueDeleteTombstonesRef.current,
@@ -685,7 +773,7 @@ export default function App() {
       });
     queueRefreshInFlightRef.current = request;
     return request;
-  }, [refreshCachedItems, requestLogin]);
+  }, [refreshCachedItems, requestLogin, text.downloadCompleted, text.untitledWallpaper, toast]);
 
   React.useEffect(() => {
     if (!pageVisible) return;
@@ -868,6 +956,15 @@ export default function App() {
   React.useEffect(() => () => cancelNextPagePrefetch(), [cancelNextPagePrefetch]);
 
   const loadItems = React.useCallback(async () => {
+    const restoringSnapshot = restoringAuthorSnapshotRef.current;
+    if (restoringSnapshot &&
+      restoringSnapshot.page === page &&
+      restoringSnapshot.effectiveExactPhrase === effectiveExactPhrase &&
+      JSON.stringify(restoringSnapshot.filters) === JSON.stringify(filters)) {
+      restoringAuthorSnapshotRef.current = null;
+      return;
+    }
+
     // 消费强制刷新标记（来自 Logo 点击），只影响紧接着的这一次加载
     const forceThis = forceRefreshRef.current;
     if (forceThis) {
@@ -973,7 +1070,10 @@ export default function App() {
 
   React.useEffect(() => {
     personalSourceCacheRef.current.clear();
+    subscriptionStatusRequestsRef.current.clear();
     setPersonalSourceLabel('');
+    setSubscriptionStates({});
+    setFavoriteStates({});
   }, [steam?.loggedIn, steam?.username]);
 
   React.useEffect(() => {
@@ -1012,6 +1112,38 @@ export default function App() {
   }, [selected]);
 
   React.useEffect(() => {
+    const id = String(selected?.publishedfileid || '');
+    if (!id) return;
+    const isPersonalSubscription = filters.personalFilter === 'mysubscriptions';
+    const isPersonalFavorite = filters.personalFilter === 'myfavorites';
+    if (isPersonalSubscription) {
+      setSubscriptionStates((current) => current[id] === true ? current : { ...current, [id]: true });
+    }
+    if (isPersonalFavorite) {
+      setFavoriteStates((current) => current[id] === true ? current : { ...current, [id]: true });
+    }
+    if (isPersonalSubscription || isPersonalFavorite) return;
+    const subscriptionKnown = isPersonalSubscription || subscriptionStates[id] !== undefined;
+    const favoriteKnown = isPersonalFavorite || favoriteStates[id] !== undefined;
+    if (subscriptionKnown && favoriteKnown) return;
+    void refreshSubscriptionStatus(id);
+  }, [favoriteStates, filters.personalFilter, refreshSubscriptionStatus, selected?.publishedfileid, subscriptionStates]);
+
+  React.useLayoutEffect(() => {
+    if (detailsDialogOpen) {
+      setSuppressGridLayoutForDialog(true);
+      return;
+    }
+
+    let restoreFrame = window.requestAnimationFrame(() => {
+      restoreFrame = window.requestAnimationFrame(() => {
+        setSuppressGridLayoutForDialog(false);
+      });
+    });
+    return () => window.cancelAnimationFrame(restoreFrame);
+  }, [detailsDialogOpen]);
+
+  React.useEffect(() => {
     const filter = String(filters.personalFilter || '').trim().toLowerCase();
     if (!selected || !filter) {
       setPersonalSourceLabel('');
@@ -1019,6 +1151,10 @@ export default function App() {
     }
 
     const author = String(details?.author || selected.author || '').trim();
+    if (filter === 'mysubscriptions') {
+      setPersonalSourceLabel('个人订阅');
+      return;
+    }
     if (filter === 'myfavorites') {
       setPersonalSourceLabel('我的收藏');
       return;
@@ -1094,6 +1230,7 @@ export default function App() {
     setDetails((value) => (String(value?.publishedfileid || '') === id ? next : value));
   }, [details]);
   const updateFilter = (patch: Partial<Filters>) => {
+    cancelNextPagePrefetch();
     const next = { ...filters, ...patch };
     const forceFilterRefresh = Object.prototype.hasOwnProperty.call(patch, 'rating') || Object.prototype.hasOwnProperty.call(patch, 'ratings');
     if (forceFilterRefresh) {
@@ -1119,9 +1256,16 @@ export default function App() {
     });
   };
 
-  const openDownloadChoice = (item: WorkshopItem) => {
+  const openDownloadChoice = (item: WorkshopItem, stage: DownloadChoiceState['stage'] = 'start') => {
     reportDownloadClick(item, 'open-download-choice');
-    setDownloadChoice(item);
+    setDownloadChoice({ item, stage });
+  };
+  const openWallpaperContextMenu = (item: WorkshopItem, anchor: WallpaperContextMenuAnchor) => {
+    reportDownloadClick(item, 'open-context-menu');
+    if (filters.personalFilter !== 'mysubscriptions' && filters.personalFilter !== 'myfavorites') {
+      void refreshSubscriptionStatus(item.publishedfileid);
+    }
+    setWallpaperContextMenu({ item, anchor });
   };
   const doClientDownload = async (item: WorkshopItem) => {
     reportDownloadClick(item, 'client-download');
@@ -1144,29 +1288,18 @@ export default function App() {
   const doMpkgDownload = async (item: WorkshopItem) => {
     reportDownloadClick(item, 'mpkg-download');
     const title = item.title || `Wallpaper ${item.publishedfileid}`;
-    const preparingToastId = toast(text.mpkgPreparing, 'info', 0);
-    let lastElapsedSeconds = 0;
     refreshQueue();
     const queueRefreshTimer = window.setInterval(refreshQueue, 1000);
     try {
       await mpkgDownload(item.publishedfileid, title, {
         textureProfile: settingsForm.mpkgTextureProfile,
-        onPreparing: (preparation) => {
-          const elapsedSeconds = Math.max(0, Math.floor(Number(preparation.elapsedMs || 0) / 1000));
-          if (elapsedSeconds <= lastElapsedSeconds) return;
-          lastElapsedSeconds = elapsedSeconds;
-          updateToast(preparingToastId, text.mpkgPreparingProgress.replace('{seconds}', String(elapsedSeconds)));
-        },
       });
-      dismissToast(preparingToastId);
       toast(text.mpkgSent, 'ok');
       refreshQueue();
     } catch (e) {
-      dismissToast(preparingToastId);
       if (!requestLogin(e)) toast(e instanceof Error ? e.message : String(e), 'warn');
       refreshQueue();
     } finally {
-      dismissToast(preparingToastId);
       window.clearInterval(queueRefreshTimer);
     }
   };
@@ -1235,8 +1368,114 @@ export default function App() {
     window.open(settingsForm.wallhubSteamAccessEnhance ? steamProxyUrl(url) : url, '_blank');
   }, [settingsForm.wallhubSteamAccessEnhance]);
 
+  const startDelayedSteamAction = (kind: DelayedSteamActionKind, item: WorkshopItem) => {
+    const id = String(item.publishedfileid || '');
+    if (!id) return;
+    const key = delayedSteamActionKey(kind, id);
+    const activeTimer = pendingSteamActionTimersRef.current.get(key);
+    if (activeTimer) {
+      window.clearInterval(activeTimer.interval);
+      window.clearTimeout(activeTimer.timeout);
+      pendingSteamActionTimersRef.current.delete(key);
+      setPendingSteamActions((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      reportDownloadClick(item, `cancel-scheduled-remote-${kind}`);
+      return;
+    }
+
+    reportDownloadClick(item, `schedule-remote-${kind}`);
+    setPendingSteamActions((current) => ({ ...current, [key]: { kind, step: 0 } }));
+    const interval = window.setInterval(() => {
+      setPendingSteamActions((current) => {
+        const pending = current[key];
+        if (!pending || pending.step === 2) return current;
+        return { ...current, [key]: { ...pending, step: (pending.step + 1) as PendingSteamAction['step'] } };
+      });
+    }, 1000);
+    const timeout = window.setTimeout(async () => {
+      window.clearInterval(interval);
+      pendingSteamActionTimersRef.current.delete(key);
+      setPendingSteamActions((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setSubmittingSteamActions((current) => ({ ...current, [key]: kind }));
+      reportDownloadClick(item, `remote-${kind}`);
+      const preparingToastId = toast(kind === 'subscribe' ? text.remoteSubscribePreparing : text.remoteFavoritePreparing, 'info', 0);
+      if (kind === 'subscribe') {
+        setSubscriptionStates((current) => current[id] === true ? current : { ...current, [id]: true });
+      } else {
+        setFavoriteStates((current) => current[id] === true ? current : { ...current, [id]: true });
+      }
+      try {
+        if (kind === 'subscribe') {
+          await remoteSubscribe(item.publishedfileid);
+          toast(text.remoteSubscribeSuccess, 'ok');
+        } else {
+          await remoteFavorite(item.publishedfileid);
+          toast(text.remoteFavoriteSuccess, 'ok');
+        }
+      } catch (error) {
+        if (kind === 'subscribe') {
+          setSubscriptionStates((current) => current[id] === false ? current : { ...current, [id]: false });
+        } else {
+          setFavoriteStates((current) => current[id] === false ? current : { ...current, [id]: false });
+        }
+        if (!requestLogin(error)) toast(error instanceof Error ? error.message : String(error), 'warn');
+      } finally {
+        dismissToast(preparingToastId);
+        setSubmittingSteamActions((current) => {
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      }
+    }, 3000);
+    pendingSteamActionTimersRef.current.set(key, { interval, timeout });
+  };
+  const doRemoteSubscribe = (item: WorkshopItem) => startDelayedSteamAction('subscribe', item);
+  const doWallpaperDownload = (item: WorkshopItem) => {
+    openDownloadChoice(item);
+  };
+
+  const doRemoteUnsubscribe = async (item: WorkshopItem) => {
+    reportDownloadClick(item, 'remote-unsubscribe');
+    const preparingToastId = toast(text.remoteUnsubscribePreparing, 'info', 0);
+    try {
+      await remoteUnsubscribe(item.publishedfileid);
+      dismissToast(preparingToastId);
+      const id = String(item.publishedfileid || '');
+      if (id) setSubscriptionStates((current) => current[id] === false ? current : { ...current, [id]: false });
+      toast(text.remoteUnsubscribeSuccess, 'ok');
+    } catch (error) {
+      dismissToast(preparingToastId);
+      if (!requestLogin(error)) toast(error instanceof Error ? error.message : String(error), 'warn');
+    }
+  };
+
+  const doRemoteFavorite = (item: WorkshopItem) => startDelayedSteamAction('favorite', item);
+
+  const doRemoteUnfavorite = async (item: WorkshopItem) => {
+    reportDownloadClick(item, 'remote-unfavorite');
+    const preparingToastId = toast(text.remoteUnfavoritePreparing, 'info', 0);
+    try {
+      await remoteUnfavorite(item.publishedfileid);
+      dismissToast(preparingToastId);
+      const id = String(item.publishedfileid || '');
+      if (id) setFavoriteStates((current) => current[id] === false ? current : { ...current, [id]: false });
+      toast(text.remoteUnfavoriteSuccess, 'ok');
+    } catch (error) {
+      dismissToast(preparingToastId);
+      if (!requestLogin(error)) toast(error instanceof Error ? error.message : String(error), 'warn');
+    }
+  };
+
   const handleHomeCardAction = (item: WorkshopItem) => {
-    const action = homeCardDefaultAction === 'playVideo' && itemType(item) !== 'Video' ? 'backgroundDownload' : homeCardDefaultAction;
+    const action = effectiveHomeCardDefaultAction === 'playVideo' && itemType(item) !== 'Video' ? 'clientDownload' : effectiveHomeCardDefaultAction;
     if (action === 'playVideo') {
       doPlayVideo(item);
       return;
@@ -1249,17 +1488,74 @@ export default function App() {
       openSteamPage(item);
       return;
     }
-    if (itemType(item) === 'Scene') openDownloadChoice(item);
-    else doClientDownload(item);
+    if (action === 'remoteSubscribe') {
+      doRemoteSubscribe(item);
+      return;
+    }
+    doWallpaperDownload(item);
   };
   homeCardActionRef.current = handleHomeCardAction;
   const onHomeCardDefaultAction = React.useCallback((item: WorkshopItem) => homeCardActionRef.current(item), []);
 
   const openAuthor = (creator?: string) => {
     if (!creator) return;
+    if (!authorNavigationSnapshotRef.current) {
+      authorNavigationSnapshotRef.current = {
+        filters,
+        exactPhrase,
+        page,
+        items,
+        total,
+        serverTotalPages,
+        dataSource,
+        fallbackUsed,
+        error,
+        scrollY: window.scrollY,
+      };
+      setAuthorNavigationActive(true);
+    }
+    queryRequestRef.current += 1;
+    searchRequestRef.current?.abort();
+    searchRequestRef.current = null;
+    backgroundDetailsTokenRef.current += 1;
+    backgroundDetailsCancelRef.current?.();
+    backgroundDetailsCancelRef.current = null;
     setSelected(null);
     updateFilter({ search: `author:${creator}` });
   };
+
+  const restoreAuthorNavigation = React.useCallback(() => {
+    const snapshot = authorNavigationSnapshotRef.current;
+    if (!snapshot) return;
+    authorNavigationSnapshotRef.current = null;
+    restoringAuthorSnapshotRef.current = {
+      filters: snapshot.filters,
+      effectiveExactPhrase: !!snapshot.filters.search.trim() && snapshot.exactPhrase,
+      page: snapshot.page,
+    };
+    queryRequestRef.current += 1;
+    searchRequestRef.current?.abort();
+    searchRequestRef.current = null;
+    cancelNextPagePrefetch();
+    backgroundDetailsTokenRef.current += 1;
+    backgroundDetailsCancelRef.current?.();
+    backgroundDetailsCancelRef.current = null;
+    setAuthorNavigationActive(false);
+    setFilters(snapshot.filters);
+    setExactPhrase(snapshot.exactPhrase);
+    setPage(snapshot.page);
+    setItems(snapshot.items);
+    setTotal(snapshot.total);
+    setServerTotalPages(snapshot.serverTotalPages);
+    setDataSource(snapshot.dataSource);
+    setFallbackUsed(snapshot.fallbackUsed);
+    setError(snapshot.error);
+    setLoading(false);
+    setWarmingSteamIp(false);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => window.scrollTo({ top: snapshot.scrollY, behavior: 'auto' }));
+    });
+  }, [cancelNextPagePrefetch]);
 
   const searchByDetailTags = (tags: string[]) => {
     if (!encodeDetailTagSearch(tags)) return;
@@ -1270,15 +1566,9 @@ export default function App() {
   const saveSettingsForm = async (patch?: Partial<SettingsForm>) => {
     try {
       const nextSettings = { ...settingsForm, ...(patch || {}) };
-      if (!patch || Object.prototype.hasOwnProperty.call(patch, 'steamApiKey')) {
-        nextSettings.useSteamApi = !!nextSettings.steamApiKey.trim();
-      }
       const payload: Partial<SettingsForm> = patch
         ? { ...patch }
         : { ...nextSettings };
-      if (!patch || Object.prototype.hasOwnProperty.call(patch, 'steamApiKey')) {
-        payload.useSteamApi = !!nextSettings.steamApiKey.trim();
-      }
       if (!settingsHostsLoadedRef.current) {
         delete payload.wallhubSteamAccessHosts;
       }
@@ -1288,17 +1578,14 @@ export default function App() {
       setMpkgCompactAvailable(data.mpkgCompactAvailable === true);
       setMpkgCompactUnavailableReason(String(data.mpkgCompactUnavailableReason || ''));
       const queryModeChanged = !!patch && (
-        Object.prototype.hasOwnProperty.call(patch, 'workshopHtmlOrderMode') ||
-        Object.prototype.hasOwnProperty.call(patch, 'useSteamApi') ||
         Object.prototype.hasOwnProperty.call(patch, 'steamApiKey')
       );
       setSettingsForm((current) => ({
         ...current,
         ...nextSettings,
-        steamApiKey: data.steamApiKey ?? nextSettings.steamApiKey,
+        steamApiKey: String(data.steamApiKey ?? nextSettings.steamApiKey ?? current.steamApiKey),
         wallhubLogLevel: normalizeWallhubLogLevel(data.wallhubLogLevel ?? nextSettings.wallhubLogLevel),
         mpkgTextureProfile: data.mpkgCompactAvailable === true && data.mpkgTextureProfile === 'compact' ? 'compact' : 'fast',
-        useSteamApi: data.useSteamApi ?? nextSettings.useSteamApi,
         downloadDir: data.downloadDir || nextSettings.downloadDir || current.downloadDir,
         maxConcurrentDownloads: normalizeConcurrentDownloads(data.maxConcurrentDownloads ?? nextSettings.maxConcurrentDownloads),
         steamCdnRouteStrategy: normalizeSteamCdnRouteStrategy(data.steamCdnRouteStrategy ?? nextSettings.steamCdnRouteStrategy),
@@ -1306,7 +1593,6 @@ export default function App() {
         steamKitMaxDownloads: normalizeSteamKitMaxDownloads(data.steamKitMaxDownloads ?? nextSettings.steamKitMaxDownloads),
         effectiveSteamKitMaxDownloads: normalizeSteamKitMaxDownloads(data.effectiveSteamKitMaxDownloads ?? nextSettings.effectiveSteamKitMaxDownloads),
         steamKitDepotStreaming: !!(data.steamKitDepotStreaming ?? nextSettings.steamKitDepotStreaming),
-        workshopHtmlOrderMode: !!(data.workshopHtmlOrderMode ?? nextSettings.workshopHtmlOrderMode),
         wallhubSteamAccessEnhance: accessEnhance,
         wallhubSteamAccessDirectWebApi: !!(data.wallhubSteamAccessDirectWebApi ?? nextSettings.wallhubSteamAccessDirectWebApi),
         wallhubSteamWebApiRoute: (data.wallhubSteamWebApiRoute ?? nextSettings.wallhubSteamWebApiRoute) || (nextSettings.wallhubSteamAccessDirectWebApi ? 'direct' : 'follow'),
@@ -1371,6 +1657,42 @@ export default function App() {
     refreshRuntimeDiagnostics();
     loadSettingsDetails();
     refreshSteamStatus();
+  };
+
+  const doMpkgConvertOnly = async (item: WorkshopItem) => {
+    reportDownloadClick(item, 'mpkg-convert-only');
+    const title = item.title || `Wallpaper ${item.publishedfileid}`;
+    const preparingToastId = toast(text.mpkgPreparingStart, 'info', 0);
+    let lastElapsedSeconds = -1;
+    let lastStage = '';
+    refreshQueue();
+    const queueRefreshTimer = window.setInterval(refreshQueue, 1000);
+    try {
+      await mpkgConvertOnly(item.publishedfileid, title, {
+        textureProfile: settingsForm.mpkgTextureProfile,
+        onPreparing: (preparation) => {
+          const stage = preparation.stage === 'converting' ? 'converting' : 'downloading';
+          const elapsedSeconds = Math.max(0, Math.floor(Number(preparation.elapsedMs || 0) / 1000));
+          if (stage === lastStage && elapsedSeconds <= lastElapsedSeconds) return;
+          lastStage = stage;
+          lastElapsedSeconds = elapsedSeconds;
+          const message = stage === 'converting'
+            ? text.mpkgConvertOnlyPreparingProgress
+            : text.mpkgConvertOnlySourceDownloadingProgress;
+          updateToast(preparingToastId, message.replace('{seconds}', String(elapsedSeconds)));
+        },
+      });
+      dismissToast(preparingToastId);
+      toast(text.mpkgConvertOnlyReady, 'ok');
+      refreshQueue();
+    } catch (e) {
+      dismissToast(preparingToastId);
+      if (!requestLogin(e)) toast(e instanceof Error ? e.message : String(e), 'warn');
+      refreshQueue();
+    } finally {
+      dismissToast(preparingToastId);
+      window.clearInterval(queueRefreshTimer);
+    }
   };
 
   const openQueue = () => {
@@ -1444,6 +1766,9 @@ export default function App() {
   };
 
   const resetHome = React.useCallback(() => {
+    authorNavigationSnapshotRef.current = null;
+    restoringAuthorSnapshotRef.current = null;
+    setAuthorNavigationActive(false);
     setSelected(null);
     setQueueOpen(false);
     setSettingsOpen(false);
@@ -1455,6 +1780,98 @@ export default function App() {
     detailsCacheRef.current.clear();
     forceRefreshRef.current = true;
   }, []);
+
+  const overlayHistoryLayers = React.useMemo<OverlayHistoryLayer[]>(() => {
+    const layers: OverlayHistoryLayer[] = [];
+    if (genreOpen) layers.push({ kind: 'genre' });
+    if (settingsOpen) layers.push({ kind: 'settings' });
+    if (queueOpen) layers.push({ kind: 'queue' });
+    if (selected) {
+      layers.push({
+        kind: 'details',
+        id: String(selected.publishedfileid || '') || undefined,
+        title: selected.title || undefined,
+        workshopType: selected.workshopType || undefined,
+      });
+    }
+    if (downloadChoice) {
+      layers.push({
+        kind: 'download-choice',
+        id: String(downloadChoice.item.publishedfileid || '') || undefined,
+        title: downloadChoice.item.title || undefined,
+        workshopType: downloadChoice.item.workshopType || undefined,
+      });
+    }
+    if (loginOpen) layers.push({ kind: 'login' });
+    if (video) {
+      layers.push({
+        kind: 'video',
+        id: String(video.id || '') || undefined,
+        title: video.title || undefined,
+        src: video.src || undefined,
+        status: video.status || undefined,
+        message: video.message || undefined,
+      });
+    }
+    return layers;
+  }, [downloadChoice, genreOpen, loginOpen, queueOpen, selected, settingsOpen, video]);
+
+  const restoreOverlayHistory = React.useCallback((layers: OverlayHistoryLayer[]) => {
+    const layerOf = (kind: string) => layers.find((layer) => layer.kind === kind);
+    const itemForLayer = (layer?: OverlayHistoryLayer): WorkshopItem | null => {
+      const id = String(layer?.id || '');
+      if (!id) return null;
+      return items.find((item) => String(item.publishedfileid) === id) || {
+        publishedfileid: id,
+        title: layer?.title || '',
+        workshopType: layer?.workshopType || '',
+      };
+    };
+    const detailsItem = itemForLayer(layerOf('details'));
+    const choiceItem = itemForLayer(layerOf('download-choice'));
+    const videoLayer = layerOf('video');
+
+    setGenreOpen(!!layerOf('genre'));
+    setSettingsOpen(!!layerOf('settings'));
+    setQueueOpen(!!layerOf('queue'));
+    setLoginOpen(!!layerOf('login'));
+    setSelected((current) => {
+      if (!detailsItem) return null;
+      return String(current?.publishedfileid || '') === String(detailsItem.publishedfileid) ? current : detailsItem;
+    });
+    setDownloadChoice((current) => {
+      if (!choiceItem) return null;
+      return String(current?.item.publishedfileid || '') === String(choiceItem.publishedfileid)
+        ? current
+        : { item: choiceItem, stage: 'start' };
+    });
+    if (!videoLayer?.id) {
+      if (video) closeVideo();
+    } else {
+      const status = videoLayer.status === 'loading' ? 'loading' : 'ready';
+      const src = videoLayer.src || `/api/video/stream?id=${encodeURIComponent(videoLayer.id)}`;
+      setVideo((current) => {
+        if (
+          current
+          && String(current.id || '') === videoLayer.id
+          && current.title === (videoLayer.title || text.videoPlayer)
+          && current.src === src
+          && current.status === status
+          && current.message === videoLayer.message
+        ) return current;
+        return {
+          id: videoLayer.id,
+          title: videoLayer.title || text.videoPlayer,
+          src,
+          status,
+          message: videoLayer.message,
+        };
+      });
+    }
+    setWallpaperContextMenu(null);
+  }, [closeVideo, items, text.videoPlayer, video]);
+
+  useOverlayHistory(overlayHistoryLayers, restoreOverlayHistory);
 
   React.useEffect(() => {
     const activated = { settings: settingsOpen, queue: queueOpen, details: !!selected, login: loginOpen, video: !!video };
@@ -1483,6 +1900,8 @@ export default function App() {
           exactPhrase={exactPhrase}
           setExactPhrase={setExactPhrase}
           onHome={resetHome}
+          authorNavigationActive={authorNavigationActive}
+          onAuthorBack={restoreAuthorNavigation}
           onSettings={openSettings}
           onQueue={openQueue}
           queueCount={activeTasks}
@@ -1530,9 +1949,10 @@ export default function App() {
                 view={view}
                 columns={gridColumns}
                 onOpen={setSelected}
-                defaultAction={homeCardDefaultAction}
+                defaultAction={effectiveHomeCardDefaultAction}
                 onDefaultAction={onHomeCardDefaultAction}
-                suppressLayoutAnimation={suppressGridLayoutAnimation}
+                onOpenContextMenu={openWallpaperContextMenu}
+                suppressLayoutAnimation={suppressGridLayoutAnimation || detailsDialogOpen || suppressGridLayoutForDialog}
               />
               <Pagination page={page} totalPages={totalPages} setPage={setPage} />
             </>
@@ -1601,6 +2021,8 @@ export default function App() {
         }}
         prefetchNextPage={prefetchNextPage}
         setPrefetchNextPage={setPrefetchNextPage}
+        videoPlayerMode={videoPlayerMode}
+        setVideoPlayerMode={setVideoPlayerMode}
         onSave={saveSettingsForm}
         onClearDepotStreamCache={doClearDepotStreamCache}
         onLogin={() => setLoginOpen(true)}
@@ -1638,8 +2060,7 @@ export default function App() {
         }}
         onDownloadChoice={(task) => {
           const item = { publishedfileid: String(task.id || task.cacheKey), title: task.title || task.name, workshopType: task.workshopType };
-          if (task.workshopType === 'Scene') openDownloadChoice(item);
-          else doClientDownload(item);
+          openDownloadChoice(item, 'format');
         }}
         onPlay={(task) => {
           const id = String(task.id || task.cacheKey || '');
@@ -1655,22 +2076,62 @@ export default function App() {
         fixedPanelHeight={fixedPanelHeight}
         presentation={detailsPresentation}
         onOpenChange={(open) => !open && setSelected(null)}
-        onClientDownload={(item) => {
-          if (itemType(item) === 'Scene') openDownloadChoice(item);
-          else doClientDownload(item);
-        }}
-        onBackgroundDownload={doBackgroundDownload}
+        onClientDownload={doWallpaperDownload}
         onLoadMoreComments={loadMoreComments}
         onCopyId={(id) => { navigator.clipboard?.writeText(id); toast(text.copied, 'ok'); }}
-        homeCardDefaultAction={homeCardDefaultAction}
+        onCopyTitle={(title) => { navigator.clipboard?.writeText(title); toast(text.copied, 'ok'); }}
+        personalSubscriptionActive={
+          filters.personalFilter === 'mysubscriptions' ||
+          subscriptionStates[String(selected?.publishedfileid || '')] === true
+        }
+        subscriptionPendingStep={subscriptionPendingStep}
+        subscriptionSubmitting={subscriptionSubmitting}
+        personalFavoriteActive={
+          filters.personalFilter === 'myfavorites' ||
+          favoriteStates[String(selected?.publishedfileid || '')] === true
+        }
+        favoritePendingStep={favoritePendingStep}
+        favoriteSubmitting={favoriteSubmitting}
+        onRemoteSubscribe={doRemoteSubscribe}
+        onRemoteUnsubscribe={doRemoteUnsubscribe}
+        onRemoteFavorite={doRemoteFavorite}
+        onRemoteUnfavorite={doRemoteUnfavorite}
         onPlay={doPlayVideo}
-        onOpenSteamPage={openSteamPage}
         onAuthor={openAuthor}
         onSearchTags={searchByDetailTags}
       /></React.Suspense> : null}
+      <WallpaperContextMenu
+        entry={wallpaperContextMenu}
+        onClose={() => setWallpaperContextMenu(null)}
+        personalSubscriptionActive={
+          filters.personalFilter === 'mysubscriptions' ||
+          subscriptionStates[String(wallpaperContextMenu?.item.publishedfileid || '')] === true
+        }
+        subscriptionPendingStep={contextSubscriptionPendingStep}
+        subscriptionSubmitting={contextSubscriptionSubmitting}
+        personalFavoriteActive={
+          filters.personalFilter === 'myfavorites' ||
+          favoriteStates[String(wallpaperContextMenu?.item.publishedfileid || '')] === true
+        }
+        favoritePendingStep={contextFavoritePendingStep}
+        favoriteSubmitting={contextFavoriteSubmitting}
+        onPlay={doPlayVideo}
+        onDownload={doWallpaperDownload}
+        onOpenSteamPage={openSteamPage}
+        onRemoteSubscribe={doRemoteSubscribe}
+        onRemoteUnsubscribe={doRemoteUnsubscribe}
+        onRemoteFavorite={doRemoteFavorite}
+        onRemoteUnfavorite={doRemoteUnfavorite}
+      />
       <DownloadChoiceDialog
-        item={downloadChoice}
+        item={downloadChoice?.item || null}
+        stage={downloadChoice?.stage || 'start'}
         onOpenChange={(open) => !open && setDownloadChoice(null)}
+        onNormalDownload={(item) => {
+          setDownloadChoice((current) => current && String(current.item.publishedfileid) === String(item.publishedfileid)
+            ? { ...current, stage: 'format' }
+            : current);
+        }}
         onPkgDownload={(item) => {
           setDownloadChoice(null);
           doClientDownload(item);
@@ -1678,6 +2139,14 @@ export default function App() {
         onMpkgDownload={(item) => {
           setDownloadChoice(null);
           doMpkgDownload(item);
+        }}
+        onMpkgConvertOnly={(item) => {
+          setDownloadChoice(null);
+          doMpkgConvertOnly(item);
+        }}
+        onBackgroundDownload={(item) => {
+          setDownloadChoice(null);
+          void doBackgroundDownload(item);
         }}
       />
       {loadedDialogs.login ? <React.Suspense fallback={null}><LoginDialogV2
@@ -1691,7 +2160,7 @@ export default function App() {
           toast(text.loginSuccess, 'ok');
         }}
       /></React.Suspense> : null}
-      {loadedDialogs.video ? <React.Suspense fallback={null}><VideoDialog video={video} onOpenChange={(open) => !open && closeVideo()} /></React.Suspense> : null}
+      {loadedDialogs.video ? <React.Suspense fallback={null}><VideoDialog video={video} playerMode={videoPlayerMode} onOpenChange={(open) => !open && closeVideo()} /></React.Suspense> : null}
         <ToastStack items={toasts} />
       </motion.div>
     </LanguageContext.Provider>

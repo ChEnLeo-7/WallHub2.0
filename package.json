@@ -8,8 +8,10 @@
     "start:nsfw": "node server.js --NSFW",
     "dev:ui": "vite --host 0.0.0.0",
     "build:ui": "vite build",
+    "build:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/windows/build-portable.ps1",
+    "build:windows:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/windows/build-portable.ps1 -BuildInstaller",
     "preview:ui": "vite preview --host 0.0.0.0",
-    "test": "node --test"
+    "test": "node tools/run-node-tests.js"
   },
   "engines": {
     "node": ">=16.17.0"

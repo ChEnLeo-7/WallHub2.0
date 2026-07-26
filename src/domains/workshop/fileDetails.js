@@ -24,9 +24,6 @@ function createPublishedFileDetailsService(options = {}) {
   const getSteamWebApiBaseUrl = typeof options.getSteamWebApiBaseUrl === 'function'
     ? options.getSteamWebApiBaseUrl
     : () => 'https://api.steampowered.com';
-  const getSteamApiKey = typeof options.getSteamApiKey === 'function'
-    ? options.getSteamApiKey
-    : () => '';
   if (typeof post !== 'function') {
     throw new Error('Published file details POST dependency missing');
   }
@@ -100,8 +97,6 @@ function createPublishedFileDetailsService(options = {}) {
     if (!ids.length) return [];
     throwIfAborted(signal);
     const parts = [`itemcount=${ids.length}`];
-    const apiKey = String(getSteamApiKey() || '').trim();
-    if (apiKey) parts.push(`key=${encodeURIComponent(apiKey)}`);
     ids.forEach((id, i) => parts.push(`publishedfileids%5B${i}%5D=${id}`));
 
     logger.log(`[FileDetails] POST for ${ids.length} ids: ${ids.slice(0, 3).join(',')}...`);

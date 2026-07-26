@@ -166,10 +166,6 @@ function createRuntimeSettings(options = {}) {
     return key ? getSteamAccessStaticCdnHosts()[key]?.reuseConnection !== false : true;
   }
 
-  function workshopHtmlOrderModeEnabled() {
-    return !!settings().workshopHtmlOrderMode;
-  }
-
   function getSteamWebApiRoute() {
     const envRoute = String(env.WALLHUB_STEAM_WEBAPI_ROUTE || '').trim().toLowerCase();
     if (env.WALLHUB_STEAM_ACCESS_DIRECT_WEBAPI === '1') return 'direct';
@@ -303,7 +299,6 @@ function createRuntimeSettings(options = {}) {
       steamWebApiRoute: getSteamWebApiRoute,
       steamWebApiProtocol: getSteamWebApiProtocol,
       steamWebApiHost: getSteamWebApiHost,
-      workshopHtmlOrderMode: workshopHtmlOrderModeEnabled,
       steamAccessExperimental: getSteamAccessExperimental,
       steamAccessHostBlacklist: getSteamAccessHostBlacklist,
       steamAccessStaticCdnEnhance: steamAccessStaticCdnEnhanceEnabled,
@@ -351,7 +346,6 @@ function createRuntimeSettings(options = {}) {
     steamAccessStaticCdnEnhanceEnabled,
     steamAccessStaticCdnHostEnhanceEnabled,
     steamAccessStaticCdnHostConnectionReuseEnabled,
-    workshopHtmlOrderModeEnabled,
     steamAccessHostsEnabled,
     getSteamAccessMode,
     getSteamAccessHosts,

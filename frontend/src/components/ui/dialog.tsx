@@ -24,6 +24,8 @@ export function Dialog({
   fixedHeight,
   fitContent,
   lightweight,
+  titleFullWidth,
+  closeButtonClassName,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -39,6 +41,8 @@ export function Dialog({
   fixedHeight?: boolean;
   fitContent?: boolean;
   lightweight?: boolean;
+  titleFullWidth?: boolean;
+  closeButtonClassName?: string;
 }) {
   React.useEffect(() => {
     if (!open) return;
@@ -48,8 +52,10 @@ export function Dialog({
       previousBodyOverflow = style.overflow;
       previousBodyPaddingRight = style.paddingRight;
       const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+      const scrollbarGutter = window.getComputedStyle(document.documentElement).scrollbarGutter;
+      const stableScrollbarGutter = scrollbarGutter.split(/\s+/).includes('stable');
       style.overflow = 'hidden';
-      if (scrollbarWidth > 0) style.paddingRight = `${scrollbarWidth}px`;
+      if (scrollbarWidth > 0 && !stableScrollbarGutter) style.paddingRight = `${scrollbarWidth}px`;
     }
 
     dialogLockCount += 1;
@@ -107,9 +113,9 @@ export function Dialog({
               children
             ) : (
               <>
-                <div className="flex items-start justify-between gap-4 border-b border-border/50 px-5 py-4">
-                  <div className="min-w-0 text-base font-semibold tracking-tight">{title}</div>
-                  <Button variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} aria-label="关闭">
+                <div className="relative border-b border-border/50 px-5 py-4">
+                  <div className={cn('min-w-0 text-base font-semibold tracking-tight', titleFullWidth ? 'w-full' : 'pr-10')}>{title}</div>
+                  <Button className={cn('absolute right-5 top-4', closeButtonClassName)} variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} aria-label="关闭">
                     <X className="h-4 w-4" />
                   </Button>
                 </div>

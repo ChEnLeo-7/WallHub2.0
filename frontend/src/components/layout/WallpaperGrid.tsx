@@ -4,9 +4,9 @@ import { AnimatePresence, motion } from 'motion/react';
 import type { WorkshopItem } from '@/lib/api';
 import { HOME_VIEW_CARD_LAYOUT_TRANSITION } from '@/lib/motion';
 import { cn } from '@/lib/utils';
-import { WallpaperCard } from './WallpaperCard';
+import { WallpaperCard, type WallpaperContextMenuAnchor } from './WallpaperCard';
 
-type HomeCardDefaultAction = 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage';
+type HomeCardDefaultAction = 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage' | 'remoteSubscribe';
 
 function WallpaperGridComponent({
   items,
@@ -15,6 +15,7 @@ function WallpaperGridComponent({
   onOpen,
   defaultAction,
   onDefaultAction,
+  onOpenContextMenu,
   suppressLayoutAnimation = false,
 }: {
   items: WorkshopItem[];
@@ -23,6 +24,7 @@ function WallpaperGridComponent({
   onOpen: (item: WorkshopItem) => void;
   defaultAction: HomeCardDefaultAction;
   onDefaultAction: (item: WorkshopItem) => void;
+  onOpenContextMenu: (item: WorkshopItem, anchor: WallpaperContextMenuAnchor) => void;
   suppressLayoutAnimation?: boolean;
 }) {
   return (
@@ -42,6 +44,7 @@ function WallpaperGridComponent({
             defaultAction={defaultAction}
             onOpen={onOpen}
             onDefaultAction={onDefaultAction}
+            onOpenContextMenu={onOpenContextMenu}
             suppressLayoutAnimation={suppressLayoutAnimation}
           />
         ))}

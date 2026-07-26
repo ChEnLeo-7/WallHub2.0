@@ -259,6 +259,7 @@ test('MPKG preparation polling returns elapsed wait time without a server file p
   const job = {
     id: '3750175441',
     status: 'preparing',
+    stage: 'converting',
     elapsedMs: 5_400,
     filePath: 'F:\\private\\Downloads\\3750175441\\Mpkg\\3750175441.mpkg',
   };
@@ -268,6 +269,7 @@ test('MPKG preparation polling returns elapsed wait time without a server file p
     serializeMpkgPreparation: (value) => ({
       id: value.id,
       status: value.status,
+      stage: value.stage,
       elapsedMs: value.elapsedMs,
     }),
   });
@@ -279,6 +281,7 @@ test('MPKG preparation polling returns elapsed wait time without a server file p
     success: true,
     id: '3750175441',
     status: 'preparing',
+    stage: 'converting',
     elapsedMs: 5_400,
   });
   assert.equal(JSON.stringify(calls[0].body).includes('private'), false);

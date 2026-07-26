@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Loader2, QrCode } from 'lucide-react';
+import { Loader2, QrCode, ShieldCheck } from 'lucide-react';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +30,7 @@ export function LoginDialogV2({
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [guard, setGuard] = React.useState('');
+  const [useSteamToken, setUseSteamToken] = React.useState(false);
   const [needsGuard, setNeedsGuard] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -44,6 +45,7 @@ export function LoginDialogV2({
       setUsername('');
       setPassword('');
       setGuard('');
+      setUseSteamToken(false);
       setNeedsGuard(false);
       setLoading(false);
       setError('');
@@ -66,6 +68,7 @@ export function LoginDialogV2({
           passwordSuccessHandledRef.current = true;
           onSuccess();
         } else if (data.status === 'needs-guard' || data.needsSteamGuard) {
+          setUseSteamToken(true);
           setNeedsGuard(true);
           setError(data.error || text.guardRequired);
         } else if (data.status === 'error') {
@@ -102,11 +105,20 @@ export function LoginDialogV2({
       setError(text.enterCredentials);
       return;
     }
+    if (useSteamToken && !guard.trim()) {
+      setError(text.enterSteamToken);
+      return;
+    }
     setLoading(true);
     setError('');
     setPasswordSession(null);
     try {
-      const data = await startSteamPasswordLogin({ username, password, steamGuardCode: guard, isRetry: needsGuard });
+      const data = await startSteamPasswordLogin({
+        username,
+        password,
+        steamGuardCode: useSteamToken ? guard.trim() : '',
+        isRetry: needsGuard,
+      });
       setPasswordSession(data);
       if (data.status === 'success') {
         passwordSuccessHandledRef.current = true;
@@ -114,6 +126,7 @@ export function LoginDialogV2({
         return;
       }
       if (data.status === 'needs-guard' || data.needsSteamGuard) {
+        setUseSteamToken(true);
         setNeedsGuard(true);
         setError(data.error || text.guardRequired);
         return;
@@ -123,6 +136,7 @@ export function LoginDialogV2({
       if (err.code === 'STEAM_NETWORK_UNREACHABLE' || err.code === 'STEAM_LOGIN_TIMEOUT') {
         setError(err.message || text.networkHint);
       } else if (err.requiresSteamGuard || err.code === 'STEAM_GUARD_REQUIRED') {
+        setUseSteamToken(true);
         setNeedsGuard(true);
         setError(text.guardRequired);
       } else {
@@ -190,7 +204,7 @@ export function LoginDialogV2({
           ) : (
             <Button onClick={submit} disabled={passwordLoginActive}>
               {passwordLoginActive ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {needsGuard ? text.submitGuard : text.login}
+              {useSteamToken ? text.submitSteamToken : text.login}
             </Button>
           )}
         </>
@@ -224,7 +238,33 @@ export function LoginDialogV2({
           <>
             <Input placeholder={text.steamUsername} autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
             <Input placeholder={text.steamPassword} type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
-            {needsGuard ? <Input placeholder={text.steamGuard} value={guard} onChange={(event) => setGuard(event.target.value)} /> : null}
+            {useSteamToken ? (
+              <div className="space-y-2">
+                <Input
+                  placeholder={text.steamTokenCode}
+                  autoComplete="one-time-code"
+                  inputMode="text"
+                  value={guard}
+                  onChange={(event) => setGuard(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">{text.steamTokenHelp}</p>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={passwordLoginActive}
+                onClick={() => {
+                  setUseSteamToken(true);
+                  setError('');
+                }}
+              >
+                <ShieldCheck className="h-4 w-4" />
+                {text.useSteamToken}
+              </Button>
+            )}
             {passwordSession ? <p className="text-xs text-muted-foreground" aria-live="polite">{text.loginStatus}: {passwordStatusMessage}</p> : null}
           </>
         ) : (

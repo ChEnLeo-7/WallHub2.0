@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Download, MonitorPlay, Search, Settings } from 'lucide-react';
+import { ArrowLeft, Check, Download, MonitorPlay, Search, Settings } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,8 @@ export function Header({
   exactPhrase,
   setExactPhrase,
   onHome,
+  authorNavigationActive,
+  onAuthorBack,
   onSettings,
   onQueue,
   queueCount,
@@ -23,6 +25,8 @@ export function Header({
   exactPhrase: boolean;
   setExactPhrase: (enabled: boolean) => void;
   onHome: () => void;
+  authorNavigationActive: boolean;
+  onAuthorBack: () => void;
   onSettings: () => void;
   onQueue: () => void;
   queueCount: number;
@@ -37,12 +41,21 @@ export function Header({
       <div className="mx-auto flex min-h-12 max-w-6xl items-center gap-2 px-3 py-2 sm:min-h-14 sm:gap-3 sm:px-6">
         <button
           type="button"
-          onClick={onHome}
+          onClick={authorNavigationActive ? onAuthorBack : onHome}
           className="flex shrink-0 items-center gap-1.5 rounded-md text-[13px] font-semibold tracking-tight text-foreground transition-[filter,transform] active:scale-95 active:brightness-110 sm:gap-2 sm:text-base"
-          aria-label="WallHub"
+          aria-label={authorNavigationActive ? text.back : 'WallHub'}
         >
-          <MonitorPlay className="hidden h-5 w-5 text-primary sm:block" />
-          <span>WallHub</span>
+          {authorNavigationActive ? (
+            <>
+              <ArrowLeft className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
+              <span>{text.back}</span>
+            </>
+          ) : (
+            <>
+              <MonitorPlay className="hidden h-5 w-5 text-primary sm:block" />
+              <span>WallHub</span>
+            </>
+          )}
         </button>
         <form
           className="relative min-w-0 flex-1"

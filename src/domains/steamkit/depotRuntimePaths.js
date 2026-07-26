@@ -11,6 +11,11 @@ function pathLooksExecutable(filePath) {
   }
 }
 
+function readJsonFile(filePath) {
+  const source = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+  return JSON.parse(source);
+}
+
 function depotExecutableNames(options = {}) {
   if (options.isTermuxLikeEnv || options.isAndroidHostLikeEnv) {
     return ['DepotDownloader.dll', 'DepotDownloader', 'DepotDownloader.exe'];
@@ -49,7 +54,7 @@ function resolveDepotRuntimePath(runtimeDir, directPath, options = {}) {
   if (!direct && options.requireStamp !== false) {
     const stamp = options.stampPath || '';
     try {
-      const data = stamp && fs.existsSync(stamp) ? JSON.parse(fs.readFileSync(stamp, 'utf8')) : null;
+      const data = stamp && fs.existsSync(stamp) ? readJsonFile(stamp) : null;
       if (!data || data.patchVersion !== options.patchVersion) return '';
     } catch {
       return '';
@@ -124,7 +129,7 @@ function getDepotRequiredDotnetVersion(executable, logger = console) {
   const configPath = findDepotRuntimeConfig(executable);
   if (!configPath) return '';
   try {
-    const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const data = readJsonFile(configPath);
     const options = data.runtimeOptions || {};
     const frameworks = Array.isArray(options.frameworks)
       ? options.frameworks
@@ -152,7 +157,7 @@ function depotRuntimeStampCandidates(executable, fallbackStampPath) {
 function depotRuntimeStampMatches(executable, fallbackStampPath, patchVersion) {
   for (const stamp of depotRuntimeStampCandidates(executable, fallbackStampPath)) {
     try {
-      const data = stamp && fs.existsSync(stamp) ? JSON.parse(fs.readFileSync(stamp, 'utf8')) : null;
+      const data = stamp && fs.existsSync(stamp) ? readJsonFile(stamp) : null;
       if (data && data.patchVersion === patchVersion) return true;
     } catch {}
   }
@@ -183,6 +188,7 @@ function createDepotRuntimePaths(options = {}) {
 }
 
 module.exports = {
+  readJsonFile,
   pathLooksExecutable,
   depotExecutableNames,
   findDepotDownloaderRecursive,

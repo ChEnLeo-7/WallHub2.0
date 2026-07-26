@@ -10,12 +10,52 @@
   58% { height: 6px; }
   78% { height: 10px; }
 }
+
+@keyframes wallpaper-card-equalizer-compact {
+  0%, 100% { height: 3px; }
+  30% { height: 9px; }
+  58% { height: 5px; }
+  78% { height: 7px; }
+}
+
 .wallpaper-card-equalizer-bar {
   height: 8px;
 }
+
+.wallpaper-card-equalizer[data-compact='true'] .wallpaper-card-equalizer-bar {
+  height: 6px;
+}
+
+.wallhub-video-fullscreen-height {
+  height: 100vh !important;
+  height: 100dvh !important;
+}
+
+.wallhub-media-select-menu {
+  scrollbar-color: rgb(255 255 255 / 0.28) transparent;
+}
+
+.wallhub-media-select-menu::-webkit-scrollbar {
+  width: 5px;
+}
+
+.wallhub-media-select-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wallhub-media-select-menu::-webkit-scrollbar-thumb {
+  border: 0;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.28);
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .wallpaper-card-equalizer[data-active='true'] .wallpaper-card-equalizer-bar {
     animation: wallpaper-card-equalizer 1.2s ease-in-out infinite;
+  }
+
+  .wallpaper-card-equalizer[data-active='true'][data-compact='true'] .wallpaper-card-equalizer-bar {
+    animation: wallpaper-card-equalizer-compact 1.2s ease-in-out infinite;
   }
 }
 
@@ -277,6 +317,23 @@
 }
 
 @layer components {
+  .wallpaper-card-shell {
+    box-shadow: 0 2px 8px hsl(var(--background) / 0.22) !important;
+    transition: box-shadow 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+
+  .wallpaper-card-shell:hover {
+    box-shadow: 0 4px 12px hsl(var(--background) / 0.26) !important;
+  }
+
+  html.light .wallpaper-card-shell {
+    box-shadow: 0 2px 8px hsl(220 28% 32% / 0.16) !important;
+  }
+
+  html.light .wallpaper-card-shell:hover {
+    box-shadow: 0 4px 12px hsl(220 28% 32% / 0.2) !important;
+  }
+
   .glass {
     @apply border border-border/40 bg-card shadow-soft;
   }

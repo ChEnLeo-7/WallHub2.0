@@ -12,6 +12,8 @@
 /.vite/
 /dist/
 /build/
+**/bin/
+**/obj/
 __pycache__/
 *.py[cod]
 

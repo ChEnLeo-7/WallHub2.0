@@ -43,7 +43,7 @@ FROM dependencies AS depot-build
 # Keep the expensive DepotDownloader build independent from frontend assets.
 COPY server.js ./server.js
 COPY src ./src
-COPY tools ./tools
+COPY tools/mpkg ./tools/mpkg
 RUN node server.js --build-depot-runtime \
     && npm prune --omit=dev
 
@@ -54,7 +54,9 @@ ARG WALLHUB_UID=10001
 ARG WALLHUB_GID=10001
 
 ENV NODE_ENV=production \
-    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PATH=/opt/wallhub-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PYTHON=/opt/wallhub-python/bin/python \
+    PYTHON3=/opt/wallhub-python/bin/python3 \
     PORT=3090 \
     WALLHUB_UID=${WALLHUB_UID} \
     WALLHUB_GID=${WALLHUB_GID} \
@@ -77,7 +79,11 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Runtime dependencies for SteamKit mode and GitHub reachability probes.
+# Install MPKG packages in an isolated environment so Bookworm's PEP 668
+# protection cannot redirect them away from the Python selected by WallHub.
+COPY tools/mpkg/requirements.txt /tmp/wallhub-mpkg-requirements.txt
+
+# Runtime dependencies for SteamKit, MPKG conversion, and reachability probes.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
@@ -86,23 +92,27 @@ RUN apt-get update \
         gosu \
         iputils-ping \
         nodejs \
-        python-is-python3 \
         python3 \
-        python3-lz4 \
-        python3-pil \
+        python3-venv \
         tar \
         unzip \
         zip \
         libnetfilter-queue1 \
         libnss3-tools \
+    && python3 -m venv /opt/wallhub-python \
+    && /opt/wallhub-python/bin/python -m pip install \
+        --disable-pip-version-check \
+        --no-cache-dir \
+        --only-binary=:all: \
+        -r /tmp/wallhub-mpkg-requirements.txt \
+    && /opt/wallhub-python/bin/python -c "from PIL import Image; import etcpak, lz4.block, texture2ddecoder; image = Image.new('RGBA', (4, 4), (12, 34, 56, 255)); assert image.size == (4, 4); payload = b'wallhub-lz4-capability' * 4; assert lz4.block.decompress(lz4.block.compress(payload, store_size=True)) == payload; rgba = bytes([12, 34, 56, 255]) * 16; assert len(etcpak.compress_etc2_rgba(rgba, 4, 4)) > 0; assert len(texture2ddecoder.decode_bc1(bytes(8), 4, 4)) == 64; assert len(texture2ddecoder.decode_bc3(bytes(16), 4, 4)) == 64; print('MPKG Python capability probe passed')" \
     && command -v unzip \
     && unzip -v >/dev/null \
     && cp -L "$(command -v unzip)" /usr/local/bin/unzip \
     && chmod 0755 /usr/local/bin/unzip \
     && /usr/local/bin/unzip -v >/dev/null \
-    && python3 -c "import zipfile; print('python zipfile ok')" \
-    && apt-get purge -y --auto-remove \
-        python-is-python3 \
+    && /opt/wallhub-python/bin/python -c "import zipfile; print('python zipfile ok')" \
+    && rm -f /tmp/wallhub-mpkg-requirements.txt \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 10001 wallhub \
@@ -110,14 +120,12 @@ RUN groupadd --system --gid 10001 wallhub \
     && mkdir -p /data /app /opt/steamcommunity_302 \
     && chown -R wallhub:wallhub /data /app /home/wallhub /opt/steamcommunity_302
 
-COPY --from=depot-build --chown=wallhub:wallhub /app/package.json /app/package-lock.json ./
+COPY --from=depot-build --chown=wallhub:wallhub /app/package.json ./package.json
 COPY --from=depot-build --chown=wallhub:wallhub /app/node_modules ./node_modules
 COPY --from=depot-build --chown=wallhub:wallhub /app/server.js ./server.js
 COPY --from=depot-build --chown=wallhub:wallhub /app/src ./src
 COPY --from=frontend-build --chown=wallhub:wallhub /app/public ./public
-COPY --from=depot-build --chown=wallhub:wallhub /app/tools ./tools
-COPY --chown=wallhub:wallhub docs ./docs
-COPY --chown=wallhub:wallhub README.md README.en.md ./
+COPY --from=depot-build --chown=wallhub:wallhub /app/tools/mpkg ./tools/mpkg
 COPY --from=depot-build --chown=wallhub:wallhub /opt/wallhub-depot/DepotDownloader /opt/wallhub-depot/DepotDownloader
 COPY --from=depot-build --chown=wallhub:wallhub /opt/wallhub-depot/DepotDownloaderStream /opt/wallhub-depot/DepotDownloaderStream
 

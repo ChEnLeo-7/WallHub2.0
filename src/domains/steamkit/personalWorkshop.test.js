@@ -1,0 +1,63 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {
+  WALLHUB_STEAM_USER_FILES_MARKER,
+  parseSteamKitUserFilesOutput,
+  createSteamKitPersonalWorkshopService,
+} = require('./personalWorkshop');
+
+test('SteamKit user files parser accepts the final marked JSON response only', () => {
+  const parsed = parseSteamKitUserFilesOutput([
+    'Connecting to Steam3...',
+    `${WALLHUB_STEAM_USER_FILES_MARKER}{"steamid":"76561198000000001","total":4,"ids":["100000","100001","100001","bad"],"publishedfiledetails":[{"result":1,"publishedfileid":"100000","title":"One"}]}`,
+  ].join('\n'));
+
+  assert.deepEqual(parsed, {
+    steamId: '76561198000000001',
+    totalCount: 4,
+    ids: ['100000', '100001'],
+    details: [{ result: 1, publishedfileid: '100000', title: 'One' }],
+  });
+});
+
+test('SteamKit user files command uses remembered login without a Community web session', async () => {
+  const calls = [];
+  const service = createSteamKitPersonalWorkshopService({
+    ensureDepotDownloaderReady: async () => 'DepotDownloader.exe',
+    depotCommandFor: () => ({ command: 'DepotDownloader.exe', argsPrefix: [] }),
+    runProcess: async (command, args, timeoutMs, options) => {
+      calls.push({ command, args, timeoutMs, options });
+      return { out: `${WALLHUB_STEAM_USER_FILES_MARKER}{"steamid":"76561198000000001","total":2,"ids":["100000","100001"]}`, err: '' };
+    },
+    buildDepotDotnetEnv: () => ({ DOTNET_CLI_HOME: 'test-home' }),
+    makeDepotLoginId: seed => `login-${seed}`,
+    ensureDir() {},
+    configDir: 'account',
+    logger: { log() {} },
+  });
+
+  const result = await service.getUserFiles('mysubscriptions', {
+    username: 'tester',
+    page: 2,
+    numperpage: 50,
+  });
+
+  assert.deepEqual(result.ids, ['100000', '100001']);
+  assert.equal(result.totalCount, 2);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, [
+    '-wallhub-user-files', 'mysubscriptions',
+    '-app', '431960',
+    '-wallhub-user-files-page', '2',
+    '-wallhub-user-files-count', '50',
+    '-username', 'tester',
+    '-remember-password',
+    '-max-downloads', '1',
+    '-loginid', 'login-user-files:tester:mysubscriptions',
+  ]);
+  assert.equal(calls[0].args.includes('-wallhub-web-session'), false);
+  assert.equal(calls[0].options.cwd, 'account');
+  assert.equal(calls[0].options.steamAuth, true);
+});

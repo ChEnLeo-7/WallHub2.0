@@ -176,6 +176,35 @@ function writeFixtureProject() {
   return dir;
 }
 
+function enableStreamFixture(dir) {
+  const programPath = path.join(dir, 'Program.cs');
+  const program = fs.readFileSync(programPath, 'utf8').replace(
+    '            var appId = GetParameter(args, "-app", ContentDownloader.INVALID_APP_ID);\n            return 0;',
+    [
+      '            var appId = GetParameter(args, "-app", ContentDownloader.INVALID_APP_ID);',
+      '            var pubFile = 1UL;',
+      '                PrintUnconsumedArgs(args);',
+      '                        await ContentDownloader.DownloadPubfileAsync(appId, pubFile).ConfigureAwait(false);',
+      '            return 0;',
+    ].join('\n')
+  );
+  fs.writeFileSync(programPath, program, 'utf8');
+
+  const contentPath = path.join(dir, 'ContentDownloader.cs');
+  const content = fs.readFileSync(contentPath, 'utf8').replace(
+    '        public static async Task DownloadAppAsync(uint appId, List<(uint depotId, ulong manifestId)> depotManifestIds, string branch, string os, string arch, string language, bool lv, bool isUgc)',
+    [
+      '        public static async Task DownloadPubfileAsync(uint appId, ulong publishedFileId)',
+      '        {',
+      '            await Task.CompletedTask;',
+      '        }',
+      '',
+      '        public static async Task DownloadAppAsync(uint appId, List<(uint depotId, ulong manifestId)> depotManifestIds, string branch, string os, string arch, string language, bool lv, bool isUgc)',
+    ].join('\n')
+  );
+  fs.writeFileSync(contentPath, content, 'utf8');
+}
+
 test('ensureCSharpUsings adds missing usings without depending on source order', () => {
   assert.equal(typeof depotPatch.ensureCSharpUsings, 'function');
   const source = [
@@ -259,6 +288,22 @@ test('patchDepotDownloaderForJsonProgress tolerates reordered Steam3Session usin
     const program = fs.readFileSync(path.join(dir, 'Program.cs'), 'utf8');
     assert.match(program, /WALLHUB_DEPOT_BOOTSTRAP:main/);
     assert.equal((program.match(/WALLHUB_DEPOT_BOOTSTRAP:main/g) || []).length, 1);
+    assert.match(program, /wallHubUserFilesType = GetParameter\(args, "-wallhub-user-files", string\.Empty\)/);
+    assert.match(program, /WALLHUB_STEAM_USER_FILES:/);
+    assert.match(program, /WallHubGetUserFilesJsonAsync\(wallHubUserFilesAppId/);
+    assert.match(program, /wallHubQueryBridge = HasParameter\(args, "-wallhub-query-bridge"\)/);
+    assert.match(program, /WallHubRunQueryBridgeAsync\(\)/);
+    assert.match(program, /WALLHUB_STEAM_QUERY_BRIDGE_READY/);
+    assert.match(program, /WALLHUB_STEAM_QUERY_BRIDGE:/);
+    assert.doesNotMatch(program, /wallhub-query-files|WALLHUB_STEAM_QUERY_FILES|QueryFilesJsonAsync/);
+    assert.match(program, /using System\.Text\.Json;/);
+    assert.match(steam3Session, /WallHubGetUserFilesJsonAsync/);
+    assert.match(steam3Session, /CPublishedFile_GetUserFiles_Request/);
+    assert.doesNotMatch(steam3Session, /QueryFiles|WallHubQuery/);
+    assert.match(steam3Session, /var response = await steamPublishedFile\.GetUserFiles\(request\);/);
+    assert.match(steam3Session, /publishedfiledetails = details/);
+    assert.doesNotMatch(steam3Session, /steamPublishedFile\.GetUserFiles\(request\)\.ConfigureAwait\(false\)/);
+    assert.match(steam3Session, /type != "mysubscriptions" && type != "myfavorites"/);
     assert.match(steam3Session, /socket\?\.Dispose\(\)/);
     assert.match(steam3Session, /route=1/);
     assert.doesNotMatch(steam3Session, /WallHubDohServerListProvider/);
@@ -291,6 +336,57 @@ test('patchDepotDownloaderForJsonProgress upgrades stale Steam3 WebAPI direct-ha
     assert.doesNotMatch(upgraded, /return new HttpClient\(directHandler/);
     assert.match(upgraded, /WallHubSteamWebApiBrokerHandler\(WallHubCreateApiSocketsHandler\(\), brokerUrl, brokerToken\)/);
     assert.match(upgraded, /WallHubGetSteamWebSessionJsonAsync/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('patchDepotDownloaderForJsonProgress repairs a stale AsyncJob ConfigureAwait call', () => {
+  const dir = writeFixtureProject();
+  try {
+    depotPatch.patchDepotDownloaderForJsonProgress(dir, { includeStream: false });
+    const steam3Path = path.join(dir, 'Steam3Session.cs');
+    const stale = fs.readFileSync(steam3Path, 'utf8')
+      .replace('var response = await steamPublishedFile.GetUserFiles(request);', 'var response = await steamPublishedFile.GetUserFiles(request).ConfigureAwait(false);');
+    fs.writeFileSync(steam3Path, stale, 'utf8');
+
+    depotPatch.patchDepotDownloaderForJsonProgress(dir, { includeStream: false });
+    const repaired = fs.readFileSync(steam3Path, 'utf8');
+    assert.match(repaired, /var response = await steamPublishedFile\.GetUserFiles\(request\);/);
+    assert.doesNotMatch(repaired, /steamPublishedFile\.GetUserFiles\(request\)\.ConfigureAwait\(false\)/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('patchDepotDownloaderForJsonProgress emits a cancellable reusable stream worker', () => {
+  const dir = writeFixtureProject();
+  try {
+    enableStreamFixture(dir);
+    depotPatch.patchDepotDownloaderForJsonProgress(dir, { includeStream: true });
+
+    const stream = fs.readFileSync(path.join(dir, 'WallHubDepotStream.cs'), 'utf8');
+    const chunkProgress = fs.readFileSync(path.join(dir, 'WallHubDepotChunkProgress.cs'), 'utf8');
+
+    assert.match(stream, /Task\.WhenAny\(readTask, activeRangeTask\)/);
+    assert.match(stream, /string\.Equals\(type, "cancel", StringComparison\.OrdinalIgnoreCase\)/);
+    assert.match(stream, /activeRangeCts\.Cancel\(\)/);
+    assert.match(stream, /\["cancelled"\] = true/);
+    assert.match(stream, /TryDeleteWorkerRangeFile\(outPath\)/);
+    assert.match(stream, /new FileStream\(outPath, FileMode\.Create, FileAccess\.Write, FileShare\.Read, 4096, FileOptions\.Asynchronous\)/);
+    assert.doesNotMatch(stream, /File\.Open\(outPath/);
+    assert.match(stream, /StreamRangeWithPlanAsync\([^\r\n]+CancellationToken cancellationToken\)/);
+    assert.match(stream, /DownloadStreamChunkAsync\([^\r\n]+CancellationToken cancellationToken\)/);
+    assert.match(stream, /DownloadChunkAsync\([^\r\n]+CancellationToken cancellationToken\)/);
+    assert.match(stream, /rangeCts\.Cancel\(\);[\s\S]*Task\.WhenAll\(remainingTasks\)/);
+    assert.match(stream, /output\.WriteAsync\(read\.Buffer\.AsMemory\(offset, count\), rangeToken\)/);
+    assert.match(stream, /cdnToken, null, cancellationToken\)/);
+    assert.doesNotMatch(stream, /CancellationTokenSource cts/);
+
+    assert.match(chunkProgress, /CancellationToken cancellationToken = default/);
+    assert.match(chunkProgress, /CancellationTokenSource\.CreateLinkedTokenSource\(cancellationToken\)/);
+    assert.match(chunkProgress, /SendAsync\(request, HttpCompletionOption\.ResponseHeadersRead, requestCts\.Token\)/);
+    assert.match(chunkProgress, /ReadAsync\(buffer\.AsMemory\(0, buffer\.Length\), cancellationToken\)/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

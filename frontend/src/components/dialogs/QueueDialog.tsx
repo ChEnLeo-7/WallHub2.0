@@ -1,4 +1,5 @@
-import { AnimatePresence, motion } from 'motion/react';
+import * as React from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   ArrowUp,
   ArrowDown,
@@ -14,10 +15,30 @@ import { Progress } from '@/components/ui/progress';
 import { AnimatedHeight } from '@/components/layout/AnimatedHeight';
 import { useText, type AppText } from '@/lib/text';
 import {
+  cn,
   formatBytesText,
   formatSpeedText,
 } from '@/lib/utils';
 import { type QueueTask } from '@/lib/api';
+
+type QueueStatusFilter = 'all' | 'completed' | 'downloading' | 'pending' | 'error';
+type QueueWallpaperTypeFilter = 'all' | 'video' | 'scene' | 'web';
+type QueueFilterMode = 'status' | 'type';
+
+function statusFilter(status?: string): QueueStatusFilter {
+  if (status === 'completed') return 'completed';
+  if (status === 'downloading' || status === 'moving') return 'downloading';
+  if (status === 'error') return 'error';
+  return 'pending';
+}
+
+function wallpaperTypeFilter(task: QueueTask): Exclude<QueueWallpaperTypeFilter, 'all'> | 'other' {
+  const type = String(task.workshopType || '').trim().toLowerCase();
+  if (type === 'video' || (!type && task.isVideo)) return 'video';
+  if (type === 'web') return 'web';
+  if (type === 'scene' || !type) return 'scene';
+  return 'other';
+}
 
 function statusText(status: string | undefined, text: AppText) {
   return (
@@ -54,12 +75,115 @@ export function QueueDialog({
   onPlay: (task: QueueTask) => void;
 }) {
   const text = useText();
+  const reduceMotion = useReducedMotion();
+  const [filterMode, setFilterMode] = React.useState<QueueFilterMode>('status');
+  const [activeStatusFilter, setActiveStatusFilter] = React.useState<QueueStatusFilter>('all');
+  const [activeTypeFilter, setActiveTypeFilter] = React.useState<QueueWallpaperTypeFilter>('all');
+  const statusFilterOptions = React.useMemo(() => [
+    { value: 'all' as const, label: text.queueFilterAll },
+    { value: 'completed' as const, label: text.queueFilterCompleted },
+    { value: 'downloading' as const, label: text.queueFilterDownloading },
+    { value: 'pending' as const, label: text.queueFilterPending },
+    { value: 'error' as const, label: text.queueFilterFailed },
+  ].map((option) => ({
+    ...option,
+    count: option.value === 'all' ? queue.length : queue.filter((task) => statusFilter(task.status) === option.value).length,
+  })), [queue, text]);
+  const typeFilterOptions = React.useMemo(() => [
+    { value: 'all' as const, label: text.queueFilterAll },
+    { value: 'video' as const, label: text.queueFilterVideo },
+    { value: 'scene' as const, label: text.queueFilterScene },
+    { value: 'web' as const, label: text.queueFilterWeb },
+  ].map((option) => ({
+    ...option,
+    count: option.value === 'all' ? queue.length : queue.filter((task) => wallpaperTypeFilter(task) === option.value).length,
+  })), [queue, text]);
+  const filterOptions = filterMode === 'status' ? statusFilterOptions : typeFilterOptions;
+  const activeFilter = filterMode === 'status' ? activeStatusFilter : activeTypeFilter;
+  const selectFilter = (value: QueueStatusFilter | QueueWallpaperTypeFilter) => {
+    if (filterMode === 'status') setActiveStatusFilter(value as QueueStatusFilter);
+    else setActiveTypeFilter(value as QueueWallpaperTypeFilter);
+  };
+  const filteredQueue = React.useMemo(
+    () => {
+      if (filterMode === 'status') {
+        return activeStatusFilter === 'all' ? queue : queue.filter((task) => statusFilter(task.status) === activeStatusFilter);
+      }
+      return activeTypeFilter === 'all' ? queue : queue.filter((task) => wallpaperTypeFilter(task) === activeTypeFilter);
+    },
+    [activeStatusFilter, activeTypeFilter, filterMode, queue],
+  );
+  const toggleFilterMode = () => setFilterMode((current) => current === 'status' ? 'type' : 'status');
+  const dialogTitle = (
+    <div className="relative flex w-full min-w-0 flex-col items-start gap-1.5 text-left sm:min-h-9 sm:justify-center">
+      <button
+        type="button"
+        className="shrink-0 select-none rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        aria-label={`${text.queue}. ${text.queueFilterModeSwitch}`}
+        onDoubleClick={toggleFilterMode}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          toggleFilterMode();
+        }}
+      >
+        {text.queue}
+      </button>
+      <div className="w-full self-center sm:absolute sm:left-1/2 sm:top-0 sm:w-auto sm:-translate-x-1/2">
+        <AnimatePresence initial={false} mode="wait">
+          <motion.div
+            key={filterMode}
+            className="flex w-full max-w-full flex-wrap justify-center gap-0.5 rounded-lg border border-border bg-input/25 p-0.5 font-normal shadow-sm sm:w-auto sm:flex-nowrap sm:gap-1 sm:p-1"
+            role="tablist"
+            aria-label={filterMode === 'status' ? text.queueStatusFilter : text.queueTypeFilter}
+            initial={reduceMotion ? false : { opacity: 0, y: -3 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 3 }}
+            transition={{ duration: reduceMotion ? 0 : 0.14, ease: 'easeOut' }}
+          >
+            {filterOptions.map((option) => {
+              const active = activeFilter === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  tabIndex={active ? 0 : -1}
+                  aria-label={`${option.label} (${option.count})`}
+                  onClick={() => selectFilter(option.value)}
+                  className={cn(
+                    'relative isolate inline-flex min-h-7 flex-1 items-center justify-center gap-0.5 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors sm:min-h-8 sm:flex-none sm:gap-1.5 sm:px-2.5 sm:py-1.5 sm:text-sm',
+                    active
+                      ? 'text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-input/65 hover:text-foreground',
+                  )}
+                >
+                  {active ? (
+                    <motion.span
+                      layoutId={`queue-${filterMode}-filter-indicator`}
+                      className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-primary shadow-sm"
+                      transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 520, damping: 42, mass: 0.72 }}
+                    />
+                  ) : null}
+                  <span className="relative z-10">{option.label}</span>
+                  <span className={cn('relative z-10 hidden tabular-nums sm:inline', active ? 'text-primary-foreground/75' : 'text-muted-foreground')}>{option.count}</span>
+                </button>
+              );
+            })}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
   return (
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
       fixedHeight={fixedPanelHeight}
-      title={text.queue}
+      title={dialogTitle}
+      titleFullWidth
+      closeButtonClassName="max-sm:top-3"
       wide
       footer={
         <>
@@ -83,8 +207,20 @@ export function QueueDialog({
             >
               {text.queueEmpty}
             </motion.div>
+          ) : !filteredQueue.length ? (
+            <motion.div
+              key="queue-filter-empty"
+              layout
+              className="grid place-items-center rounded-xl border border-border bg-card p-10 text-muted-foreground"
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1], layout: { type: 'spring', stiffness: 360, damping: 36, mass: 0.9 } }}
+            >
+              {text.queueFilteredEmpty}
+            </motion.div>
           ) : (
-            queue.map((task) => {
+            filteredQueue.map((task) => {
             const id = String(task.id || task.cacheKey || '');
             const title = task.title || task.name || id;
             const busy = busyIds.has(id);

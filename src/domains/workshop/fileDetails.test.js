@@ -4,10 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createPublishedFileDetailsService } = require('./fileDetails');
 
-test('published file details requests include Steam Web API key when configured', async () => {
+test('published file details requests remain keyless', async () => {
   let postedBody = '';
   const service = createPublishedFileDetailsService({
-    getSteamApiKey: () => 'test-key',
     logger: { log() {}, warn() {} },
     post: async (_url, body) => {
       postedBody = body;
@@ -22,6 +21,6 @@ test('published file details requests include Steam Web API key when configured'
   const details = await service.get(['123']);
 
   assert.equal(details.length, 1);
-  assert.match(postedBody, /(?:^|&)key=test-key(?:&|$)/);
+  assert.doesNotMatch(postedBody, /(?:^|&)key=/);
   assert.match(postedBody, /publishedfileids%5B0%5D=123/);
 });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   Check,
   ChevronsRight,
@@ -17,7 +17,6 @@ import {
   Languages,
   LayoutTemplate,
   Link2,
-  ListOrdered,
   LogOut,
   Monitor,
   Paintbrush,
@@ -77,6 +76,7 @@ import {
 } from '@/lib/workshop';
 import { type RuntimeDiagnostics, type RuntimeStatus, type SteamStatus, fetchSteamAccessHosts } from '@/lib/api';
 import { isCompleteCustomAccentColor } from '../../../../src/shared/customAccentInput.mjs';
+import type { VideoPlayerMode } from '@/hooks/usePreferences';
 
 import {
   DEFAULT_STEAM_ACCESS_DOH_ENDPOINT,
@@ -96,7 +96,6 @@ export type SettingsForm = {
   steamApiKey: string;
   wallhubLogLevel: 'info' | 'debug';
   mpkgTextureProfile: 'fast' | 'compact';
-  useSteamApi: boolean;
   downloadDir: string;
   maxConcurrentDownloads: number;
   steamCdnRouteStrategy: 'nearest' | 'proxy';
@@ -104,7 +103,6 @@ export type SettingsForm = {
   steamKitMaxDownloads: number;
   effectiveSteamKitMaxDownloads: number;
   steamKitDepotStreaming: boolean;
-  workshopHtmlOrderMode: boolean;
   wallhubSteamAccessEnhance: boolean;
   wallhubSteamAccessDirectWebApi: boolean;
   wallhubSteamWebApiRoute: 'direct' | 'follow';
@@ -146,7 +144,7 @@ export type SettingsForm = {
 type ThemeMode = 'system' | 'light' | 'dark';
 type AccentTheme = 'mono' | 'blue' | 'green' | 'rose' | 'violet' | 'custom';
 type DetailsPresentation = 'classic' | 'redesigned';
-type HomeCardDefaultAction = 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage';
+type HomeCardDefaultAction = 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage' | 'remoteSubscribe';
 
 export function SettingsDialog({
   open,
@@ -184,6 +182,8 @@ export function SettingsDialog({
   setHomePageSize,
   prefetchNextPage,
   setPrefetchNextPage,
+  videoPlayerMode,
+  setVideoPlayerMode,
   onSave,
   onClearDepotStreamCache,
   onLogin,
@@ -226,6 +226,8 @@ export function SettingsDialog({
   setHomePageSize: (size: number) => void;
   prefetchNextPage: boolean;
   setPrefetchNextPage: (enabled: boolean) => void;
+  videoPlayerMode: VideoPlayerMode;
+  setVideoPlayerMode: (mode: VideoPlayerMode) => void;
   onSave: (patch?: Partial<SettingsForm>) => void;
   onClearDepotStreamCache: () => void;
   onLogin: () => void;
@@ -233,6 +235,7 @@ export function SettingsDialog({
   onRestart: () => void;
   onShutdown: () => void;
 }) {
+  const reduceMotion = useReducedMotion();
   const [tab, setTab] = React.useState<'server' | 'download' | 'steam' | 'appearance' | 'experimental'>('server');
   const [steamProxyQuickUrl, setSteamProxyQuickUrl] = React.useState('');
   const [customDohEndpoint, setCustomDohEndpoint] = React.useState('');
@@ -443,10 +446,10 @@ export function SettingsDialog({
 
   return (
     <>
-    <Dialog open={open} onOpenChange={onOpenChange} title={text.settings} wide bare fixedHeight={fixedPanelHeight} className="max-w-[calc(100vw-1rem)] overflow-hidden bg-transparent p-0 shadow-none sm:max-w-6xl">
+    <Dialog open={open} onOpenChange={onOpenChange} title={text.settings} wide bare fixedHeight={fixedPanelHeight} className="max-w-[calc(100vw-1rem)] overflow-hidden border border-border bg-popover/95 p-0 text-popover-foreground shadow-panel backdrop-blur sm:max-w-6xl">
       <motion.div
         className={cn(
-          'flex w-full max-w-full min-w-0 touch-auto flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 text-popover-foreground shadow-[0_34px_120px_rgb(0_0_0/0.48),0_12px_34px_rgb(0_0_0/0.24),0_0_0_1px_rgb(255_255_255/0.04)_inset] backdrop-blur',
+          'flex w-full max-w-full min-w-0 touch-auto flex-col overflow-hidden bg-transparent shadow-none',
           fixedPanelHeight ? 'h-full' : 'max-h-[calc(100dvh-1rem)] sm:max-h-[92vh]',
         )}
       >
@@ -807,7 +810,7 @@ export function SettingsDialog({
               <section className="space-y-3 rounded-xl border border-border bg-card p-4">
                 <h4 className="flex items-center gap-2 text-sm font-semibold">
                   <KeyRound className="h-4 w-4" />
-                  Steam Web API
+                  {text.steamApiTitle}
                 </h4>
                 <p className="text-sm text-muted-foreground">
                   {text.steamApiHelp}{' '}
@@ -834,6 +837,7 @@ export function SettingsDialog({
                   </Button>
                 </div>
               </section>
+
             </motion.div>
                 ) : tab === 'experimental' ? (
             <motion.div
@@ -885,13 +889,20 @@ export function SettingsDialog({
                             aria-pressed={resolverUiMode === mode}
                             onClick={() => saveSteamAccessMode(mode)}
                             className={cn(
-                              'h-9 rounded-md px-2 text-sm font-medium transition-[background-color,color,box-shadow,filter,transform] active:scale-[0.98] active:brightness-110',
+                              'relative isolate h-9 rounded-md px-2 text-sm font-medium transition-[color,filter,transform] active:scale-[0.98] active:brightness-110',
                               resolverUiMode === mode
-                                ? 'bg-primary/90 text-primary-foreground shadow-sm'
+                                ? 'text-primary-foreground'
                                 : 'text-muted-foreground hover:bg-input/65 hover:text-foreground',
                             )}
                           >
-                            {label}
+                            {resolverUiMode === mode ? (
+                              <motion.span
+                                layoutId="settings-resolver-mode-indicator"
+                                className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-primary/90 shadow-sm"
+                                transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 520, damping: 42, mass: 0.72 }}
+                              />
+                            ) : null}
+                            <span className="relative z-10">{label}</span>
                           </button>
                         ))}
                       </div>
@@ -1177,6 +1188,44 @@ export function SettingsDialog({
                 onChange={setPrefetchNextPage}
               />
 
+              <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+                <div className="min-w-0">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold">
+                    <Play className="h-4 w-4" />
+                    {text.videoPlayerControls}
+                  </h4>
+                  <p className="mt-1 text-sm text-muted-foreground">{text.videoPlayerControlsDesc}</p>
+                </div>
+                <div className="grid w-full grid-cols-2 gap-1 rounded-lg border border-border bg-input/25 p-1" role="group" aria-label={text.videoPlayerControls}>
+                  {([
+                    ['native', text.videoPlayerModeDefault],
+                    ['compatibility', text.videoPlayerModeCompatibility],
+                  ] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={videoPlayerMode === mode}
+                      onClick={() => setVideoPlayerMode(mode)}
+                      className={cn(
+                        'relative isolate min-h-9 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                        videoPlayerMode === mode
+                          ? 'text-primary-foreground'
+                          : 'text-muted-foreground hover:bg-input/65 hover:text-foreground',
+                      )}
+                    >
+                      {videoPlayerMode === mode ? (
+                        <motion.span
+                          layoutId="settings-video-player-mode-indicator"
+                          className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-primary shadow-sm"
+                          transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 520, damping: 42, mass: 0.72 }}
+                        />
+                      ) : null}
+                      <span className="relative z-10">{label}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
               <ExperimentalToggle
                 icon={Film}
                 title={text.steamKitDepotStreaming}
@@ -1188,16 +1237,6 @@ export function SettingsDialog({
                 }}
               />
 
-              <ExperimentalToggle
-                icon={ListOrdered}
-                title={text.workshopHtmlOrderMode}
-                description={text.workshopHtmlOrderModeDesc}
-                enabled={settings.workshopHtmlOrderMode}
-                onChange={(enabled) => {
-                  setSettings((current) => ({ ...current, workshopHtmlOrderMode: enabled }));
-                  onSave({ workshopHtmlOrderMode: enabled });
-                }}
-              />
             </motion.div>
                 ) : (
             <motion.div

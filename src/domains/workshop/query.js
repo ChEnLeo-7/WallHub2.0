@@ -1,15 +1,17 @@
 'use strict';
 
 const { CONTENT_RATING_TAGS, WORKSHOP_TYPE_TAGS, collectArrayLikeParams } = require('./filters');
-const { parseWorkshopBrowseHtml, parseWorkshopBrowseSsr } = require('./parse');
+const { parseWorkshopBrowseHtml } = require('./parse');
 
 const COMMUNITY_SORT_MAP = { 0: 'toprated', 1: 'trend', 2: 'mostrecent', 11: 'mostvotes', 16: 'totaluniquesubscribers' };
 const DEFAULT_COMMUNITY_PAGE_TIMEOUT_MS = Math.max(8000, parseInt(process.env.WALLHUB_COMMUNITY_PAGE_TIMEOUT_MS || '22000', 10) || 22000);
+const COMMUNITY_TRANSIENT_RETRIES = Math.max(0, Math.min(2, parseInt(process.env.WALLHUB_COMMUNITY_TRANSIENT_RETRIES || '1', 10) || 0));
 
 function isSteamCommunityLoginHtml(html) {
   const text = String(html || '');
   return /(?:url=|location(?:\.href)?\s*=)[^>"']*https?:\/\/steamcommunity\.com\/login\/home/i.test(text) ||
-    /<form\b[^>]*(?:id|class)=["'][^"']*(?:login_form|loginbox)[^"']*["']/i.test(text);
+    /<form\b[^>]*(?:id|class)=["'][^"']*(?:login_form|loginbox)[^"']*["']/i.test(text) ||
+    /window\.UserConfig\s*=\s*\{[^}]*["']logged_in["']\s*:\s*false/i.test(text);
 }
 
 function normalizeCommunityTagList(values = []) {
@@ -25,21 +27,78 @@ function normalizeCommunityTagList(values = []) {
   return out;
 }
 
+function normalizeSteamId(value) {
+  const id = String(value || '').replace(/[^\d]/g, '');
+  return /^7656119\d{10}$/.test(id) ? id : '';
+}
+
+function isAbortError(error) {
+  return !!(error && error.code === 'ABORT_ERR');
+}
+
+function isTransientCommunityError(error) {
+  const message = String(error && error.message || error || '').toLowerCase();
+  return /curl:\s*\(56\)|receiving data from the peer|econnreset|socket hang up|connection reset|connection aborted|timed out|timeout|econnrefused|enetunreach|ehostunreach/.test(message);
+}
+
+function waitForCommunityRetry(delayMs, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal && signal.aborted) {
+      reject(Object.assign(new Error('Request aborted'), { code: 'ABORT_ERR' }));
+      return;
+    }
+    const timer = setTimeout(resolve, delayMs);
+    if (signal) signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(Object.assign(new Error('Request aborted'), { code: 'ABORT_ERR' }));
+    }, { once: true });
+  });
+}
+
+async function getCommunityHtml(url, helpers = {}) {
+  const get = helpers.get;
+  const logger = helpers.logger || console;
+  const headers = Object.assign({}, helpers.headers || {});
+  if (helpers.signal) headers.signal = helpers.signal;
+  const timeoutMs = helpers.timeoutMs || DEFAULT_COMMUNITY_PAGE_TIMEOUT_MS;
+  let lastError;
+  for (let attempt = 0; attempt <= COMMUNITY_TRANSIENT_RETRIES; attempt += 1) {
+    try {
+      const requestHeaders = attempt === 0
+        ? headers
+        : Object.assign({}, headers, { wallhubDisableCurlProxy: true });
+      return (await get(url, requestHeaders, timeoutMs)).toString('utf8');
+    } catch (error) {
+      if (isAbortError(error) || !isTransientCommunityError(error) || attempt >= COMMUNITY_TRANSIENT_RETRIES) throw error;
+      lastError = error;
+      logger.warn(`[Community] transient browse request failure; retrying with native HTTP (${attempt + 1}/${COMMUNITY_TRANSIENT_RETRIES}): ${error.message}`);
+      await waitForCommunityRetry(200 * (attempt + 1), helpers.signal);
+    }
+  }
+  throw lastError || new Error('Steam Community browse request failed');
+}
+
 function buildCommunityWorkshopBrowseUrl(params = {}) {
   const page = Math.max(1, parseInt(params.page, 10) || 1);
   const pageSize = Math.max(1, Math.min(100, parseInt(params.pageSize || params.numperpage, 10) || 30));
   const appId = parseInt(params.appid, 10) || 431960;
   const pathMode = String(params.path || '').trim().toLowerCase();
+  const requestedSort = String(params.actualsort || params.browsesort || '').trim().toLowerCase();
   if (params.creator) {
     return `https://steamcommunity.com/profiles/${encodeURIComponent(String(params.creator))}/myworkshopfiles/?appid=${appId}&p=${page}&numperpage=${pageSize}`;
   }
-  if (pathMode === 'myfiles') {
+  if (pathMode === 'myfiles' || requestedSort === 'mysubscriptions') {
     const search = new URLSearchParams();
     search.set('appid', String(appId));
     search.set('p', String(page));
     search.set('numperpage', String(pageSize));
-    if (params.browsefilter) search.set('browsefilter', String(params.browsefilter));
-    return `https://steamcommunity.com/my/myworkshopfiles/?${search.toString()}`;
+    const browseFilter = String(params.browsefilter || (requestedSort === 'mysubscriptions' ? 'mysubscriptions' : '')).trim();
+    if (browseFilter) search.set('browsefilter', browseFilter);
+    normalizeCommunityTagList((params.tags || []).concat(collectArrayLikeParams(params, 'requiredtags')))
+      .forEach(tag => search.append('requiredtags[]', tag));
+    const steamId = normalizeSteamId(params.steamid || params.profileSteamId);
+    const basePath = steamId ? `/profiles/${steamId}/myworkshopfiles/` : '/my/myworkshopfiles/';
+    return `https://steamcommunity.com${basePath}?${search.toString()}`;
   }
   if (pathMode === 'votingqueue') {
     const search = new URLSearchParams();
@@ -49,7 +108,6 @@ function buildCommunityWorkshopBrowseUrl(params = {}) {
     return `https://steamcommunity.com/sharedfiles/votingqueue/?${search.toString()}`;
   }
 
-  const requestedSort = String(params.actualsort || params.browsesort || '').trim();
   const sort = requestedSort || COMMUNITY_SORT_MAP[parseInt(params.query_type, 10)] || 'trend';
   const search = new URLSearchParams();
   search.set('appid', String(appId));
@@ -72,73 +130,19 @@ function buildCommunityWorkshopBrowseUrl(params = {}) {
   return `https://steamcommunity.com/workshop/browse/?${search.toString()}`;
 }
 
-function buildWorkshopBrowseUrl(params = {}) {
-  const page = parseInt(params.page, 10) || 1;
-  const appId = params.appid || 431960;
-  if (params.creator) {
-    return `https://steamcommunity.com/profiles/${params.creator}/myworkshopfiles/?appid=${appId}&p=${page}&numperpage=${params.numperpage || 30}`;
-  }
-
-  const sort = COMMUNITY_SORT_MAP[parseInt(params.query_type, 10)] || 'trend';
-  const qs = [
-    `appid=${appId}`,
-    `browsesort=${sort}`,
-    'section=readytouseitems',
-    `actualsort=${sort}`,
-    `p=${page}`,
-    `num_per_page=${params.numperpage || 30}`,
-  ];
-  if (params.search_text) qs.push(`searchtext=${encodeURIComponent(params.search_text)}`);
-  if (params.browsefilter) qs.push(`browsefilter=${encodeURIComponent(String(params.browsefilter))}`);
-  if (params.special_filter) qs.push(`special_filter=${encodeURIComponent(String(params.special_filter))}`);
-  if (params.days && sort === 'trend' && String(params.days) !== '0') qs.push(`days=${params.days}`);
-
-  const tags = [];
-  const excludedTags = [];
-  const requiredAppIds = [];
-  for (const [key, value] of Object.entries(params || {})) {
-    if (/^requiredtags/.test(key) && value) tags.push(String(value));
-    if (/^excludedtags/.test(key) && value) excludedTags.push(String(value));
-    if (/^required_appids/.test(key) && value) requiredAppIds.push(String(value));
-  }
-  normalizeCommunityTagList(tags).forEach(tag => qs.push(`requiredtags[]=${encodeURIComponent(tag)}`));
-  excludedTags.forEach(tag => qs.push(`excludedtags[]=${encodeURIComponent(tag)}`));
-  requiredAppIds.forEach(appid => qs.push(`required_appids[]=${encodeURIComponent(appid)}`));
-  return `https://steamcommunity.com/workshop/browse/?${qs.join('&')}`;
-}
-
-async function fetchWorkshopBrowsePage(params, helpers = {}) {
+async function scrapeWorkshopIds(params, helpers = {}) {
   const get = helpers.get;
   const logger = helpers.logger || console;
-  if (typeof get !== 'function') throw new Error('Workshop browse GET dependency missing');
+  if (typeof get !== 'function') throw new Error('Workshop scraper GET dependency missing');
   const url = buildCommunityWorkshopBrowseUrl(params);
-  logger.log(`[Community] ${url}`);
-  const headers = Object.assign({}, helpers.headers || {});
-  if (helpers.signal) headers.signal = helpers.signal;
-  const startedAt = Date.now();
-  const html = (await get(url, headers, helpers.timeoutMs || DEFAULT_COMMUNITY_PAGE_TIMEOUT_MS)).toString('utf8');
+  logger.log(`[Scrape] ${url}`);
+  const html = await getCommunityHtml(url, helpers);
   if (helpers.requireSteamLogin && isSteamCommunityLoginHtml(html)) {
     const error = new Error('Steam Community 登录会话已失效，请重新登录');
     error.code = 'STEAM_WEB_LOGIN_REQUIRED';
     error.requiresSteamLogin = true;
     throw error;
   }
-  const requestMs = Date.now() - startedAt;
-  const parseStartedAt = Date.now();
-  const ssr = parseWorkshopBrowseSsr(html);
-  const parseMs = Date.now() - parseStartedAt;
-  return { url, html, ssr, requestMs, parseMs };
-}
-
-async function scrapeWorkshopIds(params, helpers = {}) {
-  const get = helpers.get;
-  const logger = helpers.logger || console;
-  if (typeof get !== 'function') throw new Error('Workshop scraper GET dependency missing');
-  const url = buildWorkshopBrowseUrl(params);
-  logger.log(`[Scrape] ${url}`);
-  const headers = Object.assign({}, helpers.headers || {});
-  if (helpers.signal) headers.signal = helpers.signal;
-  const html = (await get(url, headers)).toString('utf8');
   const result = parseWorkshopBrowseHtml(html);
   logger.log(`[Scrape] Found ${result.ids.length} IDs, totalCount from HTML: ${result.totalCount}`);
   if (result.foundFirstItem) {
@@ -275,8 +279,8 @@ function buildSteamApiQueryUrl(apiKey, params = {}, singleGenreTag, singleResolu
   if (input.search_text) search.set('search_text', input.search_text);
   if (input.days > 0) search.set('days', String(input.days));
   if (input.include_recent_votes_only) appendBooleanParam(search, 'include_recent_votes_only', true);
-  input.requiredtags.forEach((tag, i) => search.set(`requiredtags[${i}]`, tag));
-  input.excludedtags.forEach((tag, i) => search.set(`excludedtags[${i}]`, tag));
+  input.requiredtags.forEach((tag, index) => search.set(`requiredtags[${index}]`, tag));
+  input.excludedtags.forEach((tag, index) => search.set(`excludedtags[${index}]`, tag));
   return `${normalizeSteamWebApiBaseUrl(baseUrl)}/IPublishedFileService/QueryFiles/v1/?${search.toString()}`;
 }
 
@@ -313,73 +317,65 @@ async function queryWorkshopBySteamApi(apiKey, params = {}, genreOr = [], helper
       return_short_description: true,
       return_metadata: true,
     };
-    const url = steamApiServiceUrl('IPublishedFileService', 'GetUserFiles', apiKey, input, baseUrl);
-    const timeoutMs = Number(helpers.timeoutMs || 22000);
-    const raw = await get(url, steamApiHeaders(apiKey, helpers.signal ? { signal: helpers.signal } : {}), timeoutMs);
-    const data = JSON.parse(raw.toString('utf8'));
-    const resp = data.response || {};
-    const details = Array.isArray(resp.publishedfiledetails) ? resp.publishedfiledetails : [];
-    const ids = details.map(detail => String(detail.publishedfileid)).filter(Boolean);
+    const raw = await get(
+      steamApiServiceUrl('IPublishedFileService', 'GetUserFiles', apiKey, input, baseUrl),
+      steamApiHeaders(apiKey, helpers.signal ? { signal: helpers.signal } : {}),
+      Number(helpers.timeoutMs || 22000)
+    );
+    const response = JSON.parse(raw.toString('utf8')).response || {};
+    const details = Array.isArray(response.publishedfiledetails) ? response.publishedfiledetails : [];
     const detailMap = {};
-    details.forEach(detail => {
-      if (detail.result === 1) detailMap[detail.publishedfileid] = detail;
+    details.forEach((detail) => {
+      if (detail && detail.result === 1) detailMap[String(detail.publishedfileid)] = detail;
     });
-    return { ids, totalCount: parseInt(resp.total, 10) || 0, detailMap };
+    return {
+      ids: details.map(detail => String(detail && detail.publishedfileid || '')).filter(Boolean),
+      totalCount: parseInt(response.total, 10) || 0,
+      detailMap,
+    };
   }
 
-  const genreList = Array.from(new Set((genreOr || []).map(value => String(value || '').trim()).filter(Boolean)));
-  const fanoutLimit = 48;
-  const effectiveGenres = genreList.length > 1 ? genreList : [genreList.length === 1 ? genreList[0] : ''];
-  const variants = [];
-  for (const genre of effectiveGenres) {
-    variants.push({ genre, resolution: '' });
-  }
-  const shouldFanout = variants.length > 1 && variants.length <= fanoutLimit;
-  const effectiveVariants = shouldFanout ? variants : [{ genre: genreList.length === 1 ? genreList[0] : '', resolution: '' }];
-  if (variants.length > fanoutLimit) {
-    logger.log(`[Query] SteamAPI genre OR(${variants.length}) uses broad query + local filtering`);
-  }
-
-  const requestOne = async ({ genre, resolution }) => {
-    const url = buildSteamApiQueryUrl(apiKey, params, genre, resolution, baseUrl);
-    const timeoutMs = Number(helpers.timeoutMs || 22000);
-    const raw = await get(url, steamApiHeaders(apiKey, helpers.signal ? { signal: helpers.signal } : {}), timeoutMs);
-    const data = JSON.parse(raw.toString('utf8'));
-    const resp = data && data.response ? data.response : {};
-    const details = Array.isArray(resp.publishedfiledetails) ? resp.publishedfiledetails : [];
-    const ids = Array.isArray(resp.publishedfileids) && resp.publishedfileids.length
-      ? resp.publishedfileids.map(value => String(value))
+  const genres = Array.from(new Set((genreOr || []).map(value => String(value || '').trim()).filter(Boolean)));
+  const variants = genres.length > 1 && genres.length <= 48
+    ? genres.map(genre => ({ genre, resolution: '' }))
+    : [{ genre: genres.length === 1 ? genres[0] : '', resolution: '' }];
+  if (genres.length > 48) logger.log(`[Query] SteamAPI genre OR(${genres.length}) uses broad query + local filtering`);
+  const results = await Promise.all(variants.map(async ({ genre, resolution }) => {
+    const raw = await get(
+      buildSteamApiQueryUrl(apiKey, params, genre, resolution, baseUrl),
+      steamApiHeaders(apiKey, helpers.signal ? { signal: helpers.signal } : {}),
+      Number(helpers.timeoutMs || 22000)
+    );
+    const response = JSON.parse(raw.toString('utf8')).response || {};
+    const details = Array.isArray(response.publishedfiledetails) ? response.publishedfiledetails : [];
+    const ids = Array.isArray(response.publishedfileids) && response.publishedfileids.length
+      ? response.publishedfileids.map(value => String(value))
       : details.map(detail => String(detail && detail.publishedfileid || '')).filter(Boolean);
     const detailMap = {};
-    details.forEach(detail => {
-      if (!detail || !detail.publishedfileid || detail.result !== 1) return;
-      detailMap[String(detail.publishedfileid)] = detail;
+    details.forEach((detail) => {
+      if (detail && detail.result === 1 && detail.publishedfileid) detailMap[String(detail.publishedfileid)] = detail;
     });
-    return { ids, totalCount: parseInt(resp.total || 0, 10) || 0, detailMap };
-  };
+    return { ids, totalCount: parseInt(response.total, 10) || 0, detailMap };
+  }));
 
-  const results = await Promise.all(effectiveVariants.map(requestOne));
-  const mergedIds = [];
+  const ids = [];
+  const detailMap = {};
   const seen = new Set();
-  const mergedDetailMap = {};
-  let total = 0;
+  let totalCount = 0;
   for (const result of results) {
-    total += result.totalCount;
-    Object.assign(mergedDetailMap, result.detailMap || {});
-    for (const id of result.ids || []) {
+    totalCount += result.totalCount;
+    Object.assign(detailMap, result.detailMap);
+    for (const id of result.ids) {
       if (seen.has(id)) continue;
       seen.add(id);
-      mergedIds.push(id);
+      ids.push(id);
     }
   }
-
-  return { ids: mergedIds, totalCount: total, detailMap: mergedDetailMap };
+  return { ids, totalCount, detailMap };
 }
 
 module.exports = {
   buildCommunityWorkshopBrowseUrl,
-  buildWorkshopBrowseUrl,
-  fetchWorkshopBrowsePage,
   scrapeWorkshopIds,
   mapLocalQueryTypeToSteamApi,
   buildSteamApiQueryFields,
@@ -388,4 +384,5 @@ module.exports = {
   normalizeSteamWebApiBaseUrl,
   steamApiServiceUrl,
   queryWorkshopBySteamApi,
+  normalizeSteamId,
 };

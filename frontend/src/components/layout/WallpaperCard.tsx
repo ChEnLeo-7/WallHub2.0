@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { Clock, Download, ExternalLink, Heart, Play, Star } from 'lucide-react';
+import { BellPlus, Clock, Download, ExternalLink, Heart, Play, Star } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import type { WorkshopItem } from '@/lib/api';
@@ -11,7 +10,12 @@ import { useText } from '@/lib/text';
 import { cn, formatBytesText, formatCount } from '@/lib/utils';
 import { itemType } from '@/lib/workshop';
 
-type HomeCardDefaultAction = 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage';
+type HomeCardDefaultAction = 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage' | 'remoteSubscribe';
+
+export type WallpaperContextMenuAnchor = {
+  x: number;
+  y: number;
+};
 
 const MotionCard = motion.create(Card);
 const MotionCardContent = motion.create(CardContent);
@@ -22,6 +26,9 @@ type ActionButtonSize = {
 };
 
 const HOME_VIEW_BUTTON_LAYOUT_DURATION = HOME_VIEW_CARD_LAYOUT_TRANSITION.duration * 1000;
+const CARD_HOVER_DURATION = 0.25;
+const CARD_HOVER_EASE = [0.25, 0.46, 0.45, 0.94] as [number, number, number, number];
+const CARD_HOVER_TRANSITION = { duration: CARD_HOVER_DURATION, ease: CARD_HOVER_EASE };
 const [
   HOME_VIEW_BUTTON_FIRST_X_CONTROL_POINT,
   HOME_VIEW_BUTTON_FIRST_Y_CONTROL_POINT,
@@ -262,6 +269,7 @@ function WallpaperCardComponent({
   defaultAction,
   onOpen,
   onDefaultAction,
+  onOpenContextMenu,
   suppressLayoutAnimation = false,
 }: {
   item: WorkshopItem;
@@ -270,6 +278,7 @@ function WallpaperCardComponent({
   defaultAction: HomeCardDefaultAction;
   onOpen: (item: WorkshopItem) => void;
   onDefaultAction: (item: WorkshopItem) => void;
+  onOpenContextMenu: (item: WorkshopItem, anchor: WallpaperContextMenuAnchor) => void;
   suppressLayoutAnimation?: boolean;
 }) {
   const type = itemType(item);
@@ -278,11 +287,26 @@ function WallpaperCardComponent({
   const prefersReducedMotion = useReducedMotion();
   const layoutAnimationEnabled = !suppressLayoutAnimation && !prefersReducedMotion;
   const entryAnimationEnabled = !prefersReducedMotion;
+  const [cardHovered, setCardHovered] = React.useState(false);
+  const [entryFinished, setEntryFinished] = React.useState(!entryAnimationEnabled);
   const preserveAspectLayout = layoutAnimationEnabled ? 'preserve-aspect' : false;
   const { actionButtonRef, actionContentRef } = useActionButtonScale(view, layoutAnimationEnabled);
+  const cardRef = React.useRef<HTMLDivElement>(null);
   const mediaRef = React.useRef<HTMLDivElement>(null);
+  const longPressTimerRef = React.useRef<number | null>(null);
+  const touchStartRef = React.useRef<{ x: number; y: number } | null>(null);
+  const suppressClickUntilRef = React.useRef(0);
   const equalizerActive = useViewportActivity(mediaRef, !!prefersReducedMotion);
-  const effectiveAction = defaultAction === 'playVideo' && type !== 'Video' ? 'backgroundDownload' : defaultAction;
+  const cardMotionTransition = React.useMemo(() => {
+    const interactive = entryFinished || cardHovered;
+    return {
+      duration: interactive ? CARD_HOVER_DURATION : 0.4,
+      delay: interactive ? 0 : Math.min(index * 0.06, 0.36),
+      ease: CARD_HOVER_EASE,
+      layout: HOME_VIEW_MEDIA_LAYOUT_TRANSITION,
+    };
+  }, [cardHovered, entryFinished, index]);
+  const effectiveAction = defaultAction === 'playVideo' && type !== 'Video' ? 'clientDownload' : defaultAction;
   const ActionIcon =
     effectiveAction === 'playVideo'
       ? Play
@@ -290,6 +314,8 @@ function WallpaperCardComponent({
         ? Clock
         : effectiveAction === 'openSteamPage'
           ? ExternalLink
+          : effectiveAction === 'remoteSubscribe'
+            ? BellPlus
           : Download;
   const actionLabel =
     effectiveAction === 'playVideo'
@@ -298,38 +324,78 @@ function WallpaperCardComponent({
         ? text.backgroundDownload
         : effectiveAction === 'openSteamPage'
           ? text.openSteamPage
-            : text.downloadLocal;
+          : effectiveAction === 'remoteSubscribe'
+            ? text.actionSubscribe
+            : text.download;
+  const clearLongPress = React.useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    touchStartRef.current = null;
+  }, []);
+  React.useEffect(() => clearLongPress, [clearLongPress]);
+  React.useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    const preventNativeContextMenu = (event: Event) => event.preventDefault();
+    card.addEventListener('contextmenu', preventNativeContextMenu, true);
+    return () => card.removeEventListener('contextmenu', preventNativeContextMenu, true);
+  }, []);
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'touch') return;
+    clearLongPress();
+    const point = { x: event.clientX, y: event.clientY };
+    touchStartRef.current = point;
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      suppressClickUntilRef.current = Date.now() + 800;
+      onOpenContextMenu(item, point);
+    }, 550);
+  };
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'touch' || !touchStartRef.current) return;
+    const distance = Math.hypot(event.clientX - touchStartRef.current.x, event.clientY - touchStartRef.current.y);
+    if (distance > 12) clearLongPress();
+  };
+  const handleCardClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (Date.now() < suppressClickUntilRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    onOpen(item);
+  };
   return (
     <MotionCard
-      layout={layoutAnimationEnabled ? 'position' : false}
+      ref={cardRef}
+      layout={layoutAnimationEnabled}
       className={cn(
-        'group relative isolate flex h-full cursor-pointer flex-col overflow-visible border-transparent bg-transparent text-card-foreground shadow-none',
+        'wallpaper-card-shell group relative isolate flex h-full cursor-pointer select-none flex-col overflow-visible border-border bg-card text-card-foreground shadow-none [-webkit-touch-callout:none]',
         view === 'list' && 'grid min-h-[104px] grid-cols-[104px_minmax(0,1fr)_auto] items-stretch sm:min-h-32 sm:grid-cols-[150px_1fr_auto]',
       )}
       initial={entryAnimationEnabled ? { opacity: 0, y: 20 } : false}
-      animate={{ opacity: 1, y: 0 }}
+      animate={{ opacity: 1, y: cardHovered ? -4 : 0, scale: cardHovered ? 1.01 : 1 }}
       exit={entryAnimationEnabled ? { opacity: 0, y: 8, scale: 0.98 } : undefined}
-      transition={
-        !entryAnimationEnabled
-          ? { duration: 0 }
-          : {
-              duration: 0.4,
-              delay: Math.min(index * 0.06, 0.36),
-              ease: [0.25, 0.46, 0.45, 0.94],
-              layout: HOME_VIEW_CARD_LAYOUT_TRANSITION,
-            }
-      }
-      whileHover={prefersReducedMotion ? undefined : { y: -4, scale: 1.01 }}
-      whileTap={prefersReducedMotion ? undefined : { scale: 0.98 }}
-      onClick={() => onOpen(item)}
+      transition={!entryAnimationEnabled ? { duration: 0 } : cardMotionTransition}
+      whileTap={prefersReducedMotion ? undefined : { scale: 0.98, transition: CARD_HOVER_TRANSITION }}
+      onHoverStart={prefersReducedMotion ? undefined : () => setCardHovered(true)}
+      onHoverEnd={prefersReducedMotion ? undefined : () => setCardHovered(false)}
+      onAnimationComplete={() => setEntryFinished(true)}
+      onClick={handleCardClick}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (Date.now() < suppressClickUntilRef.current) return;
+        clearLongPress();
+        onOpenContextMenu(item, { x: event.clientX, y: event.clientY });
+      }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={clearLongPress}
+      onPointerCancel={clearLongPress}
+      onPointerLeave={clearLongPress}
     >
-      <motion.div
-        aria-hidden="true"
-        layout={layoutAnimationEnabled}
-        layoutDependency={view}
-        transition={{ layout: HOME_VIEW_CARD_LAYOUT_TRANSITION }}
-        className="pointer-events-none absolute inset-0 z-0 rounded-xl border border-border bg-card shadow-sm transition-[border-color,box-shadow] duration-300 group-hover:border-primary/20 group-hover:shadow-md"
-      />
       <motion.div
         ref={mediaRef}
         layout={preserveAspectLayout}
@@ -341,7 +407,7 @@ function WallpaperCardComponent({
         )}
         >
           {item.preview_url ? (
-            <img className="h-full w-full object-cover transition duration-300 group-hover:scale-105" src={item.preview_url} alt={title} loading="lazy" decoding="async" />
+            <img className="pointer-events-none h-full w-full select-none object-cover transition-transform duration-[250ms] ease-[cubic-bezier(0.25,0.46,0.45,0.94)] group-hover:scale-105" src={item.preview_url} alt={title} loading="lazy" decoding="async" draggable={false} />
           ) : (
             <div className="grid h-full place-items-center text-muted-foreground">{text.noCover}</div>
           )}
@@ -356,19 +422,37 @@ function WallpaperCardComponent({
             view === 'grid' ? 'w-full' : 'w-[104px] sm:w-[150px]',
           )}
         >
-          <Badge className="absolute left-2 top-2 bg-background/80 backdrop-blur" variant="outline">
+          <motion.div
+            layout={layoutAnimationEnabled}
+            layoutDependency={view}
+            transition={{ layout: HOME_VIEW_MEDIA_LAYOUT_TRANSITION }}
+            className={cn(
+              'absolute left-2 top-2 inline-flex h-6 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden whitespace-nowrap rounded-full border border-border bg-background/80 px-2 text-xs font-medium text-foreground backdrop-blur',
+              view === 'list' && 'h-4 px-1.5 text-[10px] leading-none',
+            )}
+          >
             {type === 'Video' ? text.video : type === 'Web' ? text.web : type === 'Application' ? text.application : text.scene}
-          </Badge>
+          </motion.div>
           {type === 'Video' ? (
-            <div className="wallpaper-card-equalizer absolute right-2 top-2 flex items-end gap-0.5 rounded-full border border-border/50 bg-background/70 px-2 py-1 backdrop-blur" data-active={equalizerActive ? 'true' : 'false'}>
+            <motion.div
+              layout={layoutAnimationEnabled}
+              layoutDependency={view}
+              transition={{ layout: HOME_VIEW_MEDIA_LAYOUT_TRANSITION }}
+              className={cn(
+                'wallpaper-card-equalizer absolute right-2 top-2 flex h-6 items-end gap-0.5 rounded-full border border-border/50 bg-background/70 px-2 py-1 backdrop-blur',
+                view === 'list' && 'h-4 gap-px px-1.5 py-0.5',
+              )}
+              data-active={equalizerActive ? 'true' : 'false'}
+              data-compact={view === 'list' ? 'true' : 'false'}
+            >
               {[0, 1, 2].map((bar) => (
                 <span
                   key={bar}
-                  className="wallpaper-card-equalizer-bar w-0.5 rounded-full bg-primary/60"
+                  className={cn('wallpaper-card-equalizer-bar w-0.5 rounded-full bg-primary/60', view === 'list' && 'w-px')}
                   style={{ animationDelay: `${bar * 0.15}s` }}
                 />
               ))}
-            </div>
+            </motion.div>
           ) : null}
         </motion.div>
         <MotionCardContent
@@ -420,6 +504,11 @@ function WallpaperCardComponent({
               onClick={(event) => {
                 event.stopPropagation();
                 onDefaultAction(item);
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
               }}
             >
               <span

@@ -11,11 +11,11 @@ export function normalizeThemeMode(value: unknown): 'system' | 'light' | 'dark' 
   return 'system';
 }
 
-export function normalizeHomeCardDefaultAction(value: unknown): 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage' {
+export function normalizeHomeCardDefaultAction(value: unknown): 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage' | 'remoteSubscribe' {
   const raw = String(value || '');
-  if (raw === 'subscribe') return 'clientDownload';
-  return ['playVideo', 'backgroundDownload', 'clientDownload', 'openSteamPage'].includes(raw)
-    ? (raw as 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage')
+  if (raw === 'subscribe') return 'remoteSubscribe';
+  return ['playVideo', 'clientDownload', 'openSteamPage', 'remoteSubscribe'].includes(raw)
+    ? (raw as 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage' | 'remoteSubscribe')
     : 'clientDownload';
 }
 
@@ -38,13 +38,14 @@ export function accentThemeOptions(text: { accentMono: string; accentBlue: strin
   ];
 }
 
-export function homeCardDefaultActionOptions(text: { actionClientDownload: string; defaultMark: string; actionPlayVideo: string; actionBackgroundDownload: string; actionOpenSteamPage: string }) {
-  return [
+export function homeCardDefaultActionOptions(text: { actionClientDownload: string; defaultMark: string; actionPlayVideo: string; actionOpenSteamPage: string; actionSubscribe: string }) {
+  const options = [
     { value: 'clientDownload', label: `${text.actionClientDownload}（${text.defaultMark}）` },
     { value: 'playVideo', label: text.actionPlayVideo },
-    { value: 'backgroundDownload', label: text.actionBackgroundDownload },
     { value: 'openSteamPage', label: text.actionOpenSteamPage },
   ];
+  options.push({ value: 'remoteSubscribe', label: text.actionSubscribe });
+  return options;
 }
 
 export function normalizeMobileColumns(value: unknown) {
@@ -309,7 +310,7 @@ const RESOLUTION_TAGS = [
   'Other resolution',
   'Dynamic resolution',
 ];
-const PERSONAL_FILTERS = ['myfavorites', 'voted', 'friendsfavorites', 'friendscreated', 'followedcreated'];
+const PERSONAL_FILTERS = ['mysubscriptions', 'myfavorites', 'voted', 'friendsfavorites', 'friendscreated', 'followedcreated'];
 
 function normalizeTagList(value: unknown, allowed: string[]) {
   const raw = Array.isArray(value) ? value : [];

@@ -74,6 +74,7 @@ function createVideoController(deps = {}) {
   const DEPOT_VIDEO_STREAMS = new Map();
   let remoteVideoStreamProxy = null;
   let depotStreamService = null;
+  let videoPlayDemandGeneration = 0;
 
   function settings() {
     return getVideoCacheSettings ? getVideoCacheSettings() : {};
@@ -115,12 +116,37 @@ function createVideoController(deps = {}) {
 
   function createDepotVideoStream(source, info) {
     const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-    releaseOtherDepotVideoStreams(token, source && source.id);
     DEPOT_VIDEO_STREAMS.set(token, Object.assign({}, source, info || {}, {
       createdAt: Date.now(),
       expiresAt: Date.now() + 45 * 60 * 1000
     }));
+    releaseOtherDepotVideoStreams(token, source && source.id);
     return token;
+  }
+
+  function releaseDepotEntryIfUnreferenced(entry, reason) {
+    const workerKey = String(entry && entry.workerKey || '').trim();
+    if (workerKey) {
+      const now = Date.now();
+      for (const candidate of DEPOT_VIDEO_STREAMS.values()) {
+        if (
+          !(candidate && candidate.expiresAt <= now)
+          && String(candidate && candidate.workerKey || '').trim() === workerKey
+        ) {
+          return { stopped: false, retained: true };
+        }
+      }
+    }
+    return getDepotStreamService().releaseEntry(entry, reason);
+  }
+
+  function removeDepotVideoStream(token, reason) {
+    const key = String(token || '').trim();
+    const entry = DEPOT_VIDEO_STREAMS.get(key);
+    if (!entry) return { released: false, stopped: false };
+    DEPOT_VIDEO_STREAMS.delete(key);
+    const result = releaseDepotEntryIfUnreferenced(entry, reason);
+    return { released: true, stopped: !!result.stopped };
   }
 
   function releaseOtherDepotVideoStreams(keepToken = '', keepId = '') {
@@ -129,18 +155,14 @@ function createVideoController(deps = {}) {
     for (const [key, entry] of Array.from(DEPOT_VIDEO_STREAMS.entries())) {
       if (key === keepKey) continue;
       if (keepVideoId && String(entry && (entry.id || entry.publishedFileId) || '') === keepVideoId) continue;
-      getDepotStreamService().releaseEntry(entry, 'superseded');
-      DEPOT_VIDEO_STREAMS.delete(key);
+      removeDepotVideoStream(key, 'superseded');
     }
   }
 
   function releaseDepotVideoStream(token) {
-    const key = String(token || '').trim();
-    const entry = DEPOT_VIDEO_STREAMS.get(key);
-    if (!entry) return { success: true, released: false };
-    const result = getDepotStreamService().releaseEntry(entry, 'client-release');
-    DEPOT_VIDEO_STREAMS.delete(key);
-    return { success: true, released: true, stopped: !!result.stopped };
+    const result = removeDepotVideoStream(token, 'client-release');
+    if (!result.released) return { success: true, released: false };
+    return { success: true, released: result.released, stopped: result.stopped };
   }
 
   function releaseDepotVideoStreamUrl(streamUrl) {
@@ -158,7 +180,7 @@ function createVideoController(deps = {}) {
     const entry = DEPOT_VIDEO_STREAMS.get(key);
     if (!entry) return null;
     if (entry.expiresAt <= Date.now()) {
-      DEPOT_VIDEO_STREAMS.delete(key);
+      removeDepotVideoStream(key, 'token-expired');
       return null;
     }
     entry.expiresAt = Date.now() + 45 * 60 * 1000;
@@ -181,8 +203,8 @@ function createVideoController(deps = {}) {
     for (const [key, entry] of REMOTE_VIDEO_STREAMS) {
       if (!entry || entry.expiresAt <= now) REMOTE_VIDEO_STREAMS.delete(key);
     }
-    for (const [key, entry] of DEPOT_VIDEO_STREAMS) {
-      if (!entry || entry.expiresAt <= now) DEPOT_VIDEO_STREAMS.delete(key);
+    for (const [key, entry] of Array.from(DEPOT_VIDEO_STREAMS.entries())) {
+      if (!entry || entry.expiresAt <= now) removeDepotVideoStream(key, 'token-expired');
     }
   }
 
@@ -253,7 +275,7 @@ function createVideoController(deps = {}) {
     return depotStreamService;
   }
 
-  async function tryCreateDepotVideoStream(source, detail) {
+  async function tryCreateDepotVideoStream(source, detail, cancelled = () => false) {
     if (!steamKitDepotStreamingEnabled()) return null;
     if (!source || source.kind !== 'chunk') return null;
 
@@ -280,6 +302,10 @@ function createVideoController(deps = {}) {
         }
       }
       const info = Object.assign({}, worker.info || {}, { workerKey: worker.key });
+      if (cancelled()) {
+        releaseDepotEntryIfUnreferenced(info, 'request-aborted');
+        return null;
+      }
       const token = createDepotVideoStream(source, info);
       const entry = getDepotVideoStream(token);
       if (entry) scheduleDepotStreamInitialPrefetch(entry, depotLogin);
@@ -375,11 +401,16 @@ function createVideoController(deps = {}) {
   }
 
   async function handleVideoPlay(req, res, id, title) {
+    const demandGeneration = ++videoPlayDemandGeneration;
     let requestClosed = false;
     req.on('close', () => {
       if (!res.writableEnded) requestClosed = true;
     });
-    const cancelled = () => requestClosed || res.destroyed;
+    const cancelled = () => (
+      requestClosed
+      || res.destroyed
+      || demandGeneration !== videoPlayDemandGeneration
+    );
 
     const wantId = parseInt(id);
     if (!wantId) return jsonRes(res, 400, { error: 'Invalid id' });
@@ -419,7 +450,7 @@ function createVideoController(deps = {}) {
       }
       if (source.kind === 'chunk') {
         if (steamKitDepotStreamingEnabled()) {
-          const depotStream = await tryCreateDepotVideoStream(source, detail);
+          const depotStream = await tryCreateDepotVideoStream(source, detail, cancelled);
           if (cancelled()) {
             if (depotStream && depotStream.streamUrl) releaseDepotVideoStreamUrl(depotStream.streamUrl);
             return;

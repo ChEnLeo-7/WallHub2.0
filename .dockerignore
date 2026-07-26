@@ -1,57 +1,30 @@
-# Git and Docker metadata
-.git
-.gitignore
-.dockerignore
-.agents
-.claude
-.codex
-.hermes
-NuGet
+# Deny by default so Docker receives only files used by the build stages.
+**
 
-# Local dependencies and package-manager logs
-node_modules
-frontend/node_modules
-frontend/dist
-.vite
-dist
-build
+!Dockerfile
+!docker-entrypoint.sh
+!package.json
+!package-lock.json
+!vite.config.ts
+!tailwind.config.ts
+!postcss.config.cjs
+!tsconfig.json
+!server.js
 
-# Generated frontend release assets
-public/
+!frontend/
+!frontend/**
+!src/
+!src/**
+!tools/
+!tools/mpkg/
+!tools/mpkg/**
 
-# Local Claude state and editor temp files
-.claude/
-tmp-edge-profile/
-
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-.env
-.env.*
-
-# Runtime data must not be baked into the image
-Downloads
-downloads
-SteamKit
-cache-settings.json
-wallhub-data
-/wallhub-data
-docker-data
-Steamcommunity_302
-dumps
-wallhub-restart.log
-__pycache__
-*.pyc
-
-# Archives, binaries, and temporary files
-*.log
-*.zip
-*.7z
-*.rar
-*.tmp
-*.pid
-*.exe
-*.dll
-*.so
-*.dylib
+# Development and generated files inside otherwise included directories.
+**/node_modules/
+frontend/dist/
+src/**/*.test.js
+tools/mpkg/test_*.py
+**/__pycache__/
+**/*.pyc
+**/*.log
+**/*.tmp

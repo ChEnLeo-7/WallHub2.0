@@ -86,3 +86,20 @@ test('SteamKit password login exposes a phone-confirmation status without exposi
   assert.equal(success.status, 'success');
   assert.deepEqual(persisted, [{ username: 'tester', backend: 'steamkit' }]);
 });
+
+test('SteamKit password login submits a supplied Steam token on the first attempt', async () => {
+  let invocation;
+  const service = createService({
+    runProcess: async (command, args, timeout, options) => {
+      invocation = { command, args, timeout, options };
+      return { out: '', err: '' };
+    },
+  });
+
+  const session = service.startPasswordSession('tester', 'secret', 'AB12C');
+  await service.sessions.get(session.id).processPromise;
+
+  assert.ok(invocation.args.includes('-no-mobile'));
+  assert.deepEqual(invocation.options.inputLines, ['AB12C']);
+  assert.equal(service.getPasswordSession(session.id).status, 'success');
+});

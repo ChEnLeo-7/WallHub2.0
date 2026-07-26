@@ -15,8 +15,8 @@ import time
 from dataclasses import dataclass, field
 from enum import IntEnum
 from io import BytesIO
-from pathlib import Path
-from typing import BinaryIO, Dict, List, Optional, Tuple
+from pathlib import Path, PurePosixPath
+from typing import BinaryIO, Dict, List, Optional, Tuple, Union
 
 try:
     from PIL import Image
@@ -45,6 +45,7 @@ except Exception:
 
 
 MOBILE_MPKG_MAGIC = "PKGM0020"
+VIDEO_MPKG_MAGIC = "PKGM0014"
 WORKSHOP_PREVIEW_EXTENSIONS = ('.gif', '.jpg', '.jpeg', '.png', '.webp')
 MOBILE_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'}
 TEXTURE_CODECS = ('auto', 'rgba', 'etc2')
@@ -468,6 +469,55 @@ def pack_mpkg_entries(entries: List[Tuple[str, bytes]], output: Path,
             if index == len(payloads) or index % 50 == 0:
                 debug_log(f"stage=pack write progress={index}/{len(payloads)}")
     debug_log(f"stage=pack done files={len(files)} outputBytes={output.stat().st_size} elapsedMs={elapsed_ms(started_at)}")
+
+
+def pack_mpkg_file_entries(entries: List[Tuple[str, Union[bytes, Path]]], output: Path,
+                            magic: str = MOBILE_MPKG_MAGIC) -> None:
+    """Pack byte payloads and source files without loading large media into memory."""
+    started_at = time.monotonic()
+    files: List[Tuple[str, Union[bytes, Path], int]] = []
+    for file_name, source in entries:
+        normalized_name = str(file_name).replace('\\', '/')
+        if Path(normalized_name).name == REPORT_FILE_NAME:
+            continue
+        if isinstance(source, Path):
+            if not source.is_file():
+                raise FileNotFoundError(f"MPKG source file is missing: {source}")
+            source_size = source.stat().st_size
+        elif isinstance(source, bytes):
+            source_size = len(source)
+        else:
+            raise TypeError(f"Unsupported MPKG source for {normalized_name}: {type(source).__name__}")
+        files.append((normalized_name, source, source_size))
+    files.sort(key=lambda entry: mpkg_sort_key(Path(entry[0])))
+    debug_log(f"stage=pack-files start files={len(files)} output={output.name}")
+
+    offset = 0
+    table = bytearray()
+    for index, (file_name, _source, source_size) in enumerate(files, start=1):
+        rel_bytes = file_name.encode('utf-8')
+        table.extend(len(rel_bytes).to_bytes(4, 'little'))
+        table.extend(rel_bytes)
+        table.extend(offset.to_bytes(4, 'little'))
+        table.extend(source_size.to_bytes(4, 'little'))
+        offset += source_size
+        if index == 1 or index == len(files) or index % 50 == 0:
+            debug_log(f"stage=pack-files collect progress={index}/{len(files)} payloadBytes={offset}")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    debug_log(f"stage=pack-files write-start files={len(files)} tableBytes={len(table)} payloadBytes={offset}")
+    with output.open('wb') as f:
+        f.write(create_mpkg_header(len(files), magic))
+        f.write(table)
+        for index, (_file_name, source, _source_size) in enumerate(files, start=1):
+            if isinstance(source, Path):
+                with source.open('rb') as source_file:
+                    shutil.copyfileobj(source_file, f, length=1024 * 1024)
+            else:
+                f.write(source)
+            if index == len(files) or index % 50 == 0:
+                debug_log(f"stage=pack-files write progress={index}/{len(files)}")
+    debug_log(f"stage=pack-files done files={len(files)} outputBytes={output.stat().st_size} elapsedMs={elapsed_ms(started_at)}")
 
 
 def pack_mpkg(root: Path, output: Path, magic: str = MOBILE_MPKG_MAGIC) -> None:
@@ -1050,6 +1100,68 @@ def read_project_json(input_dir: Path) -> dict:
         return json.load(f)
 
 
+def resolve_video_project_file(input_dir: Path, project: dict) -> Tuple[Path, str]:
+    value = project.get('file')
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('Video project.json is missing a valid file field')
+
+    relative_name = value.strip().replace('\\', '/')
+    pure_path = PurePosixPath(relative_name)
+    if (
+        relative_name.startswith('/') or
+        re.match(r'^[A-Za-z]:', relative_name) or
+        not pure_path.parts or
+        any(part in ('.', '..') for part in pure_path.parts)
+    ):
+        raise ValueError(f'Video project file must be a relative path: {value}')
+
+    root = input_dir.resolve()
+    source = root.joinpath(*pure_path.parts).resolve()
+    try:
+        source.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f'Video project file must stay inside the workshop folder: {value}') from exc
+    if not source.is_file():
+        raise FileNotFoundError(f'Video project file is missing: {relative_name}')
+    return source, PurePosixPath(*pure_path.parts).as_posix()
+
+
+def build_video_project_json(project: dict, video_name: str, preview_name: str, input_dir: Path) -> bytes:
+    title = project.get('title')
+    if not isinstance(title, str) or not title.strip():
+        title = input_dir.name
+    # Wallpaper Engine's exporter uses tabs, spaced colons, and CRLF. Matching
+    # that compact metadata shape keeps raw video packages aligned with exports.
+    data = {
+        'file': video_name,
+        'preview': preview_name,
+        'title': title.strip(),
+        'type': 'video',
+    }
+    return json.dumps(data, ensure_ascii=False, indent='\t', separators=(',', ' : ')).replace('\n', '\r\n').encode('utf-8')
+
+
+def convert_video_workshop(input_dir: Path, output: Path, project: dict, preview: Path,
+                           video_source: Path, video_name: str) -> Path:
+    started_at = time.monotonic()
+    project_bytes = build_video_project_json(project, video_name, preview.name, input_dir)
+    logger.info(f"Converting video workshop folder: {input_dir}")
+    logger.info(f"Video source: {video_name}")
+    logger.info(f"Output: {output}")
+    debug_log(
+        f"stage=video-convert start input={input_dir.name} video={video_name} "
+        f"videoBytes={video_source.stat().st_size} preview={preview.name} output={output.name}"
+    )
+    pack_mpkg_file_entries([
+        (video_name, video_source),
+        (preview.name, preview),
+        ('project.json', project_bytes),
+    ], output, magic=VIDEO_MPKG_MAGIC)
+    debug_log(f"stage=video-convert done outputBytes={output.stat().st_size} elapsedMs={elapsed_ms(started_at)}")
+    logger.info('Done: packaged original video and preview without transcoding')
+    return output
+
+
 def default_output_path(input_dir: Path, project: dict) -> Path:
     workshop_id = str(project.get('workshopid') or '').strip()
     if workshop_id.isdigit():
@@ -1319,16 +1431,10 @@ def convert_workshop(input_dir: Path, output: Optional[Path], overwrite: bool = 
         raise ValueError(f"Unsupported texture codec: {texture_codec}")
     if texture_profile not in TEXTURE_PROFILES:
         raise ValueError(f"Unsupported texture profile: {texture_profile}")
-    if not PIL_AVAILABLE:
-        raise RuntimeError("Pillow is required. Install with: pip install Pillow")
-    if not LZ4_AVAILABLE:
-        raise RuntimeError("lz4 is required. Install with: pip install lz4")
-
     input_dir = input_dir.resolve()
-    scene_pkg = input_dir / 'scene.pkg'
     project_json = input_dir / 'project.json'
     preview = find_preview(input_dir)
-    missing = [p.name for p in (scene_pkg, project_json) if not p.is_file()]
+    missing = [p.name for p in (project_json,) if not p.is_file()]
     if preview is None:
         missing.append('preview.*')
     if missing:
@@ -1340,6 +1446,18 @@ def convert_workshop(input_dir: Path, output: Optional[Path], overwrite: bool = 
         raise FileExistsError(f"Output file already exists: {output}")
     if output.name and not is_numeric_mpkg_output_name(output):
         logger.warning("Output name is not numeric; Wallpaper Engine mobile may cache or handle it differently.")
+
+    if str(project.get('type') or '').strip().lower() == 'video':
+        video_source, video_name = resolve_video_project_file(input_dir, project)
+        return convert_video_workshop(input_dir, output, project, preview, video_source, video_name)
+
+    scene_pkg = input_dir / 'scene.pkg'
+    if not scene_pkg.is_file():
+        raise FileNotFoundError('Input folder is missing required file(s): scene.pkg')
+    if not PIL_AVAILABLE:
+        raise RuntimeError("Pillow is required. Install with: pip install Pillow")
+    if not LZ4_AVAILABLE:
+        raise RuntimeError("lz4 is required. Install with: pip install lz4")
 
     report = ConvertReport()
     logger.info(f"Converting workshop folder: {input_dir}")
@@ -1458,7 +1576,7 @@ Examples:
 
     def add_convert(name: str):
         p = sub.add_parser(name, help='Convert Wallpaper workshop folder to mobile MPKG')
-        p.add_argument('input', help='Wallpaper workshop folder containing scene.pkg, project.json and preview.*')
+        p.add_argument('input', help='Wallpaper workshop folder containing a scene.pkg or a video project.json file, plus preview.*')
         p.add_argument('-o', '--output', help='Output MPKG path. Default uses project.json workshopid when available.')
         p.add_argument('--texture-codec', choices=TEXTURE_CODECS, default='auto', help='Texture conversion mode')
         p.add_argument('--texture-profile', choices=TEXTURE_PROFILES, default='fast', help='fast keeps RGBA + LZ4-HC; compact enables safe auto ETC2 candidates')

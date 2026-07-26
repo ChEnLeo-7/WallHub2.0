@@ -99,6 +99,8 @@ const { createRuntimeSetupState, getDownloaderMode: getStaticDownloaderMode } = 
 const depotTools = require('./src/domains/steamkit/depotTools');
 const { createSteamKitRuntimeBuildService } = require('./src/domains/steamkit/runtimeBuild');
 const { createSteamKitLoginService } = require('./src/domains/steamkit/login');
+const { createSteamKitPersonalWorkshopService } = require('./src/domains/steamkit/personalWorkshop');
+const { createSteamKitQueryBridge } = require('./src/domains/steamkit/queryBridge');
 const { createSteamKitDownloadService } = require('./src/domains/steamkit/download');
 const { createDepotStreamService } = require('./src/domains/steamkit/depotStream');
 const { createPreparedDownloadStore } = require('./src/domains/downloads/preparedDownloads');
@@ -113,8 +115,9 @@ const workshopText = require('./src/domains/workshop/text');
 const { createWorkshopCommentsService } = require('./src/domains/workshop/comments');
 const { createWorkshopDetailService } = require('./src/domains/workshop/detail');
 const { createPublishedFileDetailsService } = require('./src/domains/workshop/fileDetails');
-const { createWorkshopSearchService, mapWorkshopItem } = require('./src/domains/workshop/search');
+const { createWorkshopSearchService, mapWorkshopItem, requiresSteamCommunitySession, steamKitPersonalListType } = require('./src/domains/workshop/search');
 const { parseFriendFavoriteSteamIds, buildPersonalSourceLabel } = require('./src/domains/workshop/personalSource');
+const { createWorkshopSubscriptionService } = require('./src/domains/workshop/subscription');
 const { createVideoController } = require('./src/domains/video/controller');
 const PORT   = process.env.PORT ? parseInt(process.env.PORT) : 3090;
 const WALLHUB_INTERNAL_RESOLVER_TOKEN = crypto.randomBytes(24).toString('hex');
@@ -293,8 +296,8 @@ const DEPOT_DOWNLOADER_DIR = process.env.DEPOTDOWNLOADER_DIR || path.join(STEAMK
 const DEPOT_STREAM_DOWNLOADER_DIR = process.env.WALLHUB_DEPOT_STREAM_DIR || path.join(STEAMKIT_ROOT, 'DepotDownloaderStream');
 const DEPOT_JSON_PROGRESS_DIR = DEPOT_DOWNLOADER_DIR;
 const DEPOT_JSON_PROGRESS_SOURCE_ZIP = process.env.WALLHUB_DEPOT_SOURCE_ZIP || 'https://github.com/SteamRE/DepotDownloader/archive/refs/heads/master.zip';
-const DEPOT_JSON_PROGRESS_PATCH_VERSION = 'wallhub-json-progress-v30-noninteractive-bootstrap';
-const DEPOT_STREAM_PATCH_VERSION = 'wallhub-stream-v34-noninteractive-bootstrap';
+const DEPOT_JSON_PROGRESS_PATCH_VERSION = 'wallhub-json-progress-v36-user-files-bridge-only';
+const DEPOT_STREAM_PATCH_VERSION = 'wallhub-stream-v37-cancellable-ranges';
 const DEPOT_CONFIG_DIR = STEAMKIT_CONFIG_DIR;
 const DEPOT_HOME_DIR = process.env.WALLHUB_DEPOT_HOME_DIR || path.join(STEAMKIT_CONFIG_DIR, 'home');
 const DEPOT_DOTNET_CLI_HOME_DIR = process.env.WALLHUB_DEPOT_DOTNET_CLI_HOME || path.join(STEAMKIT_CONFIG_DIR, 'dotnet-home');
@@ -550,6 +553,11 @@ function steamAccessDirectWebApiEnabled() {
 function getSteamWebApiBaseUrl() {
   return getRuntimeSettings().getSteamWebApiBaseUrl();
 }
+function getSteamApiKey() {
+  const fromSettings = String(VIDEO_CACHE_SETTINGS.steamApiKey || '').trim();
+  const fromEnv = String(process.env.STEAM_API_KEY || '').trim();
+  return fromSettings || fromEnv;
+}
 function isSteamWebApiHost(hostname) {
   const host = String(hostname || '').trim().toLowerCase();
   return host === 'api.steampowered.com';
@@ -632,8 +640,8 @@ function GET(url, extra, timeout) {
   return HTTP_CLIENT.get(url, extra, timeout);
 }
 
-function POST(url, body, timeout) {
-  return HTTP_CLIENT.post(url, body, timeout);
+function POST(url, body, timeout, extra) {
+  return HTTP_CLIENT.post(url, body, timeout, extra);
 }
 
 function steamResourceContentType(url) {
@@ -642,7 +650,6 @@ function steamResourceContentType(url) {
 
 const PUBLISHED_FILE_DETAILS_SERVICE = createPublishedFileDetailsService({
   post: POST,
-  getSteamApiKey,
   getSteamWebApiBaseUrl,
   logger: console,
 });
@@ -760,23 +767,15 @@ async function getFileDetailsSafe(ids, optionsForRun) {
   return PUBLISHED_FILE_DETAILS_SERVICE.getSafe(ids, optionsForRun);
 }
 
-function getSteamApiKey() {
-  const fromSettings = String(VIDEO_CACHE_SETTINGS.steamApiKey || '').trim();
-  const fromEnv = String(process.env.STEAM_API_KEY || '').trim();
-  return fromSettings || fromEnv;
-}
-
 let WORKSHOP_SEARCH_SERVICE = null;
 function getWorkshopSearchService() {
   if (!WORKSHOP_SEARCH_SERVICE) {
     WORKSHOP_SEARCH_SERVICE = createWorkshopSearchService({
       get: GET,
       getFileDetailsSafe,
-      refreshFileDetailsInBackground: (ids) => PUBLISHED_FILE_DETAILS_SERVICE.refreshInBackground(ids),
       getSteamApiKey,
       getSteamWebApiBaseUrl,
-      useSteamApi: () => !!VIDEO_CACHE_SETTINGS.useSteamApi,
-      useCommunityBrowseOrder: () => !!VIDEO_CACHE_SETTINGS.workshopHtmlOrderMode,
+      querySteamKitUserFiles,
       steamAccessGatewayEnabled,
       getSteamAccessMode: () => VIDEO_CACHE_SETTINGS.wallhubSteamAccessMode,
       isAndroidHostLikeEnv,
@@ -805,26 +804,43 @@ async function handleQuery(req, res) {
     }
     const proxyCommunityCookie = wallhubProxyUpstreamCookie(req.headers.cookie || '', 'steamcommunity.com');
     const params = payload.params || {};
-    const pathMode = String(params.path || '').trim().toLowerCase();
-    const needsAccountCommunityCookie = !!String(params.browsefilter || '').trim() ||
-      !!String(params.special_filter || '').trim() ||
-      pathMode === 'myfiles' || pathMode === 'votingqueue';
-    const needsCommunityCookie = !!VIDEO_CACHE_SETTINGS.workshopHtmlOrderMode || needsAccountCommunityCookie;
+    const needsAccountCommunityCookie = requiresSteamCommunitySession(params);
+    const steamKitPersonalType = steamKitPersonalListType(params);
+    const useSteamKitUserFiles = !!steamKitPersonalType && steamKitPersistentLoginIsUsable() && effectiveDownloaderMode() === 'steamkit';
+    const steamKitQueryAvailable = useSteamKitUserFiles;
+    const needsCommunityCookie = needsAccountCommunityCookie;
     let steamCommunityCookie = '';
     let steamKitCommunityCookie = '';
-    if (needsCommunityCookie) {
+    const prepareSteamCommunityCookie = async () => {
       steamKitCommunityCookie = await resolveSteamKitCommunityCookie();
       steamCommunityCookie = steamKitCommunityCookie || proxyCommunityCookie;
       if (steamKitCommunityCookie) console.log('[Query] Using Steam community cookie from SteamKit session');
       else if (proxyCommunityCookie) console.log('[Query] Using Steam community cookie from WallHub proxy session');
       else console.warn('[Query] Steam community cookie unavailable; using anonymous community page request');
+    };
+    if (needsCommunityCookie && !useSteamKitUserFiles) {
+      await prepareSteamCommunityCookie();
     }
     let result;
     try {
-      result = await getWorkshopSearchService().search(payload.params || {}, {
-        steamCommunityCookie,
-        signal: controller ? controller.signal : undefined,
-      });
+      try {
+        result = await getWorkshopSearchService().search(payload.params || {}, {
+          steamCommunityCookie,
+          steamAccountKey: useSteamKitUserFiles ? `steamkit:${cachedSteamLoginUsername()}` : '',
+          steamKitQueryAvailable,
+          signal: controller ? controller.signal : undefined,
+        });
+      } catch (error) {
+        if (!useSteamKitUserFiles || !error || error.code !== 'STEAMKIT_USER_FILES_UNAVAILABLE') throw error;
+        console.warn(`[Query] SteamKit personal Workshop query failed; falling back to Steam Community: ${error.message}`);
+        await prepareSteamCommunityCookie();
+        result = await getWorkshopSearchService().search(payload.params || {}, {
+          steamCommunityCookie,
+          skipSteamKitUserFiles: true,
+          steamKitQueryAvailable,
+          signal: controller ? controller.signal : undefined,
+        });
+      }
     } catch (error) {
       const canRetryProxyCookie = error && error.code === 'STEAM_WEB_LOGIN_REQUIRED' &&
         steamKitCommunityCookie && proxyCommunityCookie && proxyCommunityCookie !== steamKitCommunityCookie;
@@ -832,6 +848,7 @@ async function handleQuery(req, res) {
       console.warn('[Query] SteamKit Web cookie was rejected; retrying once with WallHub proxy session cookie');
       result = await getWorkshopSearchService().search(payload.params || {}, {
         steamCommunityCookie: proxyCommunityCookie,
+        steamKitQueryAvailable,
         signal: controller ? controller.signal : undefined,
       });
     }
@@ -861,7 +878,7 @@ async function handleQuery(req, res) {
       return;
     }
     finished = true;
-    jsonRes(res, 502, { error: err.message });
+    jsonRes(res, err.statusCode || 502, { error: err.message, code: err.code || '' });
   } finally {
     res.off('close', abortSearch);
   }
@@ -901,14 +918,14 @@ async function handleDetails(res, id) {
   jsonRes(res, 200, await getWorkshopDetailService().fetchDetail(id));
 }
 
-async function handlePersonalSource(res, id, personalFilter) {
+async function handlePersonalSource(req, res, id, personalFilter) {
   const publishedFileId = String(id || '').replace(/[^\d]/g, '');
   const filter = String(personalFilter || '').trim().toLowerCase();
-  const allowed = new Set(['myfavorites', 'voted', 'friendsfavorites', 'friendscreated', 'followedcreated']);
+  const allowed = new Set(['mysubscriptions', 'myfavorites', 'voted', 'friendsfavorites', 'friendscreated', 'followedcreated']);
   if (!publishedFileId || !allowed.has(filter)) return jsonRes(res, 400, { error: 'Invalid personal source request' });
 
   try {
-    if (filter === 'myfavorites' || filter === 'voted') {
+    if (filter === 'mysubscriptions' || filter === 'myfavorites' || filter === 'voted') {
       return jsonRes(res, 200, { filter, label: buildPersonalSourceLabel(filter) });
     }
 
@@ -921,6 +938,7 @@ async function handlePersonalSource(res, id, personalFilter) {
       });
     }
 
+    const proxyCommunityCookie = wallhubProxyUpstreamCookie(req.headers.cookie || '', 'steamcommunity.com');
     const steamKitCommunityCookie = await resolveSteamKitCommunityCookie();
     const steamCommunityCookie = steamKitCommunityCookie || proxyCommunityCookie;
     if (!steamCommunityCookie) {
@@ -1149,8 +1167,10 @@ function makeDepotLoginId(seed) {
 }
 
 function steamKitPersistentLoginIsUsable() {
-  return !!(STEAM_CREDENTIALS.username &&
-    (STEAM_CREDENTIALS.isPersistent || STEAM_CREDENTIALS.pendingPersistentUsername));
+  return !!(cachedSteamLoginUsername() &&
+    (STEAM_CREDENTIALS.isPersistent ||
+      STEAM_CREDENTIALS.pendingPersistentUsername ||
+      VIDEO_CACHE_SETTINGS.steamIsPersistent));
 }
 
 function cachedSteamLoginUsername() {
@@ -1653,6 +1673,137 @@ async function verifySteamKitLogin(username, password, steamGuardCode) {
   return getSteamKitLoginService().verifyLogin(username, password, steamGuardCode);
 }
 
+let STEAMKIT_QUERY_BRIDGE = null;
+let STEAMKIT_PERSONAL_WORKSHOP_SERVICE = null;
+
+function getSteamKitQueryBridge() {
+  if (!STEAMKIT_QUERY_BRIDGE) {
+    STEAMKIT_QUERY_BRIDGE = createSteamKitQueryBridge({
+      ensureDepotDownloaderReady,
+      depotCommandFor,
+      buildDepotDotnetEnv,
+      buildSteamAuthEnv: applySteamHttpProxyEnv,
+      makeDepotLoginId,
+      ensureDir,
+      configDir: DEPOT_CONFIG_DIR,
+      logger: console,
+    });
+  }
+  return STEAMKIT_QUERY_BRIDGE;
+}
+
+function stopSteamKitQueryBridge(reason) {
+  if (STEAMKIT_QUERY_BRIDGE) STEAMKIT_QUERY_BRIDGE.shutdown(reason);
+}
+
+function getSteamKitPersonalWorkshopService() {
+  if (!STEAMKIT_PERSONAL_WORKSHOP_SERVICE) {
+    STEAMKIT_PERSONAL_WORKSHOP_SERVICE = createSteamKitPersonalWorkshopService({
+      ensureDepotDownloaderReady,
+      depotCommandFor,
+      runProcess,
+      buildDepotDotnetEnv,
+      makeDepotLoginId,
+      ensureDir,
+      configDir: DEPOT_CONFIG_DIR,
+      queryBridge: getSteamKitQueryBridge(),
+      logger: console,
+    });
+  }
+  return STEAMKIT_PERSONAL_WORKSHOP_SERVICE;
+}
+
+async function querySteamKitUserFiles(listType, options = {}) {
+  if (effectiveDownloaderMode() !== 'steamkit') {
+    const error = new Error('SteamKit is not the active downloader mode');
+    error.code = 'STEAMKIT_USER_FILES_UNAVAILABLE';
+    error.requiresSteamLogin = true;
+    throw error;
+  }
+  const username = cachedSteamLoginUsername();
+  if (!username || !steamKitPersistentLoginIsUsable()) {
+    const error = new Error('SteamKit remembered account is unavailable');
+    error.code = 'STEAMKIT_USER_FILES_UNAVAILABLE';
+    error.requiresSteamLogin = true;
+    throw error;
+  }
+  return getSteamKitPersonalWorkshopService().getUserFiles(listType, Object.assign({}, options, { username }));
+}
+
+let WORKSHOP_SUBSCRIPTION_SERVICE = null;
+function getWorkshopSubscriptionService() {
+  if (!WORKSHOP_SUBSCRIPTION_SERVICE) {
+    WORKSHOP_SUBSCRIPTION_SERVICE = createWorkshopSubscriptionService({
+      get: GET,
+      post: POST,
+      getCommunityCookie: resolveSteamKitCommunityCookie,
+    });
+  }
+  return WORKSHOP_SUBSCRIPTION_SERVICE;
+}
+
+async function handleSteamSubscription(req, res, action) {
+  let payload;
+  try { payload = JSON.parse(await readBody(req)); }
+  catch { return jsonRes(res, 400, { error: 'Bad JSON' }); }
+
+  const operation = ['subscribe', 'unsubscribe', 'favorite', 'unfavorite'].includes(action) ? action : 'subscribe';
+  try {
+    const proxyCommunityCookie = wallhubProxyUpstreamCookie(req.headers.cookie || '', 'steamcommunity.com');
+    const result = await getWorkshopSubscriptionService()[operation](payload.id, {
+      steamCommunityCookie: proxyCommunityCookie,
+    });
+    jsonRes(res, 200, result);
+  } catch (error) {
+    const fallbackErrors = {
+      subscribe: ['Steam 订阅请求失败', 'STEAM_SUBSCRIBE_FAILED'],
+      unsubscribe: ['Steam 取消订阅请求失败', 'STEAM_UNSUBSCRIBE_FAILED'],
+      favorite: ['Steam 收藏请求失败', 'STEAM_FAVORITE_FAILED'],
+      unfavorite: ['Steam 取消收藏请求失败', 'STEAM_UNFAVORITE_FAILED'],
+    };
+    const fallback = fallbackErrors[operation];
+    const statusCode = Number(error && error.statusCode) || 502;
+    jsonRes(res, statusCode, {
+      error: error && error.message ? error.message : fallback[0],
+      code: error && error.code ? error.code : fallback[1],
+      requiresSteamLogin: !!(error && error.requiresSteamLogin),
+    });
+  }
+}
+
+async function handleSteamSubscribe(req, res) {
+  return handleSteamSubscription(req, res, 'subscribe');
+}
+
+async function handleSteamUnsubscribe(req, res) {
+  return handleSteamSubscription(req, res, 'unsubscribe');
+}
+
+async function handleSteamFavorite(req, res) {
+  return handleSteamSubscription(req, res, 'favorite');
+}
+
+async function handleSteamUnfavorite(req, res) {
+  return handleSteamSubscription(req, res, 'unfavorite');
+}
+
+async function handleSteamSubscriptionStatus(req, res, id) {
+  try {
+    const proxyCommunityCookie = wallhubProxyUpstreamCookie(req.headers.cookie || '', 'steamcommunity.com');
+    const result = await getWorkshopSubscriptionService().status(id, {
+      steamCommunityCookie: proxyCommunityCookie,
+    });
+    jsonRes(res, 200, result);
+  } catch (error) {
+    const statusCode = Number(error && error.statusCode) || 502;
+    jsonRes(res, statusCode, {
+      error: error && error.message ? error.message : 'Steam 订阅状态查询失败',
+      code: error && error.code ? error.code : 'STEAM_SUBSCRIPTION_STATUS_FAILED',
+      requiresSteamLogin: !!(error && error.requiresSteamLogin),
+    });
+  }
+}
+
 function startSteamKitPasswordLoginSession(payload) {
   return getSteamKitLoginService().startPasswordSession(
     String(payload && payload.username || '').trim(),
@@ -1965,8 +2116,8 @@ async function ensureMpkgForItem(itemDir, id) {
 async function ensureDownloadedItemForMpkg(id, title) {
   return getMpkgService().ensureDownloadedItem(id, title);
 }
-async function prepareMpkgDownloadFile(id, title, textureProfile) {
-  return getMpkgService().prepareDownloadFile(id, title, textureProfile);
+async function prepareMpkgDownloadFile(id, title, textureProfile, options) {
+  return getMpkgService().prepareDownloadFile(id, title, textureProfile, options);
 }
 
 function getMpkgPreparationService() {
@@ -2308,6 +2459,8 @@ async function handleSteamLogout(req, res) {
   const wasPersistent = STEAM_CREDENTIALS.isPersistent;
   const username = STEAM_CREDENTIALS.username;
 
+  stopSteamKitQueryBridge('Steam account logged out');
+
   // Clear in-memory credentials.
   STEAM_CREDENTIALS.username = '';
   STEAM_CREDENTIALS.password = '';
@@ -2547,8 +2700,6 @@ async function handleVideoCacheSettingsPost(req, res) {
     const patchResult = getRuntimeSettings().applyPatch(data);
     VIDEO_CACHE_SETTINGS = patchResult.settings;
     const workshopSearchSettingsChanged = patchResult.steamApiKeyChanged ||
-      patchResult.useSteamApiChanged ||
-      patchResult.workshopHtmlOrderModeChanged ||
       patchResult.steamAccessResolverChanged ||
       patchResult.steamAccessEnhanceChanged ||
       patchResult.steamAccessDirectWebApiChanged;
@@ -2610,6 +2761,11 @@ const handleHttpRequest = createAppRouter({
   handleSteamAccessReady,
   handleDetails,
   handlePersonalSource,
+  handleSteamSubscribe,
+  handleSteamUnsubscribe,
+  handleSteamFavorite,
+  handleSteamUnfavorite,
+  handleSteamSubscriptionStatus,
   handleDetailsBatch,
   handleCommentsPage,
   handleClientDownload,
@@ -2693,7 +2849,10 @@ const { serverLifecycle, isDockerLikeEnv, restartServer, shutdownServer } = star
   logger: console,
   onHttpListening,
   markServerStopping: () => { SERVER_STOPPING = true; },
-  stopAllDepotStreamWorkers: (reason) => stopAllDepotStreamWorkers(reason),
+  stopAllDepotStreamWorkers: (reason) => {
+    stopSteamKitQueryBridge(reason || 'WallHub server stopping');
+    stopAllDepotStreamWorkers(reason);
+  },
   buildDepotRuntime: async () => {
     loadCacheSettings();
     ensureSteamConfigDir();

@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: wallhub:latest
     container_name: Wallhub
     restart: unless-stopped
     init: true
@@ -15,7 +14,6 @@ services:
     # Set this to "1" to start Steamcommunity_302 from ./Steamcommunity_302.
     environment:
       WALLHUB_STEAMCOMMUNITY_302: "0"
-    #   STEAM_API_KEY: "${STEAM_API_KEY:-}"
     #   HTTP_PROXY: "${HTTP_PROXY:-}"
     #   HTTPS_PROXY: "${HTTPS_PROXY:-}"
     #   ALL_PROXY: "${ALL_PROXY:-}"

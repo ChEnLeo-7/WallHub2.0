@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeLoadedCacheSettings } = require('./schema');
+const { normalizeLoadedCacheSettings, applyCacheSettingsPatch } = require('./schema');
 
 test('loaded settings migrate stale current DoH endpoint to selected endpoint', () => {
   const settings = normalizeLoadedCacheSettings({
@@ -44,4 +44,33 @@ test('settings normalize MPKG texture profile to fast or compact', () => {
 
   assert.equal(compact.mpkgTextureProfile, 'compact');
   assert.equal(invalid.mpkgTextureProfile, 'fast');
+});
+
+test('legacy remote subscription experiment is removed during settings normalization', () => {
+  const settings = normalizeLoadedCacheSettings({ steamRemoteSubscribeEnabled: 'yes' }, { logger: { warn() {} } });
+
+  assert.equal(Object.hasOwn(settings, 'steamRemoteSubscribeEnabled'), false);
+});
+
+test('Steam Web API key is retained while removed query-source settings are discarded', () => {
+  const loaded = normalizeLoadedCacheSettings({
+    steamApiKey: 'old-key',
+    useSteamApi: true,
+    workshopQueryMode: 'legacy',
+    workshopHtmlOrderMode: true,
+  }, { logger: { warn() {} } });
+  const patched = applyCacheSettingsPatch(loaded, {
+    steamApiKey: 'new-key',
+    useSteamApi: true,
+    workshopQueryMode: 'steamkit-first',
+    workshopHtmlOrderMode: true,
+  });
+
+  assert.equal(loaded.steamApiKey, 'old-key');
+  assert.equal(patched.settings.steamApiKey, 'new-key');
+  assert.equal(patched.steamApiKeyChanged, true);
+  for (const key of ['useSteamApi', 'workshopQueryMode', 'workshopHtmlOrderMode']) {
+    assert.equal(Object.hasOwn(loaded, key), false);
+    assert.equal(Object.hasOwn(patched.settings, key), false);
+  }
 });

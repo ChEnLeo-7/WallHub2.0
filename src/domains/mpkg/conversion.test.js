@@ -177,6 +177,99 @@ test('MPKG compact profile uses an isolated cache file and forwards the profile 
   }
 });
 
+test('MPKG accepts video workshops without scene-only Python dependencies and reuses the fast output', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-mpkg-video-'));
+  try {
+    const itemDir = path.join(root, 'item');
+    const toolDir = path.join(root, 'tool');
+    const toolScript = path.join(toolDir, 'mobile_mpkg.py');
+    fs.mkdirSync(itemDir, { recursive: true });
+    fs.mkdirSync(toolDir, { recursive: true });
+    fs.writeFileSync(path.join(itemDir, 'project.json'), JSON.stringify({
+      type: 'video',
+      file: 'clips/demo.mp4',
+      preview: 'preview.jpg',
+      title: 'Demo',
+    }));
+    fs.mkdirSync(path.join(itemDir, 'clips'), { recursive: true });
+    fs.writeFileSync(path.join(itemDir, 'clips', 'demo.mp4'), 'video');
+    fs.writeFileSync(path.join(itemDir, 'preview.jpg'), 'preview');
+    fs.writeFileSync(toolScript, '# fake tool');
+
+    let dependencyOptions = null;
+    let observedArgs = [];
+    const service = createMpkgConversionService({
+      toolDir,
+      toolScript,
+      ensureDir: (dir) => fs.mkdirSync(dir, { recursive: true }),
+      commandExists: (cmd) => cmd === 'python3' ? '/fake/python3' : '',
+      pythonDependencyStatus: (_python, options) => {
+        dependencyOptions = options;
+        return { ok: options.requireSceneDependencies === false, executable: '/fake/python3' };
+      },
+      runProcess: async (_bin, args) => {
+        observedArgs = args.slice();
+        fs.writeFileSync(args[args.indexOf('--output') + 1], Buffer.alloc(8));
+      },
+      safeName: (value) => String(value || ''),
+      logger: { log() {}, warn() {} },
+    });
+
+    const output = await service.ensureForItem(itemDir, '123', 'compact');
+
+    assert.equal(service.isSceneWorkshopDir(itemDir), false);
+    assert.equal(service.isVideoWorkshopDir(itemDir), true);
+    assert.deepEqual(dependencyOptions, { requireSceneDependencies: false });
+    assert.equal(output, path.join(itemDir, 'Mpkg', '123.mpkg'));
+    const profileArgIndex = observedArgs.indexOf('--texture-profile');
+    assert.deepEqual(observedArgs.slice(profileArgIndex, profileArgIndex + 2), ['--texture-profile', 'fast']);
+    assert.equal(fs.existsSync(path.join(itemDir, 'Mpkg', '123.compact.mpkg')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('MPKG reports source downloading before it begins converting a newly downloaded item', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-mpkg-stage-'));
+  try {
+    const itemDir = path.join(root, 'item');
+    const toolDir = path.join(root, 'tool');
+    const toolScript = path.join(toolDir, 'mobile_mpkg.py');
+    fs.mkdirSync(itemDir, { recursive: true });
+    fs.mkdirSync(toolDir, { recursive: true });
+    fs.writeFileSync(path.join(itemDir, 'scene.pkg'), 'pkg');
+    fs.writeFileSync(path.join(itemDir, 'project.json'), '{}');
+    fs.writeFileSync(path.join(itemDir, 'preview.jpg'), 'preview');
+    fs.writeFileSync(toolScript, '# fake tool');
+
+    let downloadedPath = '';
+    const stages = [];
+    const service = createMpkgConversionService({
+      toolDir,
+      toolScript,
+      ensureDir: (dir) => fs.mkdirSync(dir, { recursive: true }),
+      commandExists: (cmd) => cmd === 'python3' ? '/fake/python3' : '',
+      pythonDependencyStatus: () => ({ ok: true, executable: '/fake/python3' }),
+      findDownloadedItemPath: () => downloadedPath,
+      createWorkshopQueueTask: async () => ({ status: 'pending', title: 'Demo' }),
+      sleep: async () => { downloadedPath = itemDir; },
+      runProcess: async (_bin, args) => {
+        fs.writeFileSync(args[args.indexOf('--output') + 1], Buffer.alloc(8));
+      },
+      safeName: (value) => String(value || ''),
+      logger: { log() {}, warn() {} },
+    });
+
+    await service.prepareDownloadFile('123', 'Demo', 'fast', {
+      onStageChange: (stage) => stages.push(stage),
+    });
+
+    assert.deepEqual(stages, ['downloading', 'converting']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('MPKG conversion starts different items independently', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-mpkg-queue-'));
   try {

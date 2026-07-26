@@ -45,6 +45,14 @@ export type PersonalSourceResult = {
   steamIds?: string[];
   warningCode?: string;
 };
+
+export type SubscriptionStatusResult = {
+  success: boolean;
+  id: string;
+  appid: number;
+  subscribed: boolean;
+  favorited: boolean;
+};
 export type QueryParams = Record<string, string | number | boolean | undefined>;
 
 export type WorkshopQueryResult = {
@@ -246,6 +254,7 @@ export type MpkgPreparationResponse = {
   success?: boolean;
   id?: string;
   status?: 'preparing' | 'ready' | 'error' | string;
+  stage?: 'downloading' | 'converting' | string;
   elapsedMs?: number;
   fileName?: string;
   downloadUrl?: string;
@@ -276,7 +285,6 @@ export type CacheSettings = {
   mpkgTextureProfile?: 'fast' | 'compact';
   mpkgCompactAvailable?: boolean;
   mpkgCompactUnavailableReason?: string;
-  useSteamApi?: boolean;
   downloadDir?: string;
   maxConcurrentDownloads?: number;
   steamCdnRouteStrategy?: 'nearest' | 'direct' | 'proxy';
@@ -284,7 +292,6 @@ export type CacheSettings = {
   steamKitMaxDownloads?: number;
   effectiveSteamKitMaxDownloads?: number;
   steamKitDepotStreaming?: boolean;
-  workshopHtmlOrderMode?: boolean;
   wallhubSteamAccessEnhance?: boolean;
   wallhubSteamAccessDirectWebApi?: boolean;
   wallhubSteamWebApiRoute?: 'direct' | 'follow';
@@ -344,7 +351,9 @@ async function parseJson<T>(res: Response): Promise<T> {
 export async function queryWorkshop(params: QueryParams, options: { signal?: AbortSignal } = {}): Promise<WorkshopQueryResult> {
   const res = await fetch('/api/steam/query', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({ params }),
     signal: options.signal,
   });
@@ -376,6 +385,47 @@ export async function getPersonalSource(id: string | number, filter: string) {
   const qs = new URLSearchParams({ id: String(id), filter: String(filter || '') });
   const res = await fetch(`/api/steam/personal-source?${qs.toString()}`, { cache: 'no-store' });
   return parseJson<PersonalSourceResult>(res);
+}
+
+export async function getSubscriptionStatus(id: string | number) {
+  const res = await fetch(`/api/steam/subscription-status?id=${encodeURIComponent(String(id))}`, { cache: 'no-store' });
+  return parseJson<SubscriptionStatusResult>(res);
+}
+
+export async function remoteSubscribe(id: string | number) {
+  const res = await fetch('/api/steam/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: String(id) }),
+  });
+  return parseJson<{ success: boolean; id: string; appid: number; message?: string }>(res);
+}
+
+export async function remoteUnsubscribe(id: string | number) {
+  const res = await fetch('/api/steam/unsubscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: String(id) }),
+  });
+  return parseJson<{ success: boolean; id: string; appid: number; message?: string }>(res);
+}
+
+export async function remoteFavorite(id: string | number) {
+  const res = await fetch('/api/steam/favorite', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: String(id) }),
+  });
+  return parseJson<{ success: boolean; id: string; appid: number; message?: string }>(res);
+}
+
+export async function remoteUnfavorite(id: string | number) {
+  const res = await fetch('/api/steam/unfavorite', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: String(id) }),
+  });
+  return parseJson<{ success: boolean; id: string; appid: number; message?: string }>(res);
 }
 
 export async function getDetailsBatch(ids: Array<string | number>) {
@@ -607,14 +657,18 @@ export async function clientDownload(id: string | number, title: string) {
   return { streamed: true };
 }
 
-export async function mpkgDownload(
+type MpkgPreparationOptions = {
+  textureProfile?: 'fast' | 'compact';
+  onPreparing?: (preparation: MpkgPreparationResponse) => void;
+};
+
+async function prepareMpkg(
   id: string | number,
   title: string,
-  options: { textureProfile?: 'fast' | 'compact'; onPreparing?: (preparation: MpkgPreparationResponse) => void } = {},
+  options: MpkgPreparationOptions = {},
 ) {
   const profile = options.textureProfile === 'compact' ? 'compact' : 'fast';
   const params = new URLSearchParams({ id: String(id), title: String(title || ''), profile });
-  const directUrl = `/api/mpkg/download?${params.toString()}`;
   const startedAt = Date.now();
   const notifyPreparing = (value: MpkgPreparationResponse) => {
     if (String(value.status || '') !== 'preparing' || !options.onPreparing) return;
@@ -650,8 +704,26 @@ export async function mpkgDownload(
     error.code = preparation.code || '';
     throw error;
   }
-  downloadByNavigation(preparation.downloadUrl || directUrl);
-  return { streamed: true };
+  return { preparation, params };
+}
+
+export async function mpkgDownload(
+  id: string | number,
+  title: string,
+  options: MpkgPreparationOptions = {},
+) {
+  const { preparation, params } = await prepareMpkg(id, title, options);
+  downloadByNavigation(preparation.downloadUrl || `/api/mpkg/download?${params.toString()}`);
+  return { streamed: true, fileName: preparation.fileName || '' };
+}
+
+export async function mpkgConvertOnly(
+  id: string | number,
+  title: string,
+  options: MpkgPreparationOptions = {},
+) {
+  const { preparation } = await prepareMpkg(id, title, options);
+  return { converted: true, fileName: preparation.fileName || '' };
 }
 
 export async function backgroundDownload(id: string | number, title: string) {

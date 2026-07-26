@@ -2,22 +2,24 @@ import * as React from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   ArrowUp,
+  BellMinus,
+  BellPlus,
   Clock,
   Copy,
   Download,
-  ExternalLink,
   Heart,
   MessageCircle,
   Search,
   Play,
   Shield,
   Star,
+  StarOff,
   Eye,
   Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
-import { useText } from '@/lib/text';
+import { LanguageContext, useText } from '@/lib/text';
 import {
   cn,
   formatBytesText,
@@ -29,12 +31,12 @@ import {
   formatCommentTime,
   itemType,
   localizedItemType,
+  localizedWorkshopTag,
 } from '@/lib/workshop';
 import { type WorkshopItem, type Details, type CommentItem } from '@/lib/api';
 import { REDESIGNED_DETAILS_PANEL_STYLE } from '../../../../src/shared/detailsPresentation.mjs';
 import { BACK_TO_TOP_MOTION, DETAILS_READY_CONTENT_MOTION } from '@/lib/motion';
 
-type HomeCardDefaultAction = 'playVideo' | 'backgroundDownload' | 'clientDownload' | 'openSteamPage';
 type DetailsPresentation = 'classic' | 'redesigned';
 
 function Stat({
@@ -121,7 +123,7 @@ function DetailTagPicker({
   onSearchTags?: (tags: string[]) => void;
   keepSearchActionVisible?: boolean;
 }) {
-  const text = useText();
+  const { language, text } = React.useContext(LanguageContext);
   if (loading) {
     return (
       <div className="grid gap-2" aria-label={text.loading}>
@@ -152,7 +154,7 @@ function DetailTagPicker({
             aria-pressed={selectedTags.includes(tag)}
             onClick={() => onToggleTag(tag)}
           >
-            {tag}
+            {localizedWorkshopTag(tag, language, text)}
           </button>
         ))}
       </div>
@@ -178,12 +180,20 @@ export function DetailsDialog({
   presentation,
   onOpenChange,
   onClientDownload,
-  onBackgroundDownload,
+  personalSubscriptionActive,
+  subscriptionPendingStep,
+  subscriptionSubmitting,
+  personalFavoriteActive,
+  favoritePendingStep,
+  favoriteSubmitting,
+  onRemoteSubscribe,
+  onRemoteUnsubscribe,
+  onRemoteFavorite,
+  onRemoteUnfavorite,
   onLoadMoreComments,
   onCopyId,
-  homeCardDefaultAction,
+  onCopyTitle,
   onPlay,
-  onOpenSteamPage,
   onAuthor,
   onSearchTags,
 }: {
@@ -195,12 +205,20 @@ export function DetailsDialog({
   presentation: DetailsPresentation;
   onOpenChange: (open: boolean) => void;
   onClientDownload: (item: WorkshopItem) => void;
-  onBackgroundDownload: (item: WorkshopItem) => void;
+  personalSubscriptionActive: boolean;
+  subscriptionPendingStep?: 0 | 1 | 2;
+  subscriptionSubmitting: boolean;
+  personalFavoriteActive: boolean;
+  favoritePendingStep?: 0 | 1 | 2;
+  favoriteSubmitting: boolean;
+  onRemoteSubscribe: (item: WorkshopItem) => void;
+  onRemoteUnsubscribe: (item: WorkshopItem) => void;
+  onRemoteFavorite: (item: WorkshopItem) => void;
+  onRemoteUnfavorite: (item: WorkshopItem) => void;
   onLoadMoreComments: (id: string) => void;
   onCopyId: (id: string) => void;
-  homeCardDefaultAction: HomeCardDefaultAction;
+  onCopyTitle: (title: string) => void;
   onPlay: (item: WorkshopItem) => void;
-  onOpenSteamPage: (item: WorkshopItem) => void;
   onAuthor: (creator?: string) => void;
   onSearchTags?: (tags: string[]) => void;
 }) {
@@ -217,8 +235,15 @@ export function DetailsDialog({
   const tags = (merged.tags || []).map((tag) => (typeof tag === 'string' ? tag : tag.tag)).filter(Boolean);
   const type = item ? itemType(merged) : 'Scene';
   const id = String(item?.publishedfileid || merged.publishedfileid || '');
+  const wallpaperTitle = String(merged.title || item?.title || text.untitledWallpaper);
   const lastUpdatedText = formatDateOnlyText(merged.time_updated || item?.time_updated, text);
   const compactLastUpdatedText = shouldCompactDateOnlyText(lastUpdatedText);
+  const subscriptionLabel = subscriptionPendingStep === undefined
+    ? subscriptionSubmitting ? text.remoteSubscriptionActive : personalSubscriptionActive ? text.actionUnsubscribe : text.actionSubscribe
+    : text.remoteSubscribePending.replace('{dots}', subscriptionPendingStep === 0 ? '...' : subscriptionPendingStep === 1 ? '..' : '.');
+  const favoriteLabel = favoritePendingStep === undefined
+    ? favoriteSubmitting ? text.remoteFavoriteActive : personalFavoriteActive ? text.actionUnfavorite : text.actionFavorite
+    : text.remoteFavoritePending.replace('{dots}', favoritePendingStep === 0 ? '...' : favoritePendingStep === 1 ? '..' : '.');
   React.useEffect(() => {
     setSelectedTags([]);
   }, [id]);
@@ -281,8 +306,6 @@ export function DetailsDialog({
   const scrollDetailsTop = React.useCallback(() => {
     commentsScrollRootRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
-  const effectiveDefaultAction = homeCardDefaultAction === 'playVideo' && type !== 'Video' ? 'backgroundDownload' : homeCardDefaultAction;
-  const actionVariant = (action: HomeCardDefaultAction) => (effectiveDefaultAction === action ? 'default' : 'secondary');
   const loadedComments = merged.comments?.length ? (
     <div ref={commentsListRef} className="grid gap-2 pr-1" onScroll={onCommentsScroll}>
       {merged.comments.map((comment: CommentItem, index: number) => (
@@ -310,39 +333,46 @@ export function DetailsDialog({
       open={!!item}
       onOpenChange={onOpenChange}
       fixedHeight={fixedPanelHeight}
+      closeButtonClassName="right-3 top-3 sm:right-5 sm:top-4"
       title={
         isRedesigned ? (
-          <div data-testid="details-redesigned-header" className="flex min-w-0 flex-wrap items-center gap-2 pr-1">
-            <div className="min-w-0 max-w-full truncate text-lg font-bold tracking-tight">{merged.title || item?.title || text.untitledWallpaper}</div>
-            {id ? (
-              <button type="button" className="inline-flex max-w-full items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onClick={() => onCopyId(id)}>
-                <span className="font-semibold text-foreground">ID</span>
-                <span className="truncate">{id}</span>
-                <Copy className="h-3 w-3 shrink-0" />
-              </button>
-            ) : null}
-            <button type="button" className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onClick={() => onAuthor(merged.creator)}>
-              <span className="shrink-0 font-semibold text-foreground">{text.author}</span>
-              <span className="truncate">{merged.author || text.loadingAuthor}</span>
+          <div data-testid="details-redesigned-header" className="grid min-w-0 gap-1.5 pr-1">
+            <button type="button" className="group flex min-w-0 w-fit max-w-[calc(100%-0.5rem)] justify-self-start items-center gap-1 text-left text-base font-bold tracking-tight outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:max-w-full sm:gap-1.5 sm:text-lg" title={text.copyTitle} onClick={() => onCopyTitle(wallpaperTitle)}>
+              <span className="min-w-0 flex-1 truncate">{wallpaperTitle}</span>
+              <Copy className="h-3 w-3 shrink-0 opacity-45 transition-opacity group-hover:opacity-100 sm:h-3.5 sm:w-3.5" />
             </button>
-            {personalSourceLabel ? <span className="rounded-full bg-amber-400/15 px-2.5 py-1 text-xs font-semibold text-amber-500">{personalSourceLabel}</span> : null}
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {id ? (
+                <button type="button" className="inline-flex max-w-full items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onClick={() => onCopyId(id)}>
+                  <span className="font-semibold text-foreground">ID</span>
+                  <span className="truncate">{id}</span>
+                  <Copy className="h-3 w-3 shrink-0" />
+                </button>
+              ) : null}
+              <button type="button" className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onClick={() => onAuthor(merged.creator)}>
+                <span className="shrink-0 font-semibold text-foreground">{text.author}</span>
+                <span className="truncate">{merged.author || text.loadingAuthor}</span>
+              </button>
+              {personalSourceLabel ? <span className="rounded-full bg-amber-400/15 px-2.5 py-1 text-xs font-semibold text-amber-500">{personalSourceLabel}</span> : null}
+            </div>
           </div>
         ) : (
           <div className="min-w-0">
-            <div className="flex min-w-0 items-baseline gap-3">
-              <div className="min-w-0 flex-1 truncate">{merged.title || item?.title || text.untitledWallpaper}</div>
-              {personalSourceLabel ? (
-                <span className="shrink-0 text-xs font-semibold text-amber-400">来源：{personalSourceLabel}</span>
-              ) : null}
-            </div>
+            <button type="button" className="group flex min-w-0 w-fit max-w-[calc(100%-0.5rem)] items-center gap-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:max-w-full sm:gap-1.5" title={text.copyTitle} onClick={() => onCopyTitle(wallpaperTitle)}>
+              <span className="min-w-0 flex-1 truncate">{wallpaperTitle}</span>
+              <Copy className="h-3 w-3 shrink-0 opacity-45 transition-opacity group-hover:opacity-100 sm:h-3.5 sm:w-3.5" />
+            </button>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-normal text-muted-foreground">
-              <button className="inline-flex items-center gap-1 text-primary hover:underline" onClick={() => id && onCopyId(id)}>
-                ID {id}
-                <Copy className="h-3 w-3" />
-              </button>
+              {id ? (
+                <button className="inline-flex items-center gap-1 text-primary hover:underline" onClick={() => onCopyId(id)}>
+                  ID {id}
+                  <Copy className="h-3 w-3" />
+                </button>
+              ) : null}
               <button className="text-primary hover:underline" onClick={() => onAuthor(merged.creator)}>
                 {text.author}: {merged.author || text.loadingAuthor}
               </button>
+              {personalSourceLabel ? <span className="text-amber-400">来源：{personalSourceLabel}</span> : null}
             </div>
           </div>
         )
@@ -355,26 +385,56 @@ export function DetailsDialog({
         item ? (
           <>
             {type === 'Video' ? (
-              <Button variant={actionVariant('playVideo')} onClick={() => onPlay(item)}>
+              <Button className="col-span-2 sm:col-span-1" variant="secondary" onClick={() => onPlay(item)}>
                 <Play className="h-4 w-4" />
                 {text.playVideo}
               </Button>
             ) : null}
-            <Button variant={actionVariant('backgroundDownload')} onClick={() => onBackgroundDownload(item)}>
-              <Clock className="h-4 w-4" />
-              {text.backgroundDownload}
-            </Button>
-            <Button variant={actionVariant('clientDownload')} onClick={() => onClientDownload(item)}>
+            <div className="col-span-2 grid grid-cols-2 gap-2 sm:contents">
+              {personalSubscriptionActive ? (
+                <Button
+                  className="min-w-0"
+                  variant="destructive"
+                  disabled={subscriptionSubmitting}
+                  onClick={() => onRemoteUnsubscribe(item)}
+                >
+                  <BellMinus className="h-4 w-4" />
+                  {subscriptionLabel}
+                </Button>
+              ) : (
+                <Button
+                  className="min-w-0"
+                  variant="secondary"
+                  onClick={() => onRemoteSubscribe(item)}
+                >
+                  <BellPlus className="h-4 w-4" />
+                  {subscriptionLabel}
+                </Button>
+              )}
+              {personalFavoriteActive ? (
+                <Button
+                  className="min-w-0"
+                  variant="destructive"
+                  disabled={favoriteSubmitting}
+                  onClick={() => onRemoteUnfavorite(item)}
+                >
+                  <StarOff className="h-4 w-4" />
+                  {favoriteLabel}
+                </Button>
+              ) : (
+                <Button
+                  className="min-w-0"
+                  variant="secondary"
+                  onClick={() => onRemoteFavorite(item)}
+                >
+                  <Star className="h-4 w-4" />
+                  {favoriteLabel}
+                </Button>
+              )}
+            </div>
+            <Button className="col-span-2 sm:col-span-1" variant="default" onClick={() => onClientDownload(item)}>
               <Download className="h-4 w-4" />
               {text.download}
-            </Button>
-            <Button
-              className={cn(type !== 'Video' && 'col-span-2 sm:col-span-1')}
-              variant={actionVariant('openSteamPage')}
-              onClick={() => onOpenSteamPage(item)}
-            >
-              <ExternalLink className="h-4 w-4" />
-              {text.openSteamPage}
             </Button>
           </>
         ) : null
