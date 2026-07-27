@@ -30,6 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -60,12 +61,41 @@ jobs:
           npm run build:windows:installer
           .\build\windows-x64\WallHub\WallHub.exe --smoke-test
 
+      - name: Create release notes
+        id: notes
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $previousTag = git tag --sort=-version:refname | Where-Object { $_ -ne $env:RELEASE_TAG } | Select-Object -First 1
+          $notes = @("## WallHub $env:RELEASE_TAG", "", "### 本次更新")
+          if ($previousTag) {
+            $changes = git log --pretty=format:'- %s (%h)' "$previousTag..$env:RELEASE_TAG"
+            if ($changes) {
+              $notes += $changes
+            }
+            else {
+              $notes += '- 没有检测到相对上一版本的提交。'
+            }
+            $notes += ""
+            $notes += "完整比较：https://github.com/${{ github.repository }}/compare/$previousTag...$env:RELEASE_TAG"
+          }
+          else {
+            $notes += '- 首次发布。'
+          }
+          $notes += ""
+          $notes += '### 下载说明'
+          $notes += '- `WallHub-Setup-win-x64.exe`：Windows 图形安装版。'
+          $notes += '- `WallHub-Portable-win-x64.zip`：Windows 免安装便携版，解压后运行 `WallHub.exe`。'
+          $notes += '- 另附 SHA-256 校验文件；GitHub 自动提供本标签对应的 Source code (zip) 和 Source code (tar.gz)。'
+          $notes -join "`n" | Set-Content -LiteralPath release-notes.md -Encoding utf8
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
-          generate_release_notes: true
           prerelease: ${{ inputs.prerelease || false }}
+          body_path: release-notes.md
           files: |
             dist/WallHub-Portable-win-x64.zip
             dist/WallHub-Portable-win-x64.zip.sha256
