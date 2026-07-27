@@ -11,8 +11,38 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    name: Verify source
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.0
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify source
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npx tsc --noEmit
+          npm run build:ui
+          python -m py_compile tools/mpkg/mobile_mpkg.py tools/mpkg/wallpaper_engine_toolkit.py
+
   package:
     name: Build Windows x64 packages
+    needs: verify
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 90
 
@@ -40,15 +70,6 @@ jobs:
         shell: pwsh
         run: choco install innosetup --no-progress --yes
 
-      - name: Verify source
-        shell: pwsh
-        run: |
-          npm ci --no-audit --no-fund
-          npm test
-          npx tsc --noEmit
-          npm run build:ui
-          python -m py_compile tools/mpkg/mobile_mpkg.py tools/mpkg/wallpaper_engine_toolkit.py
-
       - name: Build portable and installer packages
         shell: pwsh
         run: npm run build:windows:installer
@@ -57,13 +78,28 @@ jobs:
         shell: pwsh
         run: .\build\windows-x64\WallHub\WallHub.exe --smoke-test
 
-      - name: Upload Windows packages
+      # Artifacts are always delivered by GitHub as ZIP downloads. Keep each
+      # distributable separate so CI users can fetch only the package they need.
+      - name: Upload Windows installer
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: WallHub-windows-x64
+          name: WallHub-Setup-win-x64
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+          path: |
+            dist/WallHub-Setup-win-x64.exe
+            dist/WallHub-Setup-win-x64.exe.sha256
+
+      - name: Upload Windows portable package
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: WallHub-Portable-win-x64
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
           path: |
             dist/WallHub-Portable-win-x64.zip
             dist/WallHub-Portable-win-x64.zip.sha256
-            dist/WallHub-Setup-win-x64.exe
-            dist/WallHub-Setup-win-x64.exe.sha256
