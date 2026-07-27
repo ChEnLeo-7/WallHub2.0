@@ -28,7 +28,7 @@ WallHub 是一个本地运行的 Wallpaper Engine 创意工坊管理工具。它
 - **Steam 个人内容**：通过密码、Steam Guard 或二维码登录后，可访问个人订阅、收藏及其他个人来源，并在详情中订阅或收藏项目。
 - **个性化界面**：支持简体中文与 English、亮色/暗色/跟随系统主题、强调色、网格/列表模式、响应式列数和两种详情布局。
 - **网络与运行设置**：可配置下载目录、并发数、代理、Steam API Key、DNS/Hosts、CDN、分块缓存及实验功能。
-- **安全更新**：检查 GitHub Releases，校验 SHA-256 后更新 Windows 包或跨平台源码；Docker 可选用独立更新容器拉取多架构 GHCR 镜像。
+- **安全更新**：检查 GitHub Releases，使用 Release 说明中的 SHA-256 校验值后更新 Windows 包或跨平台源码；Docker 可选用独立更新容器拉取多架构 GHCR 镜像。
 
 ## 快速开始
 
@@ -44,7 +44,7 @@ WallHub 是一个本地运行的 Wallpaper Engine 创意工坊管理工具。它
 两个版本均内置 Node.js、Python、.NET 和 MPKG 依赖。启动后，WallHub 会驻留在通知区域，并自动打开 `http://localhost:3090`。托盘菜单可打开页面、根目录和日志，也可设置启动参数、重启或退出。
 
 > [!TIP]
-> Releases 同时提供 `.sha256` 文件，可用于核验下载包完整性。未签名构建可能触发 Windows SmartScreen 的“未知发布者”提示。
+> Release 说明底部列出 SHA-256 值，可用于核验下载包完整性。未签名构建可能触发 Windows SmartScreen 的“未知发布者”提示。
 
 ### Docker
 
@@ -107,15 +107,16 @@ npm start
 > [!IMPORTANT]
 > 下载创意工坊内容通常需要登录一个合法拥有 Wallpaper Engine（Steam App `431960`）的账号。Steam 登录会话保存在本地 `SteamKit` 数据目录中，请像保护其他账号凭据一样保护该目录。
 
-### 成人内容模式
+### NSFW 内容模式
 
-WallHub 默认隐藏成人内容选项。仅在确认符合你的使用环境与当地规则时启用：
+WallHub 默认隐藏 NSFW 内容选项。仅在确认符合你的使用环境与当地规则时启用：
 
 ```bash
 npm run start:nsfw
 ```
 
-Windows 版可在托盘菜单的“启动参数”中加入 `--NSFW`；Docker 可将 Compose 的 `command` 改为 `['node', 'server.js', '--NSFW']`。安全模式依赖创意工坊标签过滤，不构成绝对的内容安全保证。
+Windows 版可在托盘菜单的“启动参数”中加入 `--NSFW`；
+Docker 可将 Compose 的 `command` 改为 `['node', 'server.js', '--NSFW']`。安全模式依赖创意工坊标签过滤，不构成绝对的内容安全保证。
 
 ## 数据与安全
 

@@ -28,7 +28,7 @@ WallHub is a locally hosted manager for Wallpaper Engine Workshop content. It br
 - **Personal Steam content**: Sign in with a password, Steam Guard, or QR code to browse personal subscriptions, favorites, and other personal sources, then subscribe or favorite from item details.
 - **Personalized interface**: Switch between Simplified Chinese and English, light/dark/system themes, accent colors, grid/list views, responsive column counts, and two detail layouts.
 - **Network and runtime controls**: Configure the download directory, concurrency, proxy, Steam API key, DNS/Hosts, CDN, chunk cache, and experimental features.
-- **Verified updates**: Check GitHub Releases and verify SHA-256 before updating Windows packages or cross-platform source installs. Docker can use a separate updater container with multi-platform GHCR images.
+- **Verified updates**: Check GitHub Releases and verify the SHA-256 values in the release description before updating Windows packages or cross-platform source installs. Docker can use a separate updater container with multi-platform GHCR images.
 
 ## Quick Start
 
@@ -44,7 +44,7 @@ Download a Windows x64 package from [GitHub Releases](https://github.com/ChEnLeo
 Both packages include Node.js, Python, .NET, and the MPKG dependencies. WallHub runs in the notification area and opens `http://localhost:3090` automatically. Use the tray menu to open the app, root directory, or logs, set startup arguments, restart, or exit.
 
 > [!TIP]
-> Releases include `.sha256` files for integrity checks. Unsigned builds may trigger a Windows SmartScreen “unknown publisher” warning.
+> Release descriptions list SHA-256 values at the bottom for integrity checks. Unsigned builds may trigger a Windows SmartScreen “unknown publisher” warning.
 
 ### Docker
 

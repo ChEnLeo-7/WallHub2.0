@@ -12,6 +12,7 @@ const {
   compareVersions,
   detectInstallMode,
   parseChecksum,
+  parseReleaseChecksum,
   selectReleaseAsset,
   updaterLaunchRequest,
   spawnDetachedUpdater,
@@ -71,6 +72,39 @@ test('checksum parsing rejects a mismatched filename', () => {
   const hash = 'a'.repeat(64);
   assert.equal(parseChecksum(`${hash}  WallHub-Source.zip`, 'WallHub-Source.zip'), hash);
   assert.throws(() => parseChecksum(`${hash}  other.zip`, 'WallHub-Source.zip'), /filename/);
+});
+
+test('release body checksum parsing accepts the published checksum section', () => {
+  const hash = 'b'.repeat(64);
+  assert.equal(parseReleaseChecksum(`notes\n\n## SHA-256 校验 / Checksums\n\n- \`WallHub-Source.zip\`: ${hash}`, 'WallHub-Source.zip'), hash);
+  assert.equal(parseReleaseChecksum('notes without checksums', 'WallHub-Source.zip'), null);
+});
+
+test('update download verifies a release body checksum without a checksum asset', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-body-checksum-'));
+  const payload = Buffer.from('body checksum archive');
+  const hash = crypto.createHash('sha256').update(payload).digest('hex');
+  const bodyRelease = release();
+  bodyRelease.body = `## SHA-256 Checksums\n\n- \`WallHub-Source.zip\`: ${hash}`;
+  bodyRelease.assets = bodyRelease.assets.filter(asset => !String(asset.name).endsWith('.sha256'));
+  const service = createUpdateService({
+    currentVersion: '2.0.1',
+    projectRoot: root,
+    mode: 'source',
+    platform: 'linux',
+    arch: 'x64',
+    requestBuffer: async () => Buffer.from(JSON.stringify(bodyRelease)),
+    downloadFile: async (_url, destination, options) => {
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.writeFileSync(destination, payload);
+      options.onProgress(payload.length, payload.length);
+    },
+  });
+  await service.checkNow();
+  service.startDownload();
+  await service._waitForDownload();
+  assert.equal(service.snapshot().status, 'downloaded');
+  service.stopSchedule();
 });
 
 test('update mutations require loopback when Origin is absent but allow same-origin LAN requests', () => {

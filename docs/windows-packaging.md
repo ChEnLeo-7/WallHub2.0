@@ -6,7 +6,7 @@ Windows x64 发布同时生成：
 
 - `WallHub-Setup-win-x64.exe`：中英双语图形安装器。
 - `WallHub-Portable-win-x64.zip`：解压后双击 `WallHub.exe` 使用。
-- 两个产物各自对应的 `.sha256` 校验文件。
+- Release 说明底部列出的两个 Windows 产物 SHA-256 校验值。
 
 Windows 用户不需要安装 Git、Node、npm、Python、pip、.NET SDK 或 Visual Studio Build Tools。
 

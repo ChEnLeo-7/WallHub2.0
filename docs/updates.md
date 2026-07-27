@@ -18,18 +18,15 @@ WallHub 使用 GitHub Releases 作为稳定更新通道。服务端启动后检�
 
 ## Release 资产契约
 
-正式 Release 必须同时发布：
+正式 Release 必须发布以下程序资产；SHA-256 由 workflow 计算并写入 Release 说明底部，不再作为单独附件发布：
 
 ```text
 WallHub-Setup-win-x64.exe
-WallHub-Setup-win-x64.exe.sha256
 WallHub-Portable-win-x64.zip
-WallHub-Portable-win-x64.zip.sha256
 WallHub-Source.zip
-WallHub-Source.zip.sha256
 ```
 
-更新器只接受 SemVer 标签（例如 `v2.0.2`）和精确平台资产。下载完成后，文件必须通过同一 Release 中 `.sha256` 文件声明的 SHA-256 校验，否则会删除更新包并停止安装。
+更新器只接受 SemVer 标签（例如 `v2.0.2`）和精确平台资产。下载完成后，优先使用 Release 说明底部的 SHA-256 校验值；旧 Release 若仍提供 `.sha256` 附件则兼容读取。校验失败会删除更新包并停止安装。
 
 ## Docker 自动更新
 

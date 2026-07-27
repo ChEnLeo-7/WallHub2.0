@@ -119,6 +119,15 @@ jobs:
             }
           }
           Copy-Item -LiteralPath $notesPath -Destination release-notes.md
+          $checksumLines = @(
+            '',
+            '## SHA-256 校验 / Checksums',
+            '',
+            ('- `WallHub-Setup-win-x64.exe`: {0}' -f ((Get-Content -LiteralPath 'dist/WallHub-Setup-win-x64.exe.sha256' -Raw).Trim().Split(' ')[0])),
+            ('- `WallHub-Portable-win-x64.zip`: {0}' -f ((Get-Content -LiteralPath 'dist/WallHub-Portable-win-x64.zip.sha256' -Raw).Trim().Split(' ')[0])),
+            ('- `WallHub-Source.zip`: {0}' -f ((Get-Content -LiteralPath 'dist/WallHub-Source.zip.sha256' -Raw).Trim().Split(' ')[0]))
+          )
+          Add-Content -LiteralPath release-notes.md -Value ($checksumLines -join [Environment]::NewLine) -Encoding UTF8
 
       - name: Upload validated release assets
         uses: actions/upload-artifact@v4
@@ -128,11 +137,8 @@ jobs:
           retention-days: 3
           path: |
             dist/WallHub-Portable-win-x64.zip
-            dist/WallHub-Portable-win-x64.zip.sha256
             dist/WallHub-Setup-win-x64.exe
-            dist/WallHub-Setup-win-x64.exe.sha256
             dist/WallHub-Source.zip
-            dist/WallHub-Source.zip.sha256
             release-notes.md
 
   container:
@@ -218,9 +224,6 @@ jobs:
           body_path: release-files/release-notes.md
           files: |
             release-files/dist/WallHub-Portable-win-x64.zip
-            release-files/dist/WallHub-Portable-win-x64.zip.sha256
             release-files/dist/WallHub-Setup-win-x64.exe
-            release-files/dist/WallHub-Setup-win-x64.exe.sha256
             release-files/dist/WallHub-Source.zip
-            release-files/dist/WallHub-Source.zip.sha256
           fail_on_unmatched_files: true

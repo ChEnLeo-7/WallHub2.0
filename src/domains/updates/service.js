@@ -213,6 +213,12 @@ function parseChecksum(value, expectedName) {
   return match[1].toLowerCase();
 }
 
+function parseReleaseChecksum(value, expectedName) {
+  const name = String(expectedName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = String(value || '').match(new RegExp('^\\s*-\\s*`' + name + '`\\s*:\\s*([a-fA-F0-9]{64})\\s*$', 'im'));
+  return match ? match[1].toLowerCase() : null;
+}
+
 function isLoopbackAddress(value) {
   const address = String(value || '').trim().toLowerCase();
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
@@ -455,15 +461,18 @@ function createUpdateService(options = {}) {
       error.code = 'UPDATE_ASSET_SIZE_INVALID';
       throw error;
     }
-    const checksumAsset = findReleaseAsset(downloadRelease, downloadAsset.checksumName);
-    if (!checksumAsset || !checksumAsset.browser_download_url) {
-      const error = new Error(`Missing checksum asset: ${downloadAsset.checksumName}`);
-      error.code = 'UPDATE_CHECKSUM_UNAVAILABLE';
-      throw error;
-    }
     setState({ status: 'downloading', progress: 0, downloadedBytes: 0, error: '', errorCode: '' });
-    const checksumBody = await requestBuffer(checksumAsset.browser_download_url, networkOptions({ timeoutMs: 30000, maxBytes: 4096 }));
-    const expectedHash = parseChecksum(checksumBody, downloadAsset.name);
+    let expectedHash = parseReleaseChecksum(downloadRelease.body, downloadAsset.name);
+    if (!expectedHash) {
+      const checksumAsset = findReleaseAsset(downloadRelease, downloadAsset.checksumName);
+      if (!checksumAsset || !checksumAsset.browser_download_url) {
+        const error = new Error(`Missing Release checksum for ${downloadAsset.name}`);
+        error.code = 'UPDATE_CHECKSUM_UNAVAILABLE';
+        throw error;
+      }
+      const checksumBody = await requestBuffer(checksumAsset.browser_download_url, networkOptions({ timeoutMs: 30000, maxBytes: 4096 }));
+      expectedHash = parseChecksum(checksumBody, downloadAsset.name);
+    }
     const targetDir = path.join(updateDir, `v${downloadVersion}`);
     const destination = path.join(targetDir, downloadAsset.name);
     await downloadFile(downloadAsset.url, destination, networkOptions({
@@ -646,6 +655,7 @@ module.exports = {
   findReleaseAsset,
   selectReleaseAsset,
   parseChecksum,
+  parseReleaseChecksum,
   sha256File,
   updaterLaunchRequest,
   spawnDetachedUpdater,
