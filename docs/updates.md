@@ -60,7 +60,7 @@ Watchtower 不会改写 `docker-compose.yml`。更新时它根据当前容器已
 
 `nickfedor/watchtower:1.20.1` 的 scope、enable label 和容器名组合只扫描到指定 WallHub 测试容器。另用隔离的旧版 Alpine 容器触发了真实镜像更新和容器重建；重建前后的环境变量、端口、volume、restart policy、labels、hostname、命令及 volume 标记一致。测试同时修复了 Windows CRLF 构建上下文导致 entrypoint shebang 无法执行，以及新 volume 顶层归属正确但 `SteamKit`、`Downloads` 子目录仍由 root 创建的问题。所有远端测试容器、volume、network、临时镜像标签和源码目录均已清理。
 
-本次尚未对正式 `ghcr.io/chenleo-7/wallhub:latest` 执行真实更新，因为首次 GHCR package 尚未创建并公开。正式发布 workflow 仍须完成 amd64/arm64 多架构推送和匿名拉取门禁。
+`v2.0.2` 已于 2026-07-27 发布为正式 GitHub Release。首次 GHCR package 已设为 Public；Release workflow 的匿名拉取门禁通过，远程 Docker 主机也已匿名拉取 `ghcr.io/chenleo-7/wallhub:v2.0.2`，并确认 `v2.0.2` 与 `latest` 都提供 `linux/amd64`、`linux/arm64` manifest。后续正式版本仍需保持同一匿名拉取门禁。
 
 ## 配置
 
