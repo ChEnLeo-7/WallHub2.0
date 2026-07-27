@@ -81,7 +81,13 @@ jobs:
             $notes += "完整比较：https://github.com/${{ github.repository }}/compare/$previousTag...$env:RELEASE_TAG"
           }
           else {
-            $notes += '- 首次发布。'
+            $notes += '- WallHub 2.0 首个正式 Windows 版本。'
+            $notes += '- 浏览、搜索和筛选 Wallpaper Engine 创意工坊内容，支持关键词、项目 ID、作者 ID 与精确短语。'
+            $notes += '- 提供下载队列、真实进度、暂停/继续、优先级调整，以及视频壁纸本地播放与实验性分块在线播放。'
+            $notes += '- 支持 Steam 账号密码、Steam Guard 与二维码登录；默认安全模式可按需开启成人内容选项。'
+            $notes += '- 场景壁纸可转换为移动端 MPKG，并保留音频文件；提供快速与压缩两种转换方式。'
+            $notes += '- 提供免依赖 Windows 安装版与便携版，内置 Node.js、Python、.NET 和运行所需组件。'
+            $notes += '- 后续版本会在此处自动列出新增功能、优化和 `fix` 修复提交。'
           }
           $notes += ""
           $notes += '### 下载说明'
