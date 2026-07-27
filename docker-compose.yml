@@ -1,5 +1,6 @@
 services:
   wallhub:
+    image: ghcr.io/chenleo-7/wallhub:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -14,6 +15,7 @@ services:
     # Set this to "1" to start Steamcommunity_302 from ./Steamcommunity_302.
     environment:
       WALLHUB_STEAMCOMMUNITY_302: "0"
+      WALLHUB_DOCKER_AUTO_UPDATE: "${WALLHUB_DOCKER_AUTO_UPDATE:-0}"
     #   HTTP_PROXY: "${HTTP_PROXY:-}"
     #   HTTPS_PROXY: "${HTTPS_PROXY:-}"
     #   ALL_PROXY: "${ALL_PROXY:-}"
@@ -27,6 +29,10 @@ services:
       # Optional Steamcommunity 302 package mount.
       - ./Steamcommunity_302:/opt/steamcommunity_302
 
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.scope: "wallhub"
+
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3090/health || exit 1"]
       interval: 30s
@@ -37,3 +43,14 @@ services:
     # Add -NSFW here if needed:
     # command: ["node", "server.js", "-NSFW"]
     command: ["node", "server.js"]
+
+  wallhub-auto-update:
+    image: nickfedor/watchtower:1.20.1
+    container_name: Wallhub-Updater
+    profiles: ["auto-update"]
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      com.centurylinklabs.watchtower.scope: "wallhub"
+    command: ["--scope", "wallhub", "--label-enable", "--cleanup", "--interval", "21600", "Wallhub"]

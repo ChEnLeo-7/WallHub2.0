@@ -30,6 +30,8 @@ internal static class Program
             return RunSmokeTestAsync(layout, port).GetAwaiter().GetResult();
         }
 
+        if (Environment.GetEnvironmentVariable("WALLHUB_UPDATE_RESTART") != "1" && HandOffInterruptedUpdate(layout)) return 0;
+
         using var context = new LauncherContext(layout, port);
         Application.Run(context);
         return context.ExitCode;
@@ -64,6 +66,86 @@ internal static class Program
             : 3090;
     }
 
+    private static bool HandOffInterruptedUpdate(RuntimeLayout layout)
+    {
+        var transactionFile = Path.Combine(layout.RootDirectory, "updates", "update-transaction.json");
+        if (!File.Exists(layout.UpdateRequestFile))
+        {
+            if (File.Exists(transactionFile))
+            {
+                MessageBox.Show(
+                    "WallHub found a pending update transaction but updates\\update-request.json is missing. Normal startup is disabled; restore the request file or reinstall WallHub.",
+                    "WallHub",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return true;
+            }
+            return false;
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(layout.UpdateRequestFile));
+            var root = document.RootElement;
+            if (root.TryGetProperty("helperPid", out var helperPidValue) && helperPidValue.TryGetInt32(out var helperPid) && helperPid > 1)
+            {
+                try
+                {
+                    using var helper = Process.GetProcessById(helperPid);
+                    var expectedExecutable = root.GetProperty("helperExecutable").GetString();
+                    var actualExecutable = helper.MainModule?.FileName;
+                    var expectedStartToken = root.TryGetProperty("helperIdentity", out var identity) && identity.TryGetProperty("startToken", out var token)
+                        ? token.GetString()
+                        : null;
+                    var actualStartToken = helper.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture);
+                    if (!helper.HasExited && !string.IsNullOrWhiteSpace(expectedExecutable) && !string.IsNullOrWhiteSpace(actualExecutable) &&
+                        !string.IsNullOrWhiteSpace(expectedStartToken) &&
+                        string.Equals(Path.GetFullPath(expectedExecutable), Path.GetFullPath(actualExecutable), StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(expectedStartToken, actualStartToken, StringComparison.Ordinal)) return true;
+                }
+                catch { }
+            }
+
+            if (!File.Exists(transactionFile))
+            {
+                File.Delete(layout.UpdateRequestFile);
+                return false;
+            }
+
+            var helperExecutable = root.GetProperty("helperExecutable").GetString();
+            var helperScript = root.GetProperty("helperScript").GetString();
+            var requestPath = layout.UpdateRequestFile;
+            if (string.IsNullOrWhiteSpace(helperExecutable) || string.IsNullOrWhiteSpace(helperScript) || string.IsNullOrWhiteSpace(requestPath) ||
+                !File.Exists(helperExecutable) || !File.Exists(helperScript) || !File.Exists(requestPath))
+            {
+                throw new InvalidDataException("interrupted update helper files are unavailable");
+            }
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = helperExecutable,
+                WorkingDirectory = Path.GetDirectoryName(helperScript) ?? layout.RootDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add(helperScript);
+            startInfo.ArgumentList.Add(requestPath);
+            startInfo.ArgumentList.Add("--recover");
+            startInfo.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+            var recovery = Process.Start(startInfo);
+            if (recovery is null) throw new InvalidOperationException("could not start interrupted update recovery");
+            return true;
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(
+                $"WallHub could not recover an interrupted update.\n\n{error.Message}\n\nKeep the updates\\backup-previous directory and reinstall WallHub before removing it.",
+                "WallHub",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return true;
+        }
+    }
+
 }
 
 internal sealed class LauncherContext : ApplicationContext
@@ -78,6 +160,7 @@ internal sealed class LauncherContext : ApplicationContext
     private readonly ToolStripMenuItem _restartItem;
     private readonly ToolStripMenuItem _exitItem;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
+    private readonly SynchronizationContext _uiContext;
     private LauncherSettings _settings;
     private bool _exiting;
     private bool _startupScheduled;
@@ -88,6 +171,7 @@ internal sealed class LauncherContext : ApplicationContext
     {
         _layout = layout;
         _port = port;
+        _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         _log = new LauncherLog(layout.LogFile);
         _settings = LauncherSettingsStore.Load(layout.LauncherSettingsFile, _log);
         _host = new WallHubServerHost(layout, port, _log);
@@ -267,15 +351,60 @@ internal sealed class LauncherContext : ApplicationContext
 
     private void OnServerExitedUnexpectedly(int exitCode)
     {
-        if (_exiting) return;
+        _uiContext.Post(_ =>
+        {
+            if (_exiting) return;
+            try
+            {
+                if (HasActiveUpdateRequest())
+                {
+                    _exiting = true;
+                    _log.Write("server exited for a prepared update; closing launcher");
+                    SetStatus(Texts.Updating);
+                    _trayIcon.ShowBalloonTip(5000, "WallHub", Texts.Updating, ToolTipIcon.Info);
+                    _trayIcon.Visible = false;
+                    ExitThread();
+                    return;
+                }
+                SetStatus(Texts.Failed);
+                _trayIcon.ShowBalloonTip(8000, "WallHub", Texts.ServerExited, ToolTipIcon.Error);
+            }
+            catch
+            {
+                // The UI may already be shutting down.
+            }
+        }, null);
+    }
+
+    private bool HasActiveUpdateRequest()
+    {
+        if (!File.Exists(_layout.UpdateRequestFile)) return false;
         try
         {
-            SetStatus(Texts.Failed);
-            _trayIcon.ShowBalloonTip(8000, "WallHub", Texts.ServerExited, ToolTipIcon.Error);
+            using var document = JsonDocument.Parse(File.ReadAllText(_layout.UpdateRequestFile));
+            var root = document.RootElement;
+            if (!root.TryGetProperty("helperPid", out var helperPidValue) || !helperPidValue.TryGetInt32(out var helperPid) || helperPid <= 1)
+            {
+                throw new InvalidDataException("update marker does not contain a valid helper PID");
+            }
+            if (!root.TryGetProperty("requestedAt", out var requestedAtValue) || !requestedAtValue.TryGetInt64(out var requestedAt))
+            {
+                throw new InvalidDataException("update marker does not contain a request time");
+            }
+            var ageMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - requestedAt;
+            if (ageMs < 0 || ageMs > TimeSpan.FromMinutes(15).TotalMilliseconds)
+            {
+                throw new InvalidDataException("update marker is stale");
+            }
+            using var helper = Process.GetProcessById(helperPid);
+            if (helper.HasExited) throw new InvalidDataException("update helper has already exited");
+            return true;
         }
-        catch
+        catch (Exception error)
         {
-            // The UI may already be shutting down.
+            _log.Write($"ignoring invalid update marker: {error.Message}");
+            try { File.Delete(_layout.UpdateRequestFile); } catch { }
+            return false;
         }
     }
 
@@ -495,7 +624,15 @@ internal sealed class WallHubServerHost : IAsyncDisposable
         startInfo.Environment["DOTNET_NOLOGO"] = "1";
         startInfo.Environment["NODE_ENV"] = "production";
         startInfo.Environment["WALLHUB_LAUNCHER"] = "1";
+        startInfo.Environment["WALLHUB_LAUNCHER_PID"] = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+        startInfo.Environment["WALLHUB_PACKAGE_MODE"] = File.Exists(Path.Combine(_layout.RootDirectory, "unins000.exe")) ? "installer" : "portable";
+        startInfo.Environment["WALLHUB_LAUNCHER_PATH"] = Environment.ProcessPath ?? Path.Combine(_layout.RootDirectory, "WallHub.exe");
         startInfo.Environment["PORT"] = _port.ToString(CultureInfo.InvariantCulture);
+        foreach (var key in new[] { "WALLHUB_UPDATE_RESTART", "WALLHUB_UPDATE_HEALTH_TOKEN" })
+        {
+            var value = Environment.GetEnvironmentVariable(key);
+            if (value is not null) startInfo.Environment[key] = value;
+        }
     }
 
     private async Task WaitUntilReadyAsync(Process process, TimeSpan timeout, CancellationToken cancellationToken)
@@ -523,7 +660,10 @@ internal sealed class WallHubServerHost : IAsyncDisposable
         try
         {
             using var response = await _http.GetAsync($"http://127.0.0.1:{_port}/health", cancellationToken);
-            return response.StatusCode == HttpStatusCode.OK;
+            if (response.StatusCode != HttpStatusCode.OK) return false;
+            var expectedToken = Environment.GetEnvironmentVariable("WALLHUB_UPDATE_HEALTH_TOKEN");
+            return string.IsNullOrEmpty(expectedToken) ||
+                response.Headers.TryGetValues("X-WallHub-Health-Token", out var values) && values.Contains(expectedToken, StringComparer.Ordinal);
         }
         catch
         {
@@ -709,7 +849,8 @@ internal sealed record RuntimeLayout(
     string DepotDownloaderExecutable,
     string DepotStreamExecutable,
     string LogFile,
-    string LauncherSettingsFile)
+    string LauncherSettingsFile,
+    string UpdateRequestFile)
 {
     public static RuntimeLayout FromExecutable()
     {
@@ -730,7 +871,8 @@ internal sealed record RuntimeLayout(
             Path.Combine(root, "SteamKit", "DepotDownloader", "DepotDownloader.exe"),
             Path.Combine(root, "SteamKit", "DepotDownloaderStream", "DepotDownloader.exe"),
             Path.Combine(root, "logs", "WallHub.log"),
-            Path.Combine(root, "launcher-settings.json"));
+            Path.Combine(root, "launcher-settings.json"),
+            Path.Combine(root, "updates", "update-request.json"));
     }
 }
 
@@ -866,6 +1008,7 @@ internal static class Texts
     public static string Starting => Chinese ? "WallHub 正在启动" : "WallHub is starting";
     public static string Running => Chinese ? "WallHub 正在运行" : "WallHub is running";
     public static string Restarting => Chinese ? "WallHub 正在重新启动" : "WallHub is restarting";
+    public static string Updating => Chinese ? "WallHub 正在安装更新" : "WallHub is installing an update";
     public static string Stopping => Chinese ? "WallHub 正在退出" : "WallHub is stopping";
     public static string Failed => Chinese ? "WallHub 启动失败" : "WallHub failed";
     public static string StartFailed => Chinese ? "WallHub 无法启动，请查看日志。" : "WallHub could not start. Check the log.";

@@ -48,6 +48,10 @@ function createAppRouter(deps) {
     handleDebug,
     handleServerRuntime,
     handleServerRuntimeDiagnostics,
+    handleServerUpdateStatus,
+    handleServerUpdateCheck,
+    handleServerUpdateDownload,
+    handleServerUpdateInstall,
     handleServerRestart,
     handleServerShutdown,
     handleInternalSteamResolve,
@@ -129,6 +133,10 @@ function createAppRouter(deps) {
     if (pn === '/api/debug') { await handleDebug(res); return true; }
     if (pn === '/api/server/runtime/diagnostics' && methodIs(req, 'GET') && typeof handleServerRuntimeDiagnostics === 'function') { await handleServerRuntimeDiagnostics(req, res); return true; }
     if (pn === '/api/server/runtime' && methodIs(req, 'GET')) { await handleServerRuntime(req, res); return true; }
+    if (pn === '/api/server/update' && methodIs(req, 'GET') && typeof handleServerUpdateStatus === 'function') { await handleServerUpdateStatus(req, res); return true; }
+    if (pn === '/api/server/update/check' && methodIs(req, 'POST') && typeof handleServerUpdateCheck === 'function') { await handleServerUpdateCheck(req, res); return true; }
+    if (pn === '/api/server/update/download' && methodIs(req, 'POST') && typeof handleServerUpdateDownload === 'function') { await handleServerUpdateDownload(req, res); return true; }
+    if (pn === '/api/server/update/install' && methodIs(req, 'POST') && typeof handleServerUpdateInstall === 'function') { await handleServerUpdateInstall(req, res); return true; }
     if (pn === '/api/server/restart' && methodIs(req, 'POST')) { await handleServerRestart(req, res); return true; }
     if (pn === '/api/server/shutdown' && methodIs(req, 'POST')) { await handleServerShutdown(req, res); return true; }
     if (pn === '/api/steam/access/ready' && methodIs(req, 'GET')) { await handleSteamAccessReady(req, res); return true; }
@@ -324,7 +332,12 @@ function createAppRouter(deps) {
     const pn = pathnameFromRequest(req);
 
     try {
-      if (pn === '/health') { send(res, 200, 'ok'); return; }
+      if (pn === '/health') {
+        const healthToken = String(process.env.WALLHUB_UPDATE_HEALTH_TOKEN || '');
+        if (healthToken) res.setHeader('X-WallHub-Health-Token', healthToken);
+        send(res, 200, 'ok');
+        return;
+      }
       if (pn === '/favicon.ico') { res.writeHead(204, { 'Cache-Control': 'public, max-age=604800' }); res.end(); return; }
       if (await handleProxyRoutes(req, res, pn)) return;
       if (await handleApiRoutes(req, res, pn)) return;

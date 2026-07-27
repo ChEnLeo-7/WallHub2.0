@@ -1,4 +1,4 @@
-name: Release Windows packages
+name: Release WallHub
 
 on:
   push:
@@ -18,10 +18,15 @@ on:
 
 permissions:
   contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and publish Windows x64 release
+  artifacts:
+    name: Build and validate release assets
     runs-on: windows-latest
     timeout-minutes: 90
 
@@ -60,6 +65,36 @@ jobs:
           npx tsc --noEmit
           npm run build:windows:installer
           .\build\windows-x64\WallHub\WallHub.exe --smoke-test
+          $portableCheck = Join-Path $env:RUNNER_TEMP 'wallhub-portable-check'
+          if (Test-Path -LiteralPath $portableCheck) { Remove-Item -LiteralPath $portableCheck -Recurse -Force }
+          Expand-Archive -LiteralPath dist/WallHub-Portable-win-x64.zip -DestinationPath $portableCheck
+          foreach ($required in @('package.json', 'server.js', 'public/index.html', 'tools/update/apply-update.js')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $portableCheck $required))) {
+              throw "Portable archive is not rooted at the WallHub application: $required"
+            }
+          }
+
+      - name: Build cross-platform source update package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          npm run build:ui
+          $sourceCheck = Join-Path $env:RUNNER_TEMP 'wallhub-source-check'
+          if (Test-Path -LiteralPath $sourceCheck) { Remove-Item -LiteralPath $sourceCheck -Recurse -Force }
+          $sourceBase = Join-Path $env:RUNNER_TEMP 'wallhub-source-base.zip'
+          git archive --format=zip --output=$sourceBase HEAD
+          Expand-Archive -LiteralPath $sourceBase -DestinationPath $sourceCheck
+          Remove-Item -LiteralPath (Join-Path $sourceCheck 'public') -Recurse -Force
+          Copy-Item -LiteralPath public -Destination (Join-Path $sourceCheck 'public') -Recurse
+          foreach ($required in @('package.json', 'package-lock.json', 'server.js', 'public/index.html', 'tools/update/apply-update.js')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $sourceCheck $required))) {
+              throw "Source archive is missing: $required"
+            }
+          }
+          & node --check (Join-Path $sourceCheck 'server.js')
+          Compress-Archive -Path (Join-Path $sourceCheck '*') -DestinationPath dist/WallHub-Source.zip -CompressionLevel Optimal
+          $hash = (Get-FileHash -LiteralPath dist/WallHub-Source.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  WallHub-Source.zip" | Set-Content -LiteralPath dist/WallHub-Source.zip.sha256 -Encoding ASCII
 
       - name: Validate authored release notes
         shell: pwsh
@@ -85,14 +120,107 @@ jobs:
           }
           Copy-Item -LiteralPath $notesPath -Destination release-notes.md
 
+      - name: Upload validated release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          if-no-files-found: error
+          retention-days: 3
+          path: |
+            dist/WallHub-Portable-win-x64.zip
+            dist/WallHub-Portable-win-x64.zip.sha256
+            dist/WallHub-Setup-win-x64.exe
+            dist/WallHub-Setup-win-x64.exe.sha256
+            dist/WallHub-Source.zip
+            dist/WallHub-Source.zip.sha256
+            release-notes.md
+
+  container:
+    name: Publish multi-platform container
+    needs: artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/chenleo-7/wallhub
+          tags: |
+            type=raw,value=${{ inputs.tag || github.ref_name }}
+            type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' || !inputs.prerelease }}
+
+      - name: Resolve release commit
+        id: commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish amd64 and arm64 images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            WALLHUB_VERSION=${{ inputs.tag || github.ref_name }}
+            WALLHUB_REVISION=${{ steps.commit.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify the release image is publicly pullable
+        shell: bash
+        run: |
+          docker logout ghcr.io
+          if ! docker pull ghcr.io/chenleo-7/wallhub:${{ inputs.tag || github.ref_name }}; then
+            echo "::error::The GHCR package is not public. For the first image publish, set the wallhub package visibility to Public in GitHub Packages, then rerun this workflow."
+            exit 1
+          fi
+
+  publish:
+    name: Publish GitHub release
+    needs: [artifacts, container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Download validated release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: release-files
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           prerelease: ${{ inputs.prerelease || false }}
-          body_path: release-notes.md
+          body_path: release-files/release-notes.md
           files: |
-            dist/WallHub-Portable-win-x64.zip
-            dist/WallHub-Portable-win-x64.zip.sha256
-            dist/WallHub-Setup-win-x64.exe
-            dist/WallHub-Setup-win-x64.exe.sha256
+            release-files/dist/WallHub-Portable-win-x64.zip
+            release-files/dist/WallHub-Portable-win-x64.zip.sha256
+            release-files/dist/WallHub-Setup-win-x64.exe
+            release-files/dist/WallHub-Setup-win-x64.exe.sha256
+            release-files/dist/WallHub-Source.zip
+            release-files/dist/WallHub-Source.zip.sha256
+          fail_on_unmatched_files: true

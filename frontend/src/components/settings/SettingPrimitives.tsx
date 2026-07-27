@@ -49,6 +49,7 @@ function ExperimentalToggle({
         <Button
           className="w-full sm:w-24"
           variant={enabled ? 'default' : 'outline'}
+          aria-pressed={enabled}
           onClick={() => onChange(!enabled)}
         >
           {enabled ? text.enabled : text.disabled}

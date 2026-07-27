@@ -95,7 +95,7 @@ SteamKit JSON 进度下载器和分块在线播放下载器在发布阶段使用
 8. 对比升级及默认卸载前后的设置、下载和 SteamKit 账号测试文件哈希。
 9. 使用 `/PURGEDATA` 卸载并确认设置、Downloads、完整 SteamKit、logs、其他残留文件及安装根目录本身均被删除。
 
-`.github/workflows/windows-package.yml` 自动执行源码门禁、打包和 smoke test，并上传四个交付文件。
+`.github/workflows/release.yml` 自动执行源码门禁、打包和 smoke test，并在版本发布流程中上传交付文件。
 
 ## 当前限制
 

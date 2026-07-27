@@ -20,6 +20,10 @@ function baseDeps(overrides = {}) {
       handleDebug: async () => {},
       handleServerRuntime: async () => {},
       handleServerRuntimeDiagnostics: async () => {},
+      handleServerUpdateStatus: async () => {},
+      handleServerUpdateCheck: async () => {},
+      handleServerUpdateDownload: async () => {},
+      handleServerUpdateInstall: async () => {},
       handleServerRestart: async () => {},
       handleServerShutdown: async () => {},
       handleInternalSteamResolve: async (req, res) => { called.push('internal'); res.statusCode = 200; res.body = 'internal'; },
@@ -69,6 +73,26 @@ function baseDeps(overrides = {}) {
     }, overrides),
   };
 }
+
+test('health keeps the ok body and exposes the updater token only when configured', async () => {
+  const previous = process.env.WALLHUB_UPDATE_HEALTH_TOKEN;
+  process.env.WALLHUB_UPDATE_HEALTH_TOKEN = 'health-test-token';
+  try {
+    const { deps } = baseDeps({
+      send(res, code, body) { res.statusCode = code; res.body = body; },
+    });
+    const router = createAppRouter(deps);
+    const headers = {};
+    const res = { setHeader(name, value) { headers[name] = value; } };
+    await router({ url: '/health' }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body, 'ok');
+    assert.equal(headers['X-WallHub-Health-Token'], 'health-test-token');
+  } finally {
+    if (previous === undefined) delete process.env.WALLHUB_UPDATE_HEALTH_TOKEN;
+    else process.env.WALLHUB_UPDATE_HEALTH_TOKEN = previous;
+  }
+});
 
 test('router dispatches internal Steam resolver before static fallback', async () => {
   const { called, deps } = baseDeps();
@@ -127,6 +151,23 @@ test('router keeps detailed runtime diagnostics out of the lightweight runtime r
   await router({ method: 'GET', url: '/api/server/runtime/diagnostics' }, {});
 
   assert.deepEqual(called, ['runtime', 'diagnostics']);
+});
+
+test('router dispatches update status and actions by method', async () => {
+  const { called, deps } = baseDeps({
+    handleServerUpdateStatus: async () => { called.push('status'); },
+    handleServerUpdateCheck: async () => { called.push('check'); },
+    handleServerUpdateDownload: async () => { called.push('download'); },
+    handleServerUpdateInstall: async () => { called.push('install'); },
+  });
+  const router = createAppRouter(deps);
+
+  await router({ method: 'GET', url: '/api/server/update' }, {});
+  await router({ method: 'POST', url: '/api/server/update/check' }, {});
+  await router({ method: 'POST', url: '/api/server/update/download' }, {});
+  await router({ method: 'POST', url: '/api/server/update/install' }, {});
+
+  assert.deepEqual(called, ['status', 'check', 'download', 'install']);
 });
 
 test('router defers large settings details to their dedicated endpoint', async () => {

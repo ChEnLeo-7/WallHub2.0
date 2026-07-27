@@ -1,6 +1,6 @@
 'use strict';
 /*
-  WallHub server.js v4.3
+  WallHub server.js
   HTTP composition root. Domain and infrastructure details are being moved
   into src/ modules while route behavior remains stable.
 */
@@ -12,7 +12,99 @@ const net    = require('net');
 const fs     = require('fs');
 const path   = require('path');
 const crypto = require('crypto');
+const childProcess = require('child_process');
 const { URL } = require('url');
+
+function readProcessStartToken(pid) {
+  if (!Number.isInteger(pid) || pid <= 1) return '';
+  if (process.platform === 'linux') {
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const closeParen = stat.lastIndexOf(')');
+      const fields = stat.slice(closeParen + 2).trim().split(/\s+/);
+      return String(fields[19] || '');
+    } catch {}
+  }
+  if (process.platform === 'win32') {
+    try {
+      const result = childProcess.spawnSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        `$p=Get-Process -Id ${pid} -ErrorAction Stop; $p.StartTime.ToUniversalTime().Ticks`,
+      ], { encoding: 'utf8', windowsHide: true });
+      if (result.status === 0) return String(result.stdout || '').trim();
+    } catch {}
+  }
+  return '';
+}
+
+function matchesProcessIdentity(pid, identity) {
+  const expected = String(identity && identity.startToken || '');
+  return !!expected && readProcessStartToken(pid) === expected;
+}
+
+function handOffInterruptedSourceUpdate() {
+  if (process.env.WALLHUB_UPDATE_RESTART === '1') return false;
+  const updateRoot = path.join(__dirname, 'updates');
+  const requestFile = path.join(updateRoot, 'update-request.json');
+  const transactionFile = path.join(updateRoot, 'update-transaction.json');
+  if (!fs.existsSync(requestFile)) {
+    if (fs.existsSync(transactionFile)) {
+      console.error('[Update] WallHub found a pending transaction but update-request.json is missing; refusing normal startup. Restore the request file or reinstall WallHub.');
+      return true;
+    }
+    return false;
+  }
+  try {
+    const request = JSON.parse(fs.readFileSync(requestFile, 'utf8'));
+    if (!request || request.mode !== 'source') {
+      if (fs.existsSync(transactionFile)) {
+        console.error('[Update] WallHub found a pending transaction with an invalid update-request.json; refusing normal startup.');
+        return true;
+      }
+      fs.rmSync(requestFile, { force: true });
+      return false;
+    }
+    const requestPath = requestFile;
+    const helperPid = Number(request.helperPid || 0);
+    if (helperPid > 1) {
+      try {
+        process.kill(helperPid, 0);
+        if (matchesProcessIdentity(helperPid, request.helperIdentity)) return true;
+      } catch (error) {
+        if (error && error.code === 'EPERM' && matchesProcessIdentity(helperPid, request.helperIdentity)) return true;
+      }
+    }
+    if (!fs.existsSync(transactionFile)) {
+      fs.rmSync(requestFile, { force: true });
+      return false;
+    }
+    const helperExecutable = String(request.helperExecutable || '');
+    const helperScript = String(request.helperScript || '');
+    if (!fs.existsSync(helperExecutable) || !fs.existsSync(helperScript)) {
+      throw new Error('interrupted update helper files are unavailable');
+    }
+    const recovery = childProcess.spawn(
+      helperExecutable,
+      [helperScript, requestPath, '--recover', String(process.pid)],
+      {
+        cwd: path.dirname(helperScript),
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      },
+    );
+    if (!Number.isInteger(recovery.pid) || recovery.pid <= 1) throw new Error('could not start interrupted update recovery');
+    recovery.unref();
+    return true;
+  } catch (error) {
+    console.error(`[Update] WallHub cannot recover the interrupted source update: ${error.message || error}`);
+    console.error(`[Update] WallHub is refusing normal startup while ${transactionFile} exists. Keep ${path.join(updateRoot, 'backup-previous')} and reinstall WallHub before removing it.`);
+    return true;
+  }
+}
+
+if (handOffInterruptedSourceUpdate()) process.exit(0);
+
 const { getQrCodeModule, getJsQrModule } = require('./src/shared/dependencies');
 const {
   isAsciiPath,
@@ -119,6 +211,8 @@ const { createWorkshopSearchService, mapWorkshopItem, requiresSteamCommunitySess
 const { parseFriendFavoriteSteamIds, buildPersonalSourceLabel } = require('./src/domains/workshop/personalSource');
 const { createWorkshopSubscriptionService } = require('./src/domains/workshop/subscription');
 const { createVideoController } = require('./src/domains/video/controller');
+const { createUpdateService, isUpdateMutationAllowed } = require('./src/domains/updates/service');
+const PACKAGE_JSON = require('./package.json');
 const PORT   = process.env.PORT ? parseInt(process.env.PORT) : 3090;
 const WALLHUB_INTERNAL_RESOLVER_TOKEN = crypto.randomBytes(24).toString('hex');
 process.env.WALLHUB_DEPOT_RESOLVER_URL = `http://127.0.0.1:${PORT}/api/internal/steam/resolve`;
@@ -132,11 +226,14 @@ const IS_SUPERVISOR_CHILD = process.env.WALLHUB_SUPERVISOR_CHILD === '1';
 const PREPARED_DOWNLOAD_STORE = createPreparedDownloadStore();
 const PREPARED_DOWNLOADS = PREPARED_DOWNLOAD_STORE.entries;
 let SERVER_STOPPING = false;
+let UPDATE_INSTALL_PENDING = false;
+let ACTIVE_HTTP_REQUESTS = 0;
 
 // -------------------------------------------------------------------------
 let DOWNLOAD_QUEUE_SERVICE = null;
 let TASK_QUEUE = [];
 let MPKG_PREPARATION_SERVICE = null;
+let REQUEST_UPDATE_SHUTDOWN = null;
 
 const STEAM_CREDENTIALS = { username: '', password: '', steamGuardCode: '', isPersistent: false, pendingPersistentUsername: '' };
 
@@ -203,6 +300,32 @@ function getRuntimeSettings() {
   return RUNTIME_SETTINGS;
 }
 const GITHUB_ACCELERATOR_MODE = String(process.env.WALLHUB_GITHUB_ACCELERATOR || 'auto').trim().toLowerCase();
+const UPDATE_SERVICE = createUpdateService({
+  currentVersion: PACKAGE_JSON.version,
+  projectRoot: PROJECT_ROOT,
+  env: process.env,
+  platform: process.platform,
+  arch: process.arch,
+  supervised: IS_SUPERVISOR_CHILD,
+  logger: console,
+  getAutoUpdateEnabled: () => !!VIDEO_CACHE_SETTINGS.wallhubAutoUpdateEnabled,
+  getProxyUrl: () => String(VIDEO_CACHE_SETTINGS.steamHttpProxyUrl || ''),
+  isInstallSafe: () => {
+    const queueBusy = TASK_QUEUE.some(task => (
+      ['pending', 'downloading', 'moving'].includes(String(task && task.status || '')) ||
+      !!(task && (task.livePaused || task.processPromise || task._runnerActive))
+    ));
+    const conversionBusy = !!(MPKG_PREPARATION_SERVICE && Array.from(MPKG_PREPARATION_SERVICE.jobs.values()).some(job => job.status === 'preparing'));
+    const directConversionBusy = !!(MPKG_SERVICE && MPKG_SERVICE.buildPromises.size > 0);
+    const steamLoginBusy = !!(STEAMKIT_LOGIN_SERVICE && Array.from(STEAMKIT_LOGIN_SERVICE.sessions.values()).some(session => !session.done && session.processPromise));
+    return !queueBusy && !conversionBusy && !directConversionBusy && !steamLoginBusy && ACTIVE_HTTP_REQUESTS === 0;
+  },
+  onInstallStarting: () => { UPDATE_INSTALL_PENDING = true; },
+  onInstallCancelled: () => { UPDATE_INSTALL_PENDING = false; },
+  onInstallPrepared: () => {
+    if (typeof REQUEST_UPDATE_SHUTDOWN === 'function') REQUEST_UPDATE_SHUTDOWN();
+  },
+});
 
 let STEAM_ACCESS_HOSTS_UPDATER = null;
 const STEAM_ACCESS_GATEWAY = createSteamAccessGateway({
@@ -2554,12 +2677,14 @@ async function handleServerRuntime(req, res) {
     workers: getDepotStreamService().workers.size,
     cacheMaxMb: getDepotStreamCacheMaxMb(),
   };
+  const update = UPDATE_SERVICE.snapshot();
   const revision = [
     Number(setup.updatedAt || 0),
     Number(steamCdn.updatedAt || 0),
     Number(steamAccess.updatedAt || 0),
     Number(depotStream.workers || 0),
     depotStream.enabled ? 1 : 0,
+    Number(update.updatedAt || 0),
   ].join(':');
   return jsonRes(res, 200, {
     revision,
@@ -2568,8 +2693,9 @@ async function handleServerRuntime(req, res) {
     docker,
     termux: isTermuxLikeEnv(),
     canRestart: true,
-    canShutdown: true,
+    canShutdown: !docker,
     supervised: IS_SUPERVISOR_CHILD,
+    version: PACKAGE_JSON.version,
     downloaderMode: getDownloaderMode(),
     effectiveDownloader: setup.mode,
     nsfwEnabled: NSFW_ENABLED,
@@ -2585,11 +2711,51 @@ async function handleServerRuntime(req, res) {
     },
     steamAccess,
     depotStream,
+    update,
     runnerDir: setup.runnerDir,
     accountDir: setup.accountDir,
     downloadsDir: DOWNLOADS_DIR,
     steamKitPath: resolveDepotDownloaderPath() || ''
   });
+}
+
+async function handleServerUpdateStatus(req, res) {
+  jsonRes(res, 200, UPDATE_SERVICE.snapshot());
+}
+
+function rejectUntrustedUpdateMutation(req, res) {
+  if (isUpdateMutationAllowed(req)) return false;
+  jsonRes(res, 403, { error: 'Cross-site update requests are not allowed', code: 'UPDATE_ORIGIN_DENIED' });
+  return true;
+}
+
+async function handleServerUpdateCheck(req, res) {
+  if (rejectUntrustedUpdateMutation(req, res)) return;
+  try {
+    const cached = new URL(req.url, 'http://x').searchParams.get('cached') === '1';
+    jsonRes(res, 200, await UPDATE_SERVICE.checkNow(cached ? { maxAgeMs: 5 * 60 * 1000 } : {}));
+  } catch (error) {
+    jsonRes(res, 502, { error: error.message || 'Update check failed', code: error.code || 'UPDATE_CHECK_FAILED' });
+  }
+}
+
+async function handleServerUpdateDownload(req, res) {
+  if (rejectUntrustedUpdateMutation(req, res)) return;
+  try {
+    jsonRes(res, 202, UPDATE_SERVICE.startDownload());
+  } catch (error) {
+    jsonRes(res, 400, { error: error.message || 'Update download failed', code: error.code || 'UPDATE_DOWNLOAD_FAILED' });
+  }
+}
+
+async function handleServerUpdateInstall(req, res) {
+  if (rejectUntrustedUpdateMutation(req, res)) return;
+  try {
+    jsonRes(res, 202, UPDATE_SERVICE.installDownloaded());
+  } catch (error) {
+    const statusCode = error.code === 'UPDATE_BUSY' ? 409 : 400;
+    jsonRes(res, statusCode, { error: error.message || 'Update installation failed', code: error.code || 'UPDATE_INSTALL_FAILED' });
+  }
 }
 
 async function handleServerRuntimeDiagnostics(req, res) {
@@ -2714,6 +2880,7 @@ async function handleVideoCacheSettingsPost(req, res) {
     }
 
     saveCacheSettings();
+    UPDATE_SERVICE.scheduleSoon();
     if (patchResult.steamAccessHostsChanged) STEAM_ACCESS_HOSTS_UPDATER.schedule();
     const steamAccessShouldWarm = !!VIDEO_CACHE_SETTINGS.wallhubSteamAccessEnhance || getRuntimeSettings().steamAccessStaticCdnEnhanceEnabled();
     if (steamAccessShouldWarm) {
@@ -2742,7 +2909,7 @@ async function handleVideoCacheSettingsPost(req, res) {
   }
 }
 
-const handleHttpRequest = createAppRouter({
+const routeHttpRequest = createAppRouter({
   jsonRes,
   send,
   virtualHostParam: WALLHUB_PROXY_VIRTUAL_HOST_PARAM,
@@ -2753,6 +2920,10 @@ const handleHttpRequest = createAppRouter({
   handleDebug,
   handleServerRuntime,
   handleServerRuntimeDiagnostics,
+  handleServerUpdateStatus,
+  handleServerUpdateCheck,
+  handleServerUpdateDownload,
+  handleServerUpdateInstall,
   handleServerRestart,
   handleServerShutdown,
   handleInternalSteamResolve,
@@ -2801,13 +2972,41 @@ const handleHttpRequest = createAppRouter({
   serveStatic,
 });
 
+async function handleHttpRequest(req, res) {
+  let pathname = '/';
+  try { pathname = new URL(req.url, 'http://x').pathname; } catch {}
+  const statusRequest = req.method === 'GET' && ['/health', '/api/server/runtime', '/api/server/update'].includes(pathname);
+  const updateRequest = pathname.startsWith('/api/server/update/');
+  if (UPDATE_INSTALL_PENDING && !statusRequest && !updateRequest) {
+    return jsonRes(res, 503, { error: 'WallHub is preparing to install an update', code: 'UPDATE_INSTALL_PENDING' });
+  }
+  if (statusRequest || updateRequest) return routeHttpRequest(req, res);
+
+  ACTIVE_HTTP_REQUESTS += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    ACTIVE_HTTP_REQUESTS = Math.max(0, ACTIVE_HTTP_REQUESTS - 1);
+  };
+  res.once('finish', release);
+  res.once('close', release);
+  try {
+    return await routeHttpRequest(req, res);
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
 function onHttpListening() {
   // Load cache settings before printing startup information and creating directories.
   loadCacheSettings();
   STEAM_ACCESS_HOSTS_UPDATER.schedule();
+  UPDATE_SERVICE.schedule();
 
   console.log('\n  ===========================================');
-  console.log(`  WallHub v4.3  -  http://localhost:${PORT}`);
+  console.log(`  WallHub v${PACKAGE_JSON.version}  -  http://localhost:${PORT}`);
   console.log('  ===========================================\n');
   console.log(`  public : ${PUBLIC}`);
   console.log(`  debug  : http://localhost:${PORT}/api/debug`);
@@ -2861,3 +3060,4 @@ const { serverLifecycle, isDockerLikeEnv, restartServer, shutdownServer } = star
     return { json, stream };
   },
 });
+REQUEST_UPDATE_SHUTDOWN = () => shutdownServer().catch(error => console.warn('[Update] Shutdown failed:', error.message));

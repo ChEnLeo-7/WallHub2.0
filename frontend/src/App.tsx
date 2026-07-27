@@ -4,6 +4,7 @@ import { ArrowUp, Check, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   backgroundDownload,
+  checkForUpdates,
   clearDepotStreamCache,
   clientDownload,
   getCachedItems,
@@ -19,6 +20,8 @@ import {
   getSubscriptionStatus,
   getSteamStatus,
   logoutSteam,
+  downloadUpdate,
+  installUpdate,
   mpkgConvertOnly,
   mpkgDownload,
   playVideo,
@@ -303,6 +306,7 @@ export default function App() {
   const [settingsForm, setSettingsForm] = React.useState<SettingsForm>({
     steamApiKey: '',
     wallhubLogLevel: 'info',
+    wallhubAutoUpdateEnabled: false,
     mpkgTextureProfile: 'fast',
     downloadDir: '',
     maxConcurrentDownloads: 1,
@@ -381,6 +385,7 @@ export default function App() {
   const queueCompletionNotificationReadyRef = React.useRef(false);
   const visibleRefreshReadyRef = React.useRef(false);
   const runtimeRequestRef = React.useRef<Promise<RuntimeStatus> | null>(null);
+  const runtimeRefreshIdRef = React.useRef(0);
   const runtimeDiagnosticsRequestRef = React.useRef<Promise<void> | null>(null);
   const settingsHostsLoadedRef = React.useRef(false);
   const settingsHostsRequestRef = React.useRef<Promise<void> | null>(null);
@@ -390,6 +395,7 @@ export default function App() {
   const prefetchRequestTokenRef = React.useRef(0);
   const videoCdnToastRef = React.useRef('');
   const steamWebApiToastRef = React.useRef(0);
+  const updateNotificationRef = React.useRef('');
   const pendingSteamActionTimersRef = React.useRef(new Map<string, { interval: number; timeout: number }>());
   const forceRefreshRef = React.useRef(false); // logo 点击强制刷新（跳过后端缓存）
   const backgroundDetailsTokenRef = React.useRef(0);
@@ -413,6 +419,7 @@ export default function App() {
   const effectiveHomeCardDefaultAction = homeCardDefaultAction;
   const detailsDialogOpen = !!selected;
   const runtimeSetupBusy = isRuntimeSetupActive(runtime?.runtimeSetup?.status);
+  const updateBusy = ['checking', 'downloading', 'installing'].includes(String(runtime?.update?.status || ''));
   const resolvedTheme = themeMode === 'system' ? systemTheme : themeMode;
   const selectedItemId = String(selected?.publishedfileid || '');
   const contextMenuItemId = String(wallpaperContextMenu?.item.publishedfileid || '');
@@ -517,8 +524,8 @@ export default function App() {
       }),
     );
   }, [accentTheme, customAccentColor, desktopColumns, detailsPresentation, exactPhrase, filters, fixedPanelHeight, homeCardDefaultAction, homeFilterMultiSelect, homePageSize, language, mobileColumns, prefetchNextPage, resolvedTheme, themeMode, videoPlayerMode, view]);
-  const fetchRuntime = React.useCallback(() => {
-    if (runtimeRequestRef.current) return runtimeRequestRef.current;
+  const fetchRuntime = React.useCallback((fresh = false) => {
+    if (!fresh && runtimeRequestRef.current) return runtimeRequestRef.current;
     const request = getRuntime().finally(() => {
       if (runtimeRequestRef.current === request) runtimeRequestRef.current = null;
     });
@@ -526,9 +533,11 @@ export default function App() {
     return request;
   }, []);
 
-  const refreshRuntime = React.useCallback(async () => {
+  const refreshRuntime = React.useCallback(async (fresh = false) => {
+    const refreshId = ++runtimeRefreshIdRef.current;
     try {
-      const data = await fetchRuntime();
+      const data = await fetchRuntime(fresh);
+      if (refreshId !== runtimeRefreshIdRef.current) return;
       setRuntime((current) => (current?.revision === data.revision ? current : data));
       setFilters((current) => {
         const ratings = normalizeRatings(current.ratings, !!data.nsfwEnabled, undefined, current.rating);
@@ -573,15 +582,31 @@ export default function App() {
   }, [refreshRuntime, refreshSteamStatus]);
 
   React.useEffect(() => {
+    checkForUpdates({ cached: true })
+      .then(() => refreshRuntime(true))
+      .catch((error) => {
+        console.warn('[update-check]', error);
+        return refreshRuntime(true);
+      });
+  }, [refreshRuntime]);
+
+  React.useEffect(() => {
+    const latestVersion = runtime?.update?.updateAvailable ? String(runtime.update.latestVersion || '') : '';
+    if (!latestVersion || updateNotificationRef.current === latestVersion) return;
+    updateNotificationRef.current = latestVersion;
+    toast(text.updateAvailableToast.replace('{version}', latestVersion), 'info', 6000);
+  }, [runtime?.update?.latestVersion, runtime?.update?.updateAvailable, text.updateAvailableToast, toast]);
+
+  React.useEffect(() => {
     if (!pageVisible) return;
-    if (!settingsOpen && !runtimeSetupBusy) return;
-    const intervalMs = runtimeSetupBusy || activeTasks ? 1000 : 15000;
+    if (!settingsOpen && !runtimeSetupBusy && !updateBusy) return;
+    const intervalMs = runtimeSetupBusy || updateBusy || activeTasks ? 1000 : 15000;
     const timer = window.setInterval(() => {
       refreshRuntime();
       if (settingsOpen) refreshSteamStatus();
     }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [activeTasks, pageVisible, refreshRuntime, refreshSteamStatus, runtimeSetupBusy, settingsOpen]);
+  }, [activeTasks, pageVisible, refreshRuntime, refreshSteamStatus, runtimeSetupBusy, settingsOpen, updateBusy]);
 
   React.useEffect(() => {
     if (!pageVisible || !settingsOpen) return;
@@ -624,6 +649,7 @@ export default function App() {
         setSettingsForm({
           steamApiKey: String(data.steamApiKey || ''),
           wallhubLogLevel: normalizeWallhubLogLevel(data.wallhubLogLevel),
+          wallhubAutoUpdateEnabled: !!data.wallhubAutoUpdateEnabled,
           mpkgTextureProfile: data.mpkgCompactAvailable === true && data.mpkgTextureProfile === 'compact' ? 'compact' : 'fast',
           downloadDir: data.downloadDir || '',
           maxConcurrentDownloads: normalizeConcurrentDownloads(data.maxConcurrentDownloads),
@@ -1581,10 +1607,21 @@ export default function App() {
         Object.prototype.hasOwnProperty.call(patch, 'steamApiKey')
       );
       setSettingsForm((current) => ({
+        ...(patch ? (() => {
+          const patched = { ...current };
+          const response = data as unknown as Record<string, unknown>;
+          for (const key of Object.keys(patch)) {
+            (patched as unknown as Record<string, unknown>)[key] = response[key] ?? (patch as unknown as Record<string, unknown>)[key];
+          }
+          patched.effectiveSteamKitMaxDownloads = normalizeSteamKitMaxDownloads(data.effectiveSteamKitMaxDownloads ?? patched.effectiveSteamKitMaxDownloads);
+          return patched;
+        })() : current),
+        ...(!patch ? {
         ...current,
         ...nextSettings,
         steamApiKey: String(data.steamApiKey ?? nextSettings.steamApiKey ?? current.steamApiKey),
         wallhubLogLevel: normalizeWallhubLogLevel(data.wallhubLogLevel ?? nextSettings.wallhubLogLevel),
+        wallhubAutoUpdateEnabled: !!(data.wallhubAutoUpdateEnabled ?? nextSettings.wallhubAutoUpdateEnabled),
         mpkgTextureProfile: data.mpkgCompactAvailable === true && data.mpkgTextureProfile === 'compact' ? 'compact' : 'fast',
         downloadDir: data.downloadDir || nextSettings.downloadDir || current.downloadDir,
         maxConcurrentDownloads: normalizeConcurrentDownloads(data.maxConcurrentDownloads ?? nextSettings.maxConcurrentDownloads),
@@ -1626,6 +1663,7 @@ export default function App() {
         wallhubSteamAccessStaticCdnEnhance: !!(data.wallhubSteamAccessStaticCdnEnhance ?? nextSettings.wallhubSteamAccessStaticCdnEnhance),
         wallhubSteamAccessStaticCdnHosts: normalizeStaticCdnHostControls(data.wallhubSteamAccessStaticCdnHosts ?? nextSettings.wallhubSteamAccessStaticCdnHosts),
         depotStreamCacheMaxMb: normalizeDepotStreamCacheMaxMb(data.depotStreamCacheMaxMb ?? nextSettings.depotStreamCacheMaxMb),
+        } : {}),
       }));
       if (queryModeChanged) {
         queryCacheRef.current.clear();
@@ -1657,6 +1695,43 @@ export default function App() {
     refreshRuntimeDiagnostics();
     loadSettingsDetails();
     refreshSteamStatus();
+  };
+
+  const doCheckUpdate = async () => {
+    try {
+      const result = await checkForUpdates();
+      updateNotificationRef.current = result.updateAvailable ? String(result.latestVersion || '') : '';
+      toast(result.updateAvailable
+        ? text.updateAvailableToast.replace('{version}', String(result.latestVersion || ''))
+        : text.updateStatusCurrent, result.updateAvailable ? 'info' : 'ok');
+      await refreshRuntime(true);
+    } catch (error) {
+      toast(text.updateCheckFailed, 'warn');
+      await refreshRuntime(true);
+    }
+  };
+
+  const doDownloadUpdate = async () => {
+    try {
+      await downloadUpdate();
+      toast(text.updateDownloadStarted, 'info');
+      await refreshRuntime(true);
+    } catch (error) {
+      toast(text.updateDownloadFailed, 'warn');
+      await refreshRuntime(true);
+    }
+  };
+
+  const doInstallUpdate = async () => {
+    if (!window.confirm(text.updateInstallConfirm)) return;
+    try {
+      await installUpdate();
+      toast(text.updateStatusInstalling, 'ok', 8000);
+      await refreshRuntime(true);
+    } catch (error) {
+      toast(text.updateInstallFailed, 'warn');
+      await refreshRuntime(true);
+    }
   };
 
   const doMpkgConvertOnly = async (item: WorkshopItem) => {
@@ -2032,6 +2107,9 @@ export default function App() {
           loginPromptRef.current = { lastAt: 0, lastKey: '' };
           toast(text.loggedOut, 'ok');
         }}
+        onCheckUpdate={doCheckUpdate}
+        onDownloadUpdate={doDownloadUpdate}
+        onInstallUpdate={doInstallUpdate}
         onRestart={async () => {
           const data = await restartServer();
           toast(data.message || text.restartingServer, 'ok');

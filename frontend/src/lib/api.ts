@@ -67,9 +67,14 @@ export type WorkshopQueryResult = {
 
 export type RuntimeStatus = {
   revision?: string;
+  version?: string;
   platform: string;
   arch: string;
+  docker?: boolean;
   termux: boolean;
+  canRestart?: boolean;
+  canShutdown?: boolean;
+  supervised?: boolean;
   downloaderMode: string;
   effectiveDownloader: string;
   nsfwEnabled: boolean;
@@ -84,6 +89,7 @@ export type RuntimeStatus = {
     requestedMode?: string;
     mode?: string;
   };
+  update?: UpdateStatus;
   steamCdn?: {
     currentHost?: string;
     currentVHost?: string;
@@ -207,6 +213,30 @@ export type RuntimeStatus = {
   };
 };
 
+export type UpdateStatus = {
+  currentVersion: string;
+  latestVersion?: string;
+  status: 'idle' | 'checking' | 'up-to-date' | 'available' | 'unsupported' | 'downloading' | 'downloaded' | 'installing' | 'error' | string;
+  progress?: number;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  updateAvailable?: boolean;
+  checkedAt?: number;
+  updatedAt?: number;
+  releaseUrl?: string;
+  releaseNotes?: string;
+  mode?: 'docker' | 'portable' | 'source' | string;
+  platform?: string;
+  arch?: string;
+  canDownload?: boolean;
+  canInstall?: boolean;
+  autoUpdateEnabled?: boolean;
+  dockerAutoUpdate?: boolean;
+  assetName?: string;
+  error?: string;
+  errorCode?: string;
+};
+
 export type RuntimeDiagnostics = {
   revision?: string;
   generatedAt?: number;
@@ -282,6 +312,7 @@ export type SteamAccessStaticCdnHostControl = {
 export type CacheSettings = {
   steamApiKey?: string;
   wallhubLogLevel?: 'info' | 'debug';
+  wallhubAutoUpdateEnabled?: boolean;
   mpkgTextureProfile?: 'fast' | 'compact';
   mpkgCompactAvailable?: boolean;
   mpkgCompactUnavailableReason?: string;
@@ -453,6 +484,22 @@ export async function getRuntime() {
 export async function getRuntimeDiagnostics() {
   const res = await fetch('/api/server/runtime/diagnostics', { cache: 'no-store' });
   return parseJson<RuntimeDiagnostics>(res);
+}
+
+export async function checkForUpdates(options: { cached?: boolean } = {}) {
+  const suffix = options.cached ? '?cached=1' : '';
+  const res = await fetch(`/api/server/update/check${suffix}`, { method: 'POST' });
+  return parseJson<UpdateStatus>(res);
+}
+
+export async function downloadUpdate() {
+  const res = await fetch('/api/server/update/download', { method: 'POST' });
+  return parseJson<UpdateStatus>(res);
+}
+
+export async function installUpdate() {
+  const res = await fetch('/api/server/update/install', { method: 'POST' });
+  return parseJson<UpdateStatus>(res);
 }
 
 export async function getQueue() {

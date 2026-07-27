@@ -5,6 +5,9 @@ WALLHUB_UID="${WALLHUB_UID:-10001}"
 WALLHUB_GID="${WALLHUB_GID:-10001}"
 WALLHUB_STEAMCOMMUNITY_302_DIR="${WALLHUB_STEAMCOMMUNITY_302_DIR:-/opt/steamcommunity_302}"
 
+case "$WALLHUB_UID" in ''|0|*[!0-9]*) echo "WALLHUB_UID must be a non-root numeric ID" >&2; exit 1 ;; esac
+case "$WALLHUB_GID" in ''|0|*[!0-9]*) echo "WALLHUB_GID must be a non-root numeric ID" >&2; exit 1 ;; esac
+
 # Bind mounts hide the ownership created during image build, so runtime data
 # directories must be prepared after Docker has mounted /data.
 mkdir -p /data/SteamKit /data/Downloads /home/wallhub
@@ -80,11 +83,10 @@ ensure_directory_owner() {
 
 if [ "$(id -u)" = "0" ]; then
   ensure_directory_owner /data
+  ensure_directory_owner /data/SteamKit
+  ensure_directory_owner /data/Downloads
   ensure_directory_owner /home/wallhub
   start_steamcommunity_302
-  if [ "$WALLHUB_UID" = "0" ]; then
-    exec "$@"
-  fi
   exec gosu "$WALLHUB_UID:$WALLHUB_GID" "$@"
 fi
 

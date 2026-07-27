@@ -18,6 +18,8 @@
 !tools/
 !tools/mpkg/
 !tools/mpkg/**
+!tools/update/
+!tools/update/**
 
 # Development and generated files inside otherwise included directories.
 **/node_modules/

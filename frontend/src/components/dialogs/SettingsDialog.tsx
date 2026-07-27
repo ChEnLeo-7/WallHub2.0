@@ -95,6 +95,7 @@ export type SteamAccessStaticCdnHostControl = {
 export type SettingsForm = {
   steamApiKey: string;
   wallhubLogLevel: 'info' | 'debug';
+  wallhubAutoUpdateEnabled: boolean;
   mpkgTextureProfile: 'fast' | 'compact';
   downloadDir: string;
   maxConcurrentDownloads: number;
@@ -188,6 +189,9 @@ export function SettingsDialog({
   onClearDepotStreamCache,
   onLogin,
   onLogout,
+  onCheckUpdate,
+  onDownloadUpdate,
+  onInstallUpdate,
   onRestart,
   onShutdown,
 }: {
@@ -232,6 +236,9 @@ export function SettingsDialog({
   onClearDepotStreamCache: () => void;
   onLogin: () => void;
   onLogout: () => void;
+  onCheckUpdate: () => void;
+  onDownloadUpdate: () => void;
+  onInstallUpdate: () => void;
   onRestart: () => void;
   onShutdown: () => void;
 }) {
@@ -248,10 +255,25 @@ export function SettingsDialog({
   const [depotStreamCacheCustomInput, setDepotStreamCacheCustomInput] = React.useState('');
   const [customAccentColorDraft, setCustomAccentColorDraft] = React.useState(customAccentColor);
   const setup = runtime?.runtimeSetup;
+  const update = runtime?.update;
   React.useEffect(() => {
     if (!open) setCustomAccentColorDraft(customAccentColor);
   }, [customAccentColor, open]);
   const text = useText();
+  const updateBusy = ['checking', 'downloading', 'installing'].includes(String(update?.status || ''));
+  const updateStatusLabel = (() => {
+    switch (update?.status) {
+      case 'checking': return text.updateStatusChecking;
+      case 'up-to-date': return text.updateStatusCurrent;
+      case 'available': return text.updateStatusAvailable;
+      case 'unsupported': return text.updateStatusUnsupported;
+      case 'downloading': return text.updateStatusDownloading;
+      case 'downloaded': return text.updateStatusDownloaded;
+      case 'installing': return text.updateStatusInstalling;
+      case 'error': return text.updateStatusError;
+      default: return text.updateStatusIdle;
+    }
+  })();
   const depotStreamCachePresetValues = [512, 1024, 2048, 3072, 4096, 5120, 6144, 7168, 8192];
   const depotStreamCacheIsPreset = depotStreamCachePresetValues.includes(settings.depotStreamCacheMaxMb);
   const depotStreamCacheSelectValue = depotStreamCacheCustomMode || !depotStreamCacheIsPreset ? 'custom' : String(settings.depotStreamCacheMaxMb);
@@ -539,16 +561,83 @@ export function SettingsDialog({
               </section>
 
               <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+                <h4 className="flex items-center gap-2 text-sm font-semibold">
+                  <Download className="h-4 w-4" />
+                  {text.appUpdate}
+                </h4>
+                <InfoRow label={text.currentVersion} value={`v${update?.currentVersion || runtime?.version || '-'}`} />
+                <InfoRow label={text.latestVersion} value={update?.latestVersion ? `v${update.latestVersion}` : '-'} />
+                <InfoRow label={text.updateStatus} value={updateStatusLabel} />
+                {updateBusy ? (
+                  <Progress value={Number(update?.progress || 0)} indeterminate={update?.status === 'checking'} />
+                ) : null}
+                {update?.status === 'downloading' && Number(update.totalBytes || 0) > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {Math.min(100, Math.max(0, Number(update.progress || 0)))}% · {update.assetName || ''}
+                  </p>
+                ) : null}
+                {update?.error ? (
+                  <p className="text-sm text-destructive" role="status">
+                    {text.updateStatusError}{update.errorCode ? ` (${update.errorCode})` : ''}
+                  </p>
+                ) : null}
+                {runtime?.docker ? (
+                  <p className="text-sm text-muted-foreground">
+                    {update?.dockerAutoUpdate ? text.dockerUpdateManaged : text.dockerUpdateManual}
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap justify-end gap-2">
+                  {update?.releaseUrl ? (
+                    <Button variant="outline" onClick={() => window.open(update.releaseUrl, '_blank', 'noopener,noreferrer')}>
+                      <ExternalLink className="h-4 w-4" />
+                      {text.viewRelease}
+                    </Button>
+                  ) : null}
+                  <Button variant="outline" disabled={updateBusy} onClick={onCheckUpdate}>
+                    <RefreshCw className={cn('h-4 w-4', update?.status === 'checking' && 'animate-spin')} />
+                    {text.checkUpdate}
+                  </Button>
+                  {runtime && !runtime.docker && update?.updateAvailable && update?.canDownload ? (
+                    <Button disabled={updateBusy} onClick={onDownloadUpdate}>
+                      <Download className="h-4 w-4" />
+                      {text.downloadUpdate}
+                    </Button>
+                  ) : null}
+                  {runtime && !runtime.docker && update?.canInstall ? (
+                    <Button disabled={updateBusy} onClick={onInstallUpdate}>
+                      <ChevronsRight className="h-4 w-4" />
+                      {text.installUpdate}
+                    </Button>
+                  ) : null}
+                </div>
+              </section>
+
+              {runtime && !runtime.docker ? (
+                <ExperimentalToggle
+                  icon={RefreshCw}
+                  title={text.autoUpdate}
+                  description={text.autoUpdateDesc}
+                  enabled={settings.wallhubAutoUpdateEnabled}
+                  onChange={(enabled) => {
+                    setSettings((current) => ({ ...current, wallhubAutoUpdateEnabled: enabled }));
+                    onSave({ wallhubAutoUpdateEnabled: enabled });
+                  }}
+                />
+              ) : null}
+
+              <section className="space-y-3 rounded-xl border border-border bg-card p-4">
                 <h4 className="text-sm font-semibold">{text.serverControl}</h4>
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button className="w-full sm:w-36" variant="outline" onClick={onRestart}>
                     <RefreshCw className="h-4 w-4" />
                     {text.restartServer}
                   </Button>
-                  <Button className="w-full sm:w-36" variant="destructive" onClick={onShutdown}>
-                    <Power className="h-4 w-4" />
-                    {text.shutdownServer}
-                  </Button>
+                  {runtime?.canShutdown !== false ? (
+                    <Button className="w-full sm:w-36" variant="destructive" onClick={onShutdown}>
+                      <Power className="h-4 w-4" />
+                      {text.shutdownServer}
+                    </Button>
+                  ) : null}
                 </div>
               </section>
             </motion.div>

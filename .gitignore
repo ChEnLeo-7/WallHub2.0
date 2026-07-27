@@ -3,6 +3,9 @@
 /.claude/
 /.codex/
 /.hermes/
+/.opencode/skills/wallhub-web-release/
+/AGENTS.md
+/progress.md
 /NuGet/
 
 # Installed dependencies and generated build output
@@ -26,6 +29,7 @@ __pycache__/
 /docker-data/
 /Steamcommunity_302/
 /dumps/
+/updates/
 /tools/DepotDownloader/
 /tools/depotdownloader/
 

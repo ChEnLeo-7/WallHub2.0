@@ -2,7 +2,13 @@ import { cn } from '@/lib/utils';
 
 export function Progress({ value = 0, className, indeterminate }: { value?: number; className?: string; indeterminate?: boolean }) {
   return (
-    <div className={cn('h-2 w-full overflow-hidden rounded-full bg-input/30', className)}>
+    <div
+      className={cn('h-2 w-full overflow-hidden rounded-full bg-input/30', className)}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={indeterminate ? undefined : Math.max(0, Math.min(100, value))}
+    >
       {indeterminate ? (
         <div className="h-full w-1/3 animate-progress-indeterminate rounded-full bg-primary" />
       ) : (

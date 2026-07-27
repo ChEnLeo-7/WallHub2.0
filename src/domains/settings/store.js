@@ -70,6 +70,7 @@ function createCacheSettingsStore(options = {}) {
     return Object.assign({
       steamApiKey: state.steamApiKey || '',
       wallhubLogLevel: state.wallhubLogLevel || DEFAULT_CACHE_SETTINGS.wallhubLogLevel,
+      wallhubAutoUpdateEnabled: !!state.wallhubAutoUpdateEnabled,
       mpkgTextureProfile: state.mpkgTextureProfile || DEFAULT_CACHE_SETTINGS.mpkgTextureProfile,
       downloadDir: get('downloadDir', state.downloadDir || ''),
       maxConcurrentDownloads: get('maxConcurrentDownloads', state.maxConcurrentDownloads),

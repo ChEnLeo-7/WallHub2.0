@@ -1,6 +1,6 @@
 {
   "name": "wallpaper-engine-download-web",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "description": "Local web app for browsing, downloading, and playing Wallpaper Engine Workshop items",
   "scripts": {

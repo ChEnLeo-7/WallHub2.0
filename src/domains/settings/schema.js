@@ -37,6 +37,7 @@ const DEFAULT_STEAM_ACCESS_STATIC_CDN_HOSTS = Object.freeze({
 const DEFAULT_CACHE_SETTINGS = {
   steamApiKey: '',
   wallhubLogLevel: 'info',
+  wallhubAutoUpdateEnabled: false,
   mpkgTextureProfile: 'fast',
   downloadDir: '',
   maxConcurrentDownloads: 1,
@@ -316,6 +317,7 @@ function normalizeLoadedCacheSettings(settings, options = {}) {
   const next = Object.assign({}, DEFAULT_CACHE_SETTINGS, settings || {});
   next.steamApiKey = String(next.steamApiKey || '').trim();
   next.wallhubLogLevel = normalizeWallhubLogLevel(next.wallhubLogLevel);
+  next.wallhubAutoUpdateEnabled = !!next.wallhubAutoUpdateEnabled;
   next.mpkgTextureProfile = normalizeMpkgTextureProfile(next.mpkgTextureProfile);
   delete next.mpkgMaxConcurrentBuilds;
   next.maxConcurrentDownloads = maxConcurrentDownloads(next);
@@ -396,6 +398,8 @@ function applyCacheSettingsPatch(settings, data, options = {}) {
 
   if (has('wallhubLogLevel')) next.wallhubLogLevel = normalizeWallhubLogLevel(data.wallhubLogLevel);
   else next.wallhubLogLevel = normalizeWallhubLogLevel(next.wallhubLogLevel);
+  if (has('wallhubAutoUpdateEnabled')) next.wallhubAutoUpdateEnabled = !!data.wallhubAutoUpdateEnabled;
+  else next.wallhubAutoUpdateEnabled = !!next.wallhubAutoUpdateEnabled;
   if (has('mpkgTextureProfile')) next.mpkgTextureProfile = normalizeMpkgTextureProfile(data.mpkgTextureProfile);
   else next.mpkgTextureProfile = normalizeMpkgTextureProfile(next.mpkgTextureProfile);
   delete next.mpkgMaxConcurrentBuilds;

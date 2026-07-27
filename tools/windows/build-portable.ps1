@@ -230,6 +230,9 @@ function Copy-ApplicationSources {
     foreach ($file in @("mobile_mpkg.py", "wallpaper_engine_toolkit.py", "requirements.txt")) {
         Copy-Item -LiteralPath (Join-Path $RepoRoot "tools\mpkg\$file") -Destination $mpkgDir
     }
+    $updateDir = Join-Path $StageDir "tools\update"
+    New-Item -ItemType Directory -Path $updateDir -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $RepoRoot "tools\update\apply-update.js") -Destination $updateDir
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "PORTABLE-README.zh-CN.txt") -Destination (Join-Path $StageDir "README-Windows.txt")
 }
 
@@ -467,7 +470,7 @@ if (-not $SkipArchive) {
     Write-Step "Creating Portable ZIP"
     $archive = Join-Path $DistDir "WallHub-Portable-win-$Architecture.zip"
     if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
-    Compress-Archive -LiteralPath $StageDir -DestinationPath $archive -CompressionLevel Optimal
+    Compress-Archive -Path (Join-Path $StageDir '*') -DestinationPath $archive -CompressionLevel Optimal
     $hash = Get-Sha256 $archive
     "$hash  $([IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath "$archive.sha256" -Encoding ASCII
     Write-Host "Portable archive: $archive"

@@ -50,10 +50,13 @@ RUN node server.js --build-depot-runtime \
 FROM mcr.microsoft.com/dotnet/runtime:9.0-bookworm-slim
 
 ARG TARGETARCH
+ARG WALLHUB_VERSION=dev
+ARG WALLHUB_REVISION=unknown
 ARG WALLHUB_UID=10001
 ARG WALLHUB_GID=10001
 
 ENV NODE_ENV=production \
+    WALLHUB_VERSION=${WALLHUB_VERSION} \
     PATH=/opt/wallhub-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     PYTHON=/opt/wallhub-python/bin/python \
     PYTHON3=/opt/wallhub-python/bin/python3 \
@@ -76,6 +79,12 @@ ENV NODE_ENV=production \
     WALLHUB_DEPOT_XDG_CONFIG_HOME=/data/SteamKit/account/xdg-config \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+
+LABEL org.opencontainers.image.title="WallHub" \
+      org.opencontainers.image.description="Local web app for Wallpaper Engine Workshop content" \
+      org.opencontainers.image.source="https://github.com/ChEnLeo-7/WallHub2.0" \
+      org.opencontainers.image.version="${WALLHUB_VERSION}" \
+      org.opencontainers.image.revision="${WALLHUB_REVISION}"
 
 WORKDIR /app
 
@@ -126,6 +135,7 @@ COPY --from=depot-build --chown=wallhub:wallhub /app/server.js ./server.js
 COPY --from=depot-build --chown=wallhub:wallhub /app/src ./src
 COPY --from=frontend-build --chown=wallhub:wallhub /app/public ./public
 COPY --from=depot-build --chown=wallhub:wallhub /app/tools/mpkg ./tools/mpkg
+COPY --chown=wallhub:wallhub tools/update ./tools/update
 COPY --from=depot-build --chown=wallhub:wallhub /opt/wallhub-depot/DepotDownloader /opt/wallhub-depot/DepotDownloader
 COPY --from=depot-build --chown=wallhub:wallhub /opt/wallhub-depot/DepotDownloaderStream /opt/wallhub-depot/DepotDownloaderStream
 
@@ -135,7 +145,8 @@ RUN rm -f /app/cache-settings.json \
     && chown -h wallhub:wallhub /app/cache-settings.json
 
 COPY --chown=root:root docker-entrypoint.sh /usr/local/bin/wallhub-entrypoint
-RUN chmod +x /usr/local/bin/wallhub-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/wallhub-entrypoint \
+    && chmod +x /usr/local/bin/wallhub-entrypoint
 
 EXPOSE 3090
 
