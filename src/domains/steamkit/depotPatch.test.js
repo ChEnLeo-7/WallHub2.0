@@ -289,6 +289,7 @@ test('patchDepotDownloaderForJsonProgress tolerates reordered Steam3Session usin
     assert.match(program, /WALLHUB_DEPOT_BOOTSTRAP:main/);
     assert.equal((program.match(/WALLHUB_DEPOT_BOOTSTRAP:main/g) || []).length, 1);
     assert.match(program, /wallHubUserFilesType = GetParameter\(args, "-wallhub-user-files", string\.Empty\)/);
+    assert.match(program, /wallHubUserFilesSort = GetParameter\(args, "-wallhub-user-files-sort", "lastupdated"\)/);
     assert.match(program, /WALLHUB_STEAM_USER_FILES:/);
     assert.match(program, /WallHubGetUserFilesJsonAsync\(wallHubUserFilesAppId/);
     assert.match(program, /wallHubQueryBridge = HasParameter\(args, "-wallhub-query-bridge"\)/);
@@ -299,9 +300,14 @@ test('patchDepotDownloaderForJsonProgress tolerates reordered Steam3Session usin
     assert.match(program, /using System\.Text\.Json;/);
     assert.match(steam3Session, /WallHubGetUserFilesJsonAsync/);
     assert.match(steam3Session, /CPublishedFile_GetUserFiles_Request/);
+    assert.match(steam3Session, /supportedSortMethods = new\[\] \{ "subscriptiondate", "alpha", "lastupdated", "creationorder" \}/);
+    assert.match(steam3Session, /sortmethod = safeSortMethod/);
     assert.doesNotMatch(steam3Session, /QueryFiles|WallHubQuery/);
     assert.match(steam3Session, /var response = await steamPublishedFile\.GetUserFiles\(request\);/);
     assert.match(steam3Session, /publishedfiledetails = details/);
+    const accountStore = fs.readFileSync(path.join(dir, 'AccountSettingsStore.cs'), 'utf8');
+    assert.match(accountStore, /File\.Open\(filePath, FileMode\.Open, FileAccess\.Read, FileShare\.Read\)/);
+    assert.doesNotMatch(accountStore, /File\.Open\(filePath, FileMode\.Open, FileAccess\.Read\)(?!,)/);
     assert.doesNotMatch(steam3Session, /steamPublishedFile\.GetUserFiles\(request\)\.ConfigureAwait\(false\)/);
     assert.match(steam3Session, /type != "mysubscriptions" && type != "myfavorites"/);
     assert.match(steam3Session, /socket\?\.Dispose\(\)/);

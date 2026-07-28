@@ -4,6 +4,7 @@ const { CONTENT_RATING_TAGS, WORKSHOP_TYPE_TAGS, collectArrayLikeParams } = requ
 const { parseWorkshopBrowseHtml } = require('./parse');
 
 const COMMUNITY_SORT_MAP = { 0: 'toprated', 1: 'trend', 2: 'mostrecent', 11: 'mostvotes', 16: 'totaluniquesubscribers' };
+const PERSONAL_SORT_METHODS = new Set(['subscriptiondate', 'alpha', 'lastupdated', 'creationorder']);
 const DEFAULT_COMMUNITY_PAGE_TIMEOUT_MS = Math.max(8000, parseInt(process.env.WALLHUB_COMMUNITY_PAGE_TIMEOUT_MS || '22000', 10) || 22000);
 const COMMUNITY_TRANSIENT_RETRIES = Math.max(0, Math.min(2, parseInt(process.env.WALLHUB_COMMUNITY_TRANSIENT_RETRIES || '1', 10) || 0));
 
@@ -30,6 +31,11 @@ function normalizeCommunityTagList(values = []) {
 function normalizeSteamId(value) {
   const id = String(value || '').replace(/[^\d]/g, '');
   return /^7656119\d{10}$/.test(id) ? id : '';
+}
+
+function normalizePersonalSortMethod(value) {
+  const method = String(value || '').trim().toLowerCase();
+  return PERSONAL_SORT_METHODS.has(method) ? method : 'lastupdated';
 }
 
 function isAbortError(error) {
@@ -84,6 +90,7 @@ function buildCommunityWorkshopBrowseUrl(params = {}) {
   const appId = parseInt(params.appid, 10) || 431960;
   const pathMode = String(params.path || '').trim().toLowerCase();
   const requestedSort = String(params.actualsort || params.browsesort || '').trim().toLowerCase();
+  const personalSort = normalizePersonalSortMethod(params.sortmethod);
   if (params.creator) {
     return `https://steamcommunity.com/profiles/${encodeURIComponent(String(params.creator))}/myworkshopfiles/?appid=${appId}&p=${page}&numperpage=${pageSize}`;
   }
@@ -94,6 +101,7 @@ function buildCommunityWorkshopBrowseUrl(params = {}) {
     search.set('numperpage', String(pageSize));
     const browseFilter = String(params.browsefilter || (requestedSort === 'mysubscriptions' ? 'mysubscriptions' : '')).trim();
     if (browseFilter) search.set('browsefilter', browseFilter);
+    search.set('sortmethod', personalSort);
     normalizeCommunityTagList((params.tags || []).concat(collectArrayLikeParams(params, 'requiredtags')))
       .forEach(tag => search.append('requiredtags[]', tag));
     const steamId = normalizeSteamId(params.steamid || params.profileSteamId);
@@ -108,7 +116,7 @@ function buildCommunityWorkshopBrowseUrl(params = {}) {
     return `https://steamcommunity.com/sharedfiles/votingqueue/?${search.toString()}`;
   }
 
-  const sort = requestedSort || COMMUNITY_SORT_MAP[parseInt(params.query_type, 10)] || 'trend';
+  const sort = params.sortmethod ? personalSort : requestedSort || COMMUNITY_SORT_MAP[parseInt(params.query_type, 10)] || 'trend';
   const search = new URLSearchParams();
   search.set('appid', String(appId));
   search.set('browsesort', sort);
@@ -385,4 +393,5 @@ module.exports = {
   steamApiServiceUrl,
   queryWorkshopBySteamApi,
   normalizeSteamId,
+  normalizePersonalSortMethod,
 };

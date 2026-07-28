@@ -66,6 +66,7 @@ test('SteamKit query bridge starts one process for GetUserFiles', async () => {
     appId: 431960,
     page: 2,
     numperpage: 30,
+    sortmethod: 'creationorder',
   });
   await waitFor(() => spawned.length === 1);
   child.stdout.write(`${WALLHUB_STEAM_QUERY_BRIDGE_READY}\n`);
@@ -74,6 +75,7 @@ test('SteamKit query bridge starts one process for GetUserFiles', async () => {
   assert.equal(userFilesRequest.operation, 'user-files');
   assert.equal(userFilesRequest.listType, 'mysubscriptions');
   assert.equal(userFilesRequest.page, 2);
+  assert.equal(userFilesRequest.sortmethod, 'creationorder');
   child.stdout.write(`${WALLHUB_STEAM_QUERY_BRIDGE_MARKER}${JSON.stringify({
     id: userFilesRequest.id,
     ok: true,

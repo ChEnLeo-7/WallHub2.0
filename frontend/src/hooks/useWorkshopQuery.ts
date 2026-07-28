@@ -106,6 +106,7 @@ export function buildQuery(filters: Filters, page: number, pageSize: number, exa
     if (personal.browsesort) params.browsesort = personal.browsesort;
     if (personal.actualsort) params.actualsort = personal.actualsort;
     if (personal.section) params.section = personal.section;
+    params.sortmethod = filters.personalSort;
   }
   if (!filters.personalFilter && filters.days && filters.sort === 'trend' && filters.days !== '0') params.days = Number(filters.days);
 

@@ -108,6 +108,7 @@ test('signed-in public browsing still uses Community pages when no Web API key i
 
 test('SteamKit-first query mode uses GetUserFiles details for personal lists', async () => {
   let detailRequests = 0;
+  let steamKitOptions;
   const service = createWorkshopSearchService({
     nsfwEnabled: () => true,
     logger: { log() {}, warn() {} },
@@ -118,19 +119,23 @@ test('SteamKit-first query mode uses GetUserFiles details for personal lists', a
       detailRequests += 1;
       throw new Error('SteamKit GetUserFiles already returned the details');
     },
-    querySteamKitUserFiles: async () => ({
-      ids: ['101'],
-      totalCount: 1,
-      details: [{ result: 1, publishedfileid: '101', title: 'SteamKit subscription', tags: [{ tag: 'Video' }] }],
-    }),
+    querySteamKitUserFiles: async (_listType, options) => {
+      steamKitOptions = options;
+      return {
+        ids: ['101'],
+        totalCount: 1,
+        details: [{ result: 1, publishedfileid: '101', title: 'SteamKit subscription', tags: [{ tag: 'Video' }] }],
+      };
+    },
   });
 
   const result = await service.search(
-    { appid: 431960, page: 1, numperpage: 1, path: 'myfiles', browsefilter: 'mysubscriptions' },
+    { appid: 431960, page: 1, numperpage: 1, path: 'myfiles', browsefilter: 'mysubscriptions', sortmethod: 'creationorder' },
     { steamKitQueryAvailable: true, steamAccountKey: 'steamkit:tester' }
   );
 
   assert.equal(detailRequests, 0);
+  assert.equal(steamKitOptions.sortmethod, 'creationorder');
   assert.deepEqual(result.response.publishedfiledetails.map(item => item.title), ['SteamKit subscription']);
   assert.equal(result.diagnostics.detailMode, 'steamkit');
 });

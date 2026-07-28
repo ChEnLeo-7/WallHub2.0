@@ -467,6 +467,7 @@ function createWorkshopSearchService(options = {}) {
         appId: parseInt(params.appid, 10) || 431960,
         page,
         numperpage,
+        sortmethod: params.sortmethod,
         signal: runOptions.signal,
       });
       const ids = Array.isArray(sourceData && sourceData.ids) ? sourceData.ids.map(id => String(id || '')).filter(Boolean) : [];

@@ -350,8 +350,8 @@ const fs = require('fs');
 const path = require('path');
 const root = process.argv[1];
 const rows = [
-  ['SteamKit/DepotDownloader/.wallhub-json-progress-build.json', 'wallhub-json-progress-v36-user-files-bridge-only'],
-  ['SteamKit/DepotDownloaderStream/.wallhub-stream-build.json', 'wallhub-stream-v37-cancellable-ranges'],
+  ['SteamKit/DepotDownloader/.wallhub-json-progress-build.json', 'wallhub-json-progress-v41-native-personal-sort'],
+  ['SteamKit/DepotDownloaderStream/.wallhub-stream-build.json', 'wallhub-stream-v42-native-personal-sort'],
 ];
 for (const [relativeStamp, expectedPatch] of rows) {
   const stampPath = path.join(root, ...relativeStamp.split('/'));

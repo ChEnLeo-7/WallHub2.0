@@ -304,6 +304,7 @@ function createSteamKitQueryBridge(options = {}) {
         listType,
         page: queryOptions.page,
         numperpage: queryOptions.numperpage,
+        sortmethod: queryOptions.sortmethod,
       }, queryOptions.username, queryOptions.timeoutMs, queryOptions.signal),
       Object.assign({}, queryOptions, { label: 'GetUserFiles' }),
     );

@@ -7,8 +7,14 @@
 
   [![Release](https://img.shields.io/github/v/release/ChEnLeo-7/WallHub2.0?display_name=tag&sort=semver)](https://github.com/ChEnLeo-7/WallHub2.0/releases)
   [![Release build](https://github.com/ChEnLeo-7/WallHub2.0/actions/workflows/release.yml/badge.svg)](https://github.com/ChEnLeo-7/WallHub2.0/actions/workflows/release.yml)
-  [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D16.17-339933?logo=node.js&logoColor=white)](package.json)
   [![License](https://img.shields.io/github/license/ChEnLeo-7/WallHub2.0)](LICENSE)
+
+  [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+  [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+  [![Vite](https://img.shields.io/badge/Vite-4-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
+  [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+  [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D16.17-339933?logo=node.js&logoColor=white)](package.json)
+  [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
   [下载 Windows 版](https://github.com/ChEnLeo-7/WallHub2.0/releases) · [快速开始](#快速开始) · [使用说明](#基本使用) · [English](README.en.md)
 </div>

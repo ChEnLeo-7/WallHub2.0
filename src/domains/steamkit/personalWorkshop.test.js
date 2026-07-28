@@ -6,7 +6,13 @@ const {
   WALLHUB_STEAM_USER_FILES_MARKER,
   parseSteamKitUserFilesOutput,
   createSteamKitPersonalWorkshopService,
+  normalizePersonalSortMethod,
 } = require('./personalWorkshop');
+
+test('personal Workshop sort methods are normalized before reaching SteamKit', () => {
+  assert.equal(normalizePersonalSortMethod(' CreationOrder '), 'creationorder');
+  assert.equal(normalizePersonalSortMethod('unsupported'), 'lastupdated');
+});
 
 test('SteamKit user files parser accepts the final marked JSON response only', () => {
   const parsed = parseSteamKitUserFilesOutput([
@@ -42,6 +48,7 @@ test('SteamKit user files command uses remembered login without a Community web 
     username: 'tester',
     page: 2,
     numperpage: 50,
+    sortmethod: 'subscriptiondate',
   });
 
   assert.deepEqual(result.ids, ['100000', '100001']);
@@ -52,6 +59,7 @@ test('SteamKit user files command uses remembered login without a Community web 
     '-app', '431960',
     '-wallhub-user-files-page', '2',
     '-wallhub-user-files-count', '50',
+    '-wallhub-user-files-sort', 'subscriptiondate',
     '-username', 'tester',
     '-remember-password',
     '-max-downloads', '1',

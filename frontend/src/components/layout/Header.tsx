@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowLeft, Check, Download, MonitorPlay, Search, Settings } from 'lucide-react';
+import { ArrowLeft, Check, Download, Search, Settings } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,7 +52,7 @@ export function Header({
             </>
           ) : (
             <>
-              <MonitorPlay className="hidden h-5 w-5 text-primary sm:block" />
+              <img src="/favicon.svg" alt="" aria-hidden="true" className="h-5 w-5" />
               <span>WallHub</span>
             </>
           )}

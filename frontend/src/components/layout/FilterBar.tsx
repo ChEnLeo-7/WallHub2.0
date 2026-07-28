@@ -62,7 +62,7 @@ export function FilterBar({
     : ageOptions.filter((option) => selectedRatings.has(option.value)).map((option) => option.label).join(' / ') || text.all;
   const personalSortValue = filters.personalFilter ? `personal:${filters.personalFilter}` : filters.sort;
   const personalTypeFilter = !!filters.personalFilter;
-  const timeSortEnabled = !filters.personalFilter && filters.sort === 'trend';
+  const secondarySortEnabled = !!filters.personalFilter || filters.sort === 'trend';
   const handleSortChange = (value: string) => {
     if (value.startsWith('personal:')) {
       if (!steamLoggedIn) {
@@ -157,21 +157,29 @@ export function FilterBar({
           />
           <Select
             label={text.timeSort}
-            value={filters.days}
-            onChange={(days) => {
-              if (timeSortEnabled) setFilters({ days });
+            value={filters.personalFilter ? filters.personalSort : filters.days}
+            onChange={(value) => {
+              if (filters.personalFilter) setFilters({ personalSort: value });
+              else if (filters.sort === 'trend') setFilters({ days: value });
             }}
-            options={[
-              { value: '1', label: text.today },
-              { value: '7', label: text.week },
-              { value: '30', label: text.month },
-              { value: '90', label: text.threeMonths },
-              { value: '180', label: text.halfYear },
-              { value: '365', label: text.year },
-              { value: '0', label: text.allTime },
-            ]}
-            disabled={!timeSortEnabled}
-            className={timeSortEnabled ? '' : 'pointer-events-none opacity-45'}
+            options={filters.personalFilter
+              ? [
+                  { value: 'subscriptiondate', label: text.personalSortSubscriptionDate },
+                  { value: 'alpha', label: text.personalSortAlphabetical },
+                  { value: 'lastupdated', label: text.personalSortLastUpdated },
+                  { value: 'creationorder', label: text.personalSortCreationDate },
+                ]
+              : [
+                  { value: '1', label: text.today },
+                  { value: '7', label: text.week },
+                  { value: '30', label: text.month },
+                  { value: '90', label: text.threeMonths },
+                  { value: '180', label: text.halfYear },
+                  { value: '365', label: text.year },
+                  { value: '0', label: text.allTime },
+                ]}
+            disabled={!secondarySortEnabled}
+            className={secondarySortEnabled ? '' : 'pointer-events-none opacity-45'}
           />
           <div ref={typeRootRef} className="relative grid gap-1.5 text-xs font-medium text-muted-foreground">
             <span>{text.typeSelect}</span>

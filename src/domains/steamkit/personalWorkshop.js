@@ -3,6 +3,7 @@
 const WALLHUB_STEAM_USER_FILES_MARKER = 'WALLHUB_STEAM_USER_FILES:';
 const PERSONAL_WORKSHOP_APP_ID = 431960;
 const PERSONAL_LIST_TYPES = new Set(['mysubscriptions', 'myfavorites']);
+const PERSONAL_SORT_METHODS = new Set(['subscriptiondate', 'alpha', 'lastupdated', 'creationorder']);
 
 function personalWorkshopError(message, code = 'STEAMKIT_USER_FILES_UNAVAILABLE') {
   const error = new Error(message);
@@ -14,6 +15,11 @@ function personalWorkshopError(message, code = 'STEAMKIT_USER_FILES_UNAVAILABLE'
 function normalizePersonalListType(value) {
   const type = String(value || '').trim().toLowerCase();
   return PERSONAL_LIST_TYPES.has(type) ? type : '';
+}
+
+function normalizePersonalSortMethod(value) {
+  const method = String(value || '').trim().toLowerCase();
+  return PERSONAL_SORT_METHODS.has(method) ? method : 'lastupdated';
 }
 
 function normalizePositiveInt(value, fallback, maximum) {
@@ -93,6 +99,7 @@ function createSteamKitPersonalWorkshopService(options = {}) {
     const appId = normalizePositiveInt(queryOptions.appId, PERSONAL_WORKSHOP_APP_ID, 0xffffffff);
     const page = normalizePositiveInt(queryOptions.page, 1, 1000000);
     const numperpage = normalizePositiveInt(queryOptions.numperpage, 30, 100);
+    const sortmethod = normalizePersonalSortMethod(queryOptions.sortmethod);
     const timeoutMs = Math.max(15000, normalizePositiveInt(queryOptions.timeoutMs || process.env.WALLHUB_STEAMKIT_USER_FILES_TIMEOUT_MS, 45000, 120000));
     if (canUsePersistentBridge('getUserFiles')) {
       try {
@@ -101,6 +108,7 @@ function createSteamKitPersonalWorkshopService(options = {}) {
           appId,
           page,
           numperpage,
+          sortmethod,
           timeoutMs,
         };
         if (queryOptions.signal) bridgeOptions.signal = queryOptions.signal;
@@ -122,6 +130,7 @@ function createSteamKitPersonalWorkshopService(options = {}) {
       '-app', String(appId),
       '-wallhub-user-files-page', String(page),
       '-wallhub-user-files-count', String(numperpage),
+      '-wallhub-user-files-sort', sortmethod,
       '-username', username,
       '-remember-password',
       '-max-downloads', '1',
@@ -153,6 +162,7 @@ module.exports = {
   WALLHUB_STEAM_USER_FILES_MARKER,
   PERSONAL_WORKSHOP_APP_ID,
   normalizePersonalListType,
+  normalizePersonalSortMethod,
   parseSteamKitUserFilesOutput,
   createSteamKitPersonalWorkshopService,
 };

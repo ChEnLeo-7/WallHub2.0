@@ -123,7 +123,8 @@ function patchDepotDownloaderForJsonProgress(projectDir, options = {}) {
         '            var wallHubWebSession = HasParameter(args, "-wallhub-web-session");',
         '            var wallHubUserFilesType = GetParameter(args, "-wallhub-user-files", string.Empty);',
         '            var wallHubUserFilesPage = GetParameter(args, "-wallhub-user-files-page", 1u);',
-        '            var wallHubUserFilesCount = GetParameter(args, "-wallhub-user-files-count", 30u);'
+        '            var wallHubUserFilesCount = GetParameter(args, "-wallhub-user-files-count", 30u);',
+        '            var wallHubUserFilesSort = GetParameter(args, "-wallhub-user-files-sort", "lastupdated");'
       ].join('\n'),
       'DepotDownloader Program.cs user files args'
     );
@@ -149,7 +150,7 @@ function patchDepotDownloaderForJsonProgress(projectDir, options = {}) {
         '                {',
         '                    try',
         '                    {',
-        '                        var json = await ContentDownloader.WallHubGetUserFilesJsonAsync(wallHubUserFilesAppId, wallHubUserFilesType, wallHubUserFilesPage, wallHubUserFilesCount).ConfigureAwait(false);',
+        '                        var json = await ContentDownloader.WallHubGetUserFilesJsonAsync(wallHubUserFilesAppId, wallHubUserFilesType, wallHubUserFilesPage, wallHubUserFilesCount, wallHubUserFilesSort).ConfigureAwait(false);',
         '                        Console.WriteLine($"WALLHUB_STEAM_USER_FILES:{json}");',
         '                        return 0;',
         '                    }',
@@ -180,10 +181,10 @@ function patchDepotDownloaderForJsonProgress(projectDir, options = {}) {
     program = replaceSourceOnce(
       program,
       [
-        '            var wallHubUserFilesCount = GetParameter(args, "-wallhub-user-files-count", 30u);'
+        '            var wallHubUserFilesSort = GetParameter(args, "-wallhub-user-files-sort", "lastupdated");'
       ].join('\n'),
       [
-        '            var wallHubUserFilesCount = GetParameter(args, "-wallhub-user-files-count", 30u);',
+        '            var wallHubUserFilesSort = GetParameter(args, "-wallhub-user-files-sort", "lastupdated");',
         '            var wallHubQueryBridge = HasParameter(args, "-wallhub-query-bridge");'
       ].join('\n'),
       'DepotDownloader Program.cs query bridge args'
@@ -234,7 +235,8 @@ function patchDepotDownloaderForJsonProgress(projectDir, options = {}) {
         '                        var listType = WallHubBridgeText(input, "listType", 32);',
         '                        var page = WallHubBridgeUInt(input, "page", 1u, 1u, 1000000u);',
         '                        var numperpage = WallHubBridgeUInt(input, "numperpage", 30u, 1u, 100u);',
-        '                        responseJson = await ContentDownloader.WallHubGetUserFilesJsonAsync(appId, listType, page, numperpage).ConfigureAwait(false);',
+        '                        var sortmethod = WallHubBridgeText(input, "sortmethod", 32);',
+        '                        responseJson = await ContentDownloader.WallHubGetUserFilesJsonAsync(appId, listType, page, numperpage, sortmethod).ConfigureAwait(false);',
         '                    }',
         '                    else',
         '                    {',
@@ -443,14 +445,14 @@ function patchDepotDownloaderForJsonProgress(projectDir, options = {}) {
         '        public static async Task<string> WallHubGetSteamWebSessionJsonAsync()'
       ].join('\n'),
       [
-        '        public static async Task<string> WallHubGetUserFilesJsonAsync(uint appId, string listType, uint page, uint numperpage)',
+        '        public static async Task<string> WallHubGetUserFilesJsonAsync(uint appId, string listType, uint page, uint numperpage, string sortmethod)',
         '        {',
         '            if (steam3 == null)',
         '            {',
         '                throw new InvalidOperationException("Steam3 session is not initialized.");',
         '            }',
         '',
-        '            return await steam3.WallHubGetUserFilesJsonAsync(appId, listType, page, numperpage).ConfigureAwait(false);',
+        '            return await steam3.WallHubGetUserFilesJsonAsync(appId, listType, page, numperpage, sortmethod).ConfigureAwait(false);',
         '        }',
         '',
         '        public static async Task<string> WallHubGetSteamWebSessionJsonAsync()'
@@ -583,7 +585,7 @@ function patchDepotDownloaderForJsonProgress(projectDir, options = {}) {
           '        {'
         ].join('\n'),
         [
-          '        public async Task<string> WallHubGetUserFilesJsonAsync(uint appId, string listType, uint page, uint numperpage)',
+          '        public async Task<string> WallHubGetUserFilesJsonAsync(uint appId, string listType, uint page, uint numperpage, string sortmethod)',
           '        {',
           '            if (!IsLoggedOn || steamUser?.SteamID == null || steamUser.SteamID.AccountType != EAccountType.Individual)',
           '            {',
@@ -598,6 +600,9 @@ function patchDepotDownloaderForJsonProgress(projectDir, options = {}) {
           '',
           '            var safePage = page < 1 ? 1u : page;',
           '            var safePageSize = Math.Min(Math.Max(numperpage, 1u), 100u);',
+          '            var safeSortMethod = (sortmethod ?? string.Empty).Trim().ToLowerInvariant();',
+          '            var supportedSortMethods = new[] { "subscriptiondate", "alpha", "lastupdated", "creationorder" };',
+          '            if (!supportedSortMethods.Contains(safeSortMethod)) safeSortMethod = "lastupdated";',
           '            var steamId = steamUser.SteamID.ConvertToUInt64();',
           '            var request = new CPublishedFile_GetUserFiles_Request',
           '            {',
@@ -606,7 +611,7 @@ function patchDepotDownloaderForJsonProgress(projectDir, options = {}) {
           '                page = safePage,',
           '                numperpage = safePageSize,',
           '                type = type,',
-          '                sortmethod = "lastupdated",',
+          '                sortmethod = safeSortMethod,',
           '                return_tags = true,',
           '                return_previews = true,',
           '                return_short_description = true',
@@ -1703,7 +1708,7 @@ function patchDepotDownloaderForJsonProgress(projectDir, options = {}) {
         ].join('\n'),
         [
           '                    using var fs = File.Exists(filePath)',
-          '                        ? File.Open(filePath, FileMode.Open, FileAccess.Read)',
+          '                        ? File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read)',
           '                        : IsolatedStorage.OpenFile(filename, FileMode.Open, FileAccess.Read);'
         ].join('\n'),
         'DepotDownloader AccountSettingsStore.cs open read'

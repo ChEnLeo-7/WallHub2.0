@@ -311,6 +311,7 @@ const RESOLUTION_TAGS = [
   'Dynamic resolution',
 ];
 const PERSONAL_FILTERS = ['mysubscriptions', 'myfavorites', 'voted', 'friendsfavorites', 'friendscreated', 'followedcreated'];
+const PERSONAL_SORTS = ['subscriptiondate', 'alpha', 'lastupdated', 'creationorder'];
 
 function normalizeTagList(value: unknown, allowed: string[]) {
   const raw = Array.isArray(value) ? value : [];
@@ -326,6 +327,7 @@ export type Filters = {
   search: string;
   sort: string;
   personalFilter: string;
+  personalSort: string;
   days: string;
   types: string[];
   rating: string;
@@ -342,6 +344,7 @@ export function normalizeFilters(value: unknown, nsfw = true, GENRES: { id: stri
     search: String(raw.search || ''),
     sort: ['trend', 'mostrecent', 'toprated', 'mostvotes', 'totaluniquesubscribers'].includes(String(raw.sort)) ? String(raw.sort) : 'trend',
     personalFilter: PERSONAL_FILTERS.includes(String(raw.personalFilter || '')) ? String(raw.personalFilter) : '',
+    personalSort: PERSONAL_SORTS.includes(String(raw.personalSort || '')) ? String(raw.personalSort) : 'lastupdated',
     days: String(raw.days || '30'),
     types: normalizeFilterTypes(raw.types, raw.type),
     rating: primaryRating(ratings, nsfw, text),
@@ -353,7 +356,7 @@ export function normalizeFilters(value: unknown, nsfw = true, GENRES: { id: stri
 }
 
 export function defaultHomeFilters(GENRES: { id: string }[], text: { all: string; ratingEveryone: string; ratingQuestionable: string; ratingMature: string }): Filters {
-  return normalizeFilters({ search: '', sort: 'trend', personalFilter: '', days: '30', types: [], rating: 'Everyone', ratings: ['Everyone'], genres: GENRES.map((g) => g.id) }, true, GENRES, text);
+  return normalizeFilters({ search: '', sort: 'trend', personalFilter: '', personalSort: 'lastupdated', days: '30', types: [], rating: 'Everyone', ratings: ['Everyone'], genres: GENRES.map((g) => g.id) }, true, GENRES, text);
 }
 
 export function shouldRestoreSearchPrefs(SEARCH_SESSION_KEY: string, SEARCH_SESSION_TTL_MS: number) {

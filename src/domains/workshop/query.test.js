@@ -8,6 +8,7 @@ const {
   buildSteamApiQueryUrl,
   queryWorkshopBySteamApi,
   scrapeWorkshopIds,
+  normalizePersonalSortMethod,
 } = require('./query');
 
 test('top rated sort maps to Steam query type 0 and browse sort', () => {
@@ -65,7 +66,7 @@ test('public Workshop scrape retries transient curl failures through the native 
 });
 
 test('community URL routes account favorites through my workshop files', () => {
-  const url = buildCommunityWorkshopBrowseUrl({ appid: 431960, page: 2, numperpage: 50, path: 'myfiles', browsefilter: 'myfavorites' });
+  const url = buildCommunityWorkshopBrowseUrl({ appid: 431960, page: 2, numperpage: 50, path: 'myfiles', browsefilter: 'myfavorites', sortmethod: 'alpha' });
   const parsed = new URL(url);
 
   assert.equal(parsed.pathname, '/my/myworkshopfiles/');
@@ -73,6 +74,17 @@ test('community URL routes account favorites through my workshop files', () => {
   assert.equal(parsed.searchParams.get('p'), '2');
   assert.equal(parsed.searchParams.get('numperpage'), '50');
   assert.equal(parsed.searchParams.get('browsefilter'), 'myfavorites');
+  assert.equal(parsed.searchParams.get('sortmethod'), 'alpha');
+});
+
+test('personal sort methods are restricted to Steam-supported values', () => {
+  assert.equal(normalizePersonalSortMethod(' CREATIONORDER '), 'creationorder');
+  assert.equal(normalizePersonalSortMethod('unknown'), 'lastupdated');
+
+  const url = buildCommunityWorkshopBrowseUrl({ appid: 431960, page: 1, numperpage: 30, special_filter: 4, sortmethod: 'creationorder' });
+  const parsed = new URL(url);
+  assert.equal(parsed.searchParams.get('browsesort'), 'creationorder');
+  assert.equal(parsed.searchParams.get('actualsort'), 'creationorder');
 });
 
 test('community URL routes voted filter through my workshop files votes list', () => {
