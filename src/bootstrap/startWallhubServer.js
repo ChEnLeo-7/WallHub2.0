@@ -5,6 +5,7 @@ function startWallhubServer(options = {}) {
     http, cors, handleHttpRequest, createServerLifecycle, port, entryFile, projectRoot,
     isSupervisorChild, isRestartChild, onHttpListening, markServerStopping,
     stopAllDepotStreamWorkers, buildDepotRuntime, logger = console,
+    argv = process.argv,
   } = options;
   const server = http.createServer(async (req, res) => {
     cors(res);
@@ -12,13 +13,13 @@ function startWallhubServer(options = {}) {
     return handleHttpRequest(req, res);
   });
   const serverLifecycle = createServerLifecycle({
-    server, port, entryFile, projectRoot, isSupervisorChild, isRestartChild, logger,
+    server, port, entryFile, projectRoot, isSupervisorChild, isRestartChild, logger, argv,
     onHttpListening, markServerStopping, stopAllDepotStreamWorkers, buildDepotRuntime,
   });
   serverLifecycle.installProcessExitHook();
   serverLifecycle.installWorkerStopMessageHandler();
   serverLifecycle.installServerErrorHandler();
-  if (process.argv.includes('--build-depot-runtime')) serverLifecycle.buildDepotRuntimeAndExit();
+  if (argv.includes('--build-depot-runtime')) serverLifecycle.buildDepotRuntimeAndExit();
   else if (serverLifecycle.shouldRunSupervisorParent()) serverLifecycle.startSupervisorParent();
   else serverLifecycle.startHttpServer();
   return {

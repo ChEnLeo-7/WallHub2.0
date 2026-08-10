@@ -11,7 +11,12 @@
     "build:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/windows/build-portable.ps1",
     "build:windows:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/windows/build-portable.ps1 -BuildInstaller",
     "preview:ui": "vite preview --host 0.0.0.0",
-    "test": "node tools/run-node-tests.js"
+    "check:syntax": "node --check server.js && node --check tools/run-node-tests.js && node --check tools/check-public-assets.js && node --check tools/update/apply-update.js",
+    "check:public-assets": "node tools/check-public-assets.js",
+    "test": "node tools/run-node-tests.js",
+    "test:ui": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run check:syntax && npm test && npm run test:ui && npm run typecheck && npm run build:ui && npm run check:public-assets"
   },
   "engines": {
     "node": ">=16.17.0"
@@ -25,6 +30,9 @@
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "6.6.3",
+    "@testing-library/react": "14.3.1",
+    "@testing-library/user-event": "14.6.1",
     "@types/node": "16.18.126",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
@@ -32,14 +40,16 @@
     "autoprefixer": "10.4.20",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "jsdom": "22.1.0",
     "lucide-react": "^0.468.0",
     "motion": "^12.40.0",
     "postcss": "8.5.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "tailwindcss": "3.4.17",
     "tailwind-merge": "^2.6.0",
+    "tailwindcss": "3.4.17",
     "typescript": "5.6.3",
-    "vite": "4.5.14"
+    "vite": "4.5.14",
+    "vitest": "0.34.6"
   }
 }

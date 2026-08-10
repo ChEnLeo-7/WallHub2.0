@@ -27,7 +27,7 @@ function tokenFromResponse(res) {
   return new URL(res.body.streamUrl, 'http://wallhub.local').searchParams.get('token');
 }
 
-function createHarness(getWorker) {
+function createHarness(getWorker, overrides = {}) {
   const releaseCalls = [];
   let serviceDeps = null;
   const service = {
@@ -39,7 +39,7 @@ function createHarness(getWorker) {
       return { stopped: true };
     },
   };
-  const controller = createVideoController({
+  const controller = createVideoController(Object.assign({
     createDepotStreamService(deps) {
       serviceDeps = deps;
       return service;
@@ -69,6 +69,7 @@ function createHarness(getWorker) {
     codedError(message, code, statusCode) {
       return Object.assign(new Error(message), { code, statusCode });
     },
+    updateSteamCdnStatus() {},
     steamCdnStatusSnapshot: () => ({ currentHost: '' }),
     jsonRes(res, statusCode, body) {
       res.statusCode = statusCode;
@@ -77,7 +78,7 @@ function createHarness(getWorker) {
       return body;
     },
     logger: { log() {}, warn() {} },
-  });
+  }, overrides));
 
   return {
     controller,
@@ -91,6 +92,92 @@ async function play(controller, id, req = request()) {
   await controller.handleVideoPlay(req, res, String(id), `video-${id}`);
   return { req, res, token: res.body ? tokenFromResponse(res) : null };
 }
+
+test('controller keeps its public API after responsibilities are extracted', () => {
+  const { controller } = createHarness(async () => ({ key: 'worker', info: {} }));
+
+  assert.deepEqual(Object.keys(controller), [
+    'findCachedVideoById',
+    'steamKitDepotStreamingEnabled',
+    'getDepotStreamService',
+    'buildDepotStreamArgs',
+    'getDepotVideoStreamInfo',
+    'streamFileWithRange',
+    'normalizeDepotStreamRange',
+    'findDepotStreamCachedRange',
+    'pipeDepotStreamCachedRange',
+    'stopAllDepotStreamWorkers',
+    'getDepotStreamWorker',
+    'ensureDepotStreamRangeCached',
+    'scheduleDepotStreamInitialPrefetch',
+    'scheduleDepotStreamAheadPrefetch',
+    'cleanupDepotStreamCache',
+    'scheduleDepotStreamCacheCleanup',
+    'maybeScheduleDepotStreamCacheCleanupAfterWrite',
+    'getDepotStreamCacheStats',
+    'clearDepotStreamCacheNow',
+    'proxyRemoteVideoStream',
+    'handleDepotVideoStream',
+    'handleDepotVideoRelease',
+    'handleVideoPlay',
+    'handleVideoStream',
+    'getDepotWorkerCount',
+  ]);
+});
+
+test('cached video is selected without remote inspection or depot preparation', async () => {
+  let inspected = false;
+  const { controller, getServiceDeps } = createHarness(async () => {
+    throw new Error('depot worker should not be requested');
+  }, {
+    getDownloadQueueService: () => ({ findCachedVideoById: () => 'cache/video.mp4' }),
+    getFileDetails: async () => {
+      inspected = true;
+      return [];
+    },
+  });
+
+  const { res } = await play(controller, 100);
+
+  assert.deepEqual(res.body, {
+    success: true,
+    status: 'ready',
+    streamUrl: '/api/video/stream?id=100',
+  });
+  assert.equal(inspected, false);
+  assert.equal(getServiceDeps(), null);
+});
+
+test('file URL video source is prepared as a remote stream', async () => {
+  const cdnUpdates = [];
+  const { controller, getServiceDeps } = createHarness(async () => {
+    throw new Error('depot worker should not be requested');
+  }, {
+    getFileDetails: async ([id]) => [{
+      result: 1,
+      publishedfileid: String(id),
+      file_url: 'https://cdn.example/video.webm',
+      filename: 'video.webm',
+    }],
+    extFromUrl: () => '.webm',
+    updateSteamCdnStatus: status => cdnUpdates.push(status),
+  });
+
+  const { res } = await play(controller, 100);
+
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.status, 'ready');
+  assert.equal(res.body.source, 'file_url');
+  assert.equal(res.body.cdnHost, 'cdn.example');
+  assert.match(res.body.streamUrl, /^\/api\/video\/remote\?token=.+/);
+  assert.deepEqual(cdnUpdates, [{
+    host: 'cdn.example',
+    port: 443,
+    source: 'remote',
+    mode: 'steamkit',
+  }]);
+  assert.equal(getServiceDeps(), null);
+});
 
 test('shared depot worker stops only after its final token is removed', async () => {
   const harness = createHarness(async entry => ({

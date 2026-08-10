@@ -6,6 +6,11 @@ const STEAM_DEPOT_RESOLVER_HOSTS = new Set([
   'api.steampowered.com',
   'community.steam-api.com',
 ]);
+const STEAM_DEPOT_CDN_SUFFIXES = [
+  '.steamcontent.com',
+  '.eccdnx.com',
+  '.pphimalayanrt.com',
+];
 const MAX_BROKER_BODY_BYTES = 4 * 1024 * 1024;
 const HOP_BY_HOP_HEADERS = new Set([
   'host',
@@ -47,7 +52,13 @@ function steamHostAllowedForDepotResolver(hostname) {
   const host = normalizeHost(hostname);
   if (!host || net.isIP(host)) return false;
   if (/[^a-z0-9.-]/i.test(host)) return false;
-  return STEAM_DEPOT_RESOLVER_HOSTS.has(host);
+  if (STEAM_DEPOT_RESOLVER_HOSTS.has(host)) return true;
+  if (STEAM_DEPOT_CDN_SUFFIXES.some(suffix => host.endsWith(suffix))) return true;
+  return /^[a-z0-9-]+\.steam\.[a-z0-9-]+\.com$/i.test(host);
+}
+
+function steamWebApiHost(hostname) {
+  return STEAM_DEPOT_RESOLVER_HOSTS.has(normalizeHost(hostname));
 }
 
 function tokenFromRequest(req) {
@@ -86,7 +97,9 @@ function routeLeaseFor(route, source) {
 function createInternalSteamResolverHandler(options = {}) {
   const token = String(options.token || '').trim();
   const resolveHost = options.resolveHost;
+  const resolveSystemHost = options.resolveSystemHost || resolveHost;
   const chooseRoute = options.chooseRoute;
+  const enabled = typeof options.enabled === 'function' ? options.enabled : () => true;
   const jsonRes = options.jsonRes;
   const logger = options.logger || console;
   if (typeof resolveHost !== 'function') throw new Error('resolveHost is required');
@@ -120,7 +133,21 @@ function createInternalSteamResolverHandler(options = {}) {
     }
 
     try {
-      if (useRoute && typeof chooseRoute === 'function') {
+      if (!enabled(host)) {
+        const systemResult = await resolveSystemHost(host);
+        return jsonRes(res, 200, {
+          success: true,
+          host,
+          port,
+          route: false,
+          ips: uniqueIps(systemResult && systemResult.ips),
+          source: 'system',
+          protocol: 'system',
+          endpoints: [],
+        });
+      }
+      logger.log?.(`[SteamAccess] internal depot resolver start host=${host}`);
+      if (useRoute && steamWebApiHost(host) && typeof chooseRoute === 'function') {
         const route = await chooseRoute(host, port, {
           forceRefresh: false,
           cacheOnly: true,
@@ -156,6 +183,7 @@ function createInternalSteamResolverHandler(options = {}) {
         });
       }
       const result = await resolveHost(host);
+      logger.log?.(`[SteamAccess] internal depot resolver done host=${host} ips=${Array.isArray(result && result.ips) ? result.ips.length : 0}`);
       return jsonRes(res, 200, {
         success: true,
         host,
@@ -239,6 +267,8 @@ function writeBrokerResponse(res, body, method) {
 function createInternalSteamWebApiBrokerHandler(options = {}) {
   const token = String(options.token || '').trim();
   const requestSteam = options.requestSteam || options.request;
+  const requestDirect = options.requestDirect || requestSteam;
+  const enabled = typeof options.enabled === 'function' ? options.enabled : () => true;
   const jsonRes = options.jsonRes;
   const logger = options.logger || console;
   const timeoutMs = Math.max(3000, Number(options.timeoutMs || 10000));
@@ -268,7 +298,9 @@ function createInternalSteamWebApiBrokerHandler(options = {}) {
 
     try {
       const body = await collectBrokerBody(req);
-      const responseBody = await requestSteam({
+      const useSteamAccess = enabled(target.host);
+      const requestTarget = useSteamAccess ? requestSteam : requestDirect;
+      const requestOptions = {
         protocol: 'https:',
         hostname: target.host,
         port: target.port,
@@ -276,12 +308,14 @@ function createInternalSteamWebApiBrokerHandler(options = {}) {
         method: req.method || 'GET',
         headers: sanitizeBrokerHeaders(req.headers),
         timeout: timeoutMs,
-        routeOptions: {
-          requireApplicationProbe: true,
-          backgroundRefresh: false,
-          maxAgeMs: 10 * 60 * 1000,
-        },
-      }, body.length ? body : undefined, timeoutMs);
+      };
+      if (useSteamAccess) requestOptions.routeOptions = {
+        requireApplicationProbe: true,
+        backgroundRefresh: false,
+        maxAgeMs: 10 * 60 * 1000,
+      };
+      else requestOptions.disableSteamAccessGateway = true;
+      const responseBody = await requestTarget(requestOptions, body.length ? body : undefined, timeoutMs);
       return writeBrokerResponse(res, responseBody, req.method || 'GET');
     } catch (error) {
       const statusCode = Number(error && error.statusCode || 502);

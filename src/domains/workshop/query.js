@@ -159,7 +159,13 @@ async function scrapeWorkshopIds(params, helpers = {}) {
   } else {
     logger.log('[Scrape] 鈿狅笍 No publishedfileid found! HTML length:', result.htmlLength);
   }
-  return { ids: result.ids, totalCount: result.totalCount, hints: result.hints };
+  return {
+    ids: result.ids,
+    totalCount: result.totalCount,
+    totalPages: result.totalPages,
+    totalPagesExact: result.totalPagesExact,
+    hints: result.hints,
+  };
 }
 
 function mapLocalQueryTypeToSteamApi(localType) {
@@ -224,8 +230,9 @@ function normalizeSteamApiTrendDays(days) {
 
 function buildSteamApiQueryInput(params = {}, singleGenreTag, singleResolutionTag) {
   const q = buildSteamApiQueryFields(params, singleGenreTag, singleResolutionTag);
+  const specialQueryType = { 2: 4, 3: 5, 4: 7 }[parseInt(params.special_filter, 10)] || 0;
   const input = {
-    query_type: q.search_text ? 12 : q.query_type,
+    query_type: q.search_text && !specialQueryType ? 12 : (specialQueryType || q.query_type),
     page: q.page,
     numperpage: q.numperpage,
     creator_appid: q.appid,
@@ -249,6 +256,39 @@ function buildSteamApiQueryInput(params = {}, singleGenreTag, singleResolutionTa
     }
   }
   return input;
+}
+
+function buildSteamUserFilesInput(params = {}, singleGenreTag, singleResolutionTag) {
+  const q = buildSteamApiQueryFields(params, singleGenreTag, singleResolutionTag);
+  const browseFilter = String(params.browsefilter || '').trim().toLowerCase();
+  const typeMap = {
+    mysubscriptions: 'mysubscriptions',
+    myfavorites: 'myfavorites',
+    myvotes: 'myvotes',
+  };
+  const input = {
+    operation: 'user-files',
+    appid: q.appid,
+    page: q.page,
+    numperpage: q.numperpage,
+    type: params.creator ? 'myfiles' : (typeMap[browseFilter] || 'myfiles'),
+    sortmethod: normalizePersonalSortMethod(params.sortmethod),
+    requiredtags: q.requiredTags,
+    excludedtags: q.excludedTags,
+  };
+  const steamId = normalizeSteamId(params.creator || params.profileSteamId || '');
+  if (steamId) input.steamid = steamId;
+  return input;
+}
+
+function usesSteamUserFilesQuery(params = {}) {
+  const browseFilter = String(params.browsefilter || '').trim().toLowerCase();
+  return !!normalizeSteamId(params.creator) || ['mysubscriptions', 'myfavorites', 'myvotes'].includes(browseFilter);
+}
+
+function buildSteamCmQueryInput(params = {}, singleGenreTag, singleResolutionTag) {
+  if (usesSteamUserFilesQuery(params)) return buildSteamUserFilesInput(params, singleGenreTag, singleResolutionTag);
+  return Object.assign({ operation: 'query-files' }, buildSteamApiQueryInput(params, singleGenreTag, singleResolutionTag));
 }
 
 function appendBooleanParam(search, name, value) {
@@ -313,18 +353,15 @@ async function queryWorkshopBySteamApi(apiKey, params = {}, genreOr = [], helper
   const baseUrl = typeof helpers.getSteamWebApiBaseUrl === 'function' ? helpers.getSteamWebApiBaseUrl() : helpers.steamWebApiBaseUrl;
   if (typeof get !== 'function') throw new Error('Workshop Steam API GET dependency missing');
 
-  if (params.creator) {
-    const input = {
-      steamid: String(params.creator),
-      appid: parseInt(params.appid, 10) || 431960,
-      page: Math.max(1, parseInt(params.page, 10) || 1),
-      numperpage: Math.max(1, Math.min(100, parseInt(params.numperpage, 10) || 30)),
+  if (usesSteamUserFilesQuery(params)) {
+    const input = Object.assign({}, buildSteamUserFilesInput(params), {
       return_details: true,
       return_tags: true,
       return_previews: true,
       return_short_description: true,
       return_metadata: true,
-    };
+    });
+    delete input.operation;
     const raw = await get(
       steamApiServiceUrl('IPublishedFileService', 'GetUserFiles', apiKey, input, baseUrl),
       steamApiHeaders(apiKey, helpers.signal ? { signal: helpers.signal } : {}),
@@ -388,10 +425,13 @@ module.exports = {
   mapLocalQueryTypeToSteamApi,
   buildSteamApiQueryFields,
   buildSteamApiQueryInput,
+  buildSteamCmQueryInput,
+  buildSteamUserFilesInput,
   buildSteamApiQueryUrl,
   normalizeSteamWebApiBaseUrl,
   steamApiServiceUrl,
   queryWorkshopBySteamApi,
+  usesSteamUserFilesQuery,
   normalizeSteamId,
   normalizePersonalSortMethod,
 };

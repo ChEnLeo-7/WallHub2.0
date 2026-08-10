@@ -2,9 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { pruneWorkshopCache } = require('./workshopCache');
 
-test('pruneWorkshopCache removes expired entries before enforcing its bounded capacity', () => {
+test('pruneWorkshopCache removes expired entries before enforcing its bounded capacity', async () => {
+  const { pruneWorkshopCache } = await import('../../frontend/src/lib/workshopCache.mjs');
   const cache = new Map([
     ['expired', { cachedAt: 1 }],
     ['oldest', { cachedAt: 900 }],
@@ -17,7 +17,8 @@ test('pruneWorkshopCache removes expired entries before enforcing its bounded ca
   assert.deepEqual([...cache.keys()], ['middle', 'newest']);
 });
 
-test('pruneWorkshopCache does not evict fresh entries below capacity', () => {
+test('pruneWorkshopCache does not evict fresh entries below capacity', async () => {
+  const { pruneWorkshopCache } = await import('../../frontend/src/lib/workshopCache.mjs');
   const cache = new Map([
     ['first', { cachedAt: 990 }],
     ['second', { cachedAt: 995 }],

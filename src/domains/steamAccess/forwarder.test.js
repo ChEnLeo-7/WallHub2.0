@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PassThrough } = require('node:stream');
-const { createSteamAccessForwarder } = require('./forwarder');
+const { createSteamAccessForwarder, validateAuthorizedCertificate } = require('./forwarder');
 
 function route() {
   return {
@@ -95,4 +95,59 @@ test('broadcast stream retries the next route after an upstream 5xx response', a
   assert.equal(attempts, 2);
   assert.equal(failures, 1);
   assert.equal(poolFailures, 1);
+});
+
+test('certificate-bound requests reject unauthorized TLS responses', async () => {
+  const response = new PassThrough();
+  response.statusCode = 200;
+  response.headers = { 'content-type': 'text/html' };
+  response.socket = {
+    authorized: false,
+    authorizationError: 'DEPTH_ZERO_SELF_SIGNED_CERT',
+    getPeerCertificate: () => ({}),
+  };
+  const forwarder = createSteamAccessForwarder({
+    chooseRoute: async () => route(),
+    connectionPool: { request: async () => response, markFailure() {} },
+    markFailure() {},
+  });
+
+  await assert.rejects(
+    () => forwarder.request({
+      hostname: 'steamcommunity.com',
+      routeOptions: { requireAuthorizedCertificate: true, certificateHostname: 'steamcommunity.com' },
+    }, null, 1000),
+    /TLS certificate validation failed/
+  );
+});
+
+test('hidden SNI accepts a trusted certificate after validating the intended hostname', () => {
+  const certificate = {
+    subject: { CN: 'store.steampowered.com' },
+    subjectaltname: 'DNS:store.steampowered.com, DNS:steamcommunity.com',
+  };
+  const error = validateAuthorizedCertificate({
+    authorized: false,
+    authorizationError: 'ERR_TLS_CERT_ALTNAME_INVALID',
+    getPeerCertificate: () => certificate,
+  }, 'steamcommunity.com');
+
+  assert.equal(error, undefined);
+});
+
+test('hidden SNI still rejects an untrusted chain or the wrong intended hostname', () => {
+  const certificate = {
+    subject: { CN: 'store.steampowered.com' },
+    subjectaltname: 'DNS:store.steampowered.com, DNS:steamcommunity.com',
+  };
+  assert.match(validateAuthorizedCertificate({
+    authorized: false,
+    authorizationError: 'DEPTH_ZERO_SELF_SIGNED_CERT',
+    getPeerCertificate: () => certificate,
+  }, 'steamcommunity.com').message, /SELF_SIGNED/);
+  assert.match(validateAuthorizedCertificate({
+    authorized: false,
+    authorizationError: 'ERR_TLS_CERT_ALTNAME_INVALID',
+    getPeerCertificate: () => certificate,
+  }, 'evil.example').message, /does not match/);
 });

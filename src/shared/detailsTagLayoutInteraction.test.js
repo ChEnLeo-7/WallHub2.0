@@ -6,12 +6,19 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const projectRoot = path.resolve(__dirname, '../..');
-const detailsSource = fs.readFileSync(path.join(projectRoot, 'frontend/src/components/dialogs/DetailsDialog.tsx'), 'utf8');
+const detailsRoot = path.join(projectRoot, 'frontend/src/components/dialogs');
+const detailsSource = [
+  'details-dialog/types.ts',
+  'details-dialog/useDetailsDialogController.ts',
+  'details-dialog/DetailsMetadata.tsx',
+  'DetailsDialog.tsx',
+].map((file) => fs.readFileSync(path.join(detailsRoot, file), 'utf8')).join('\n');
 const appSource = fs.readFileSync(path.join(projectRoot, 'frontend/src/App.tsx'), 'utf8');
-const querySource = fs.readFileSync(path.join(projectRoot, 'frontend/src/hooks/useWorkshopQuery.ts'), 'utf8');
+const querySource = fs.readFileSync(path.join(projectRoot, 'frontend/src/lib/workshopQuery.ts'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(projectRoot, 'frontend/src/styles.css'), 'utf8');
 const presentationSource = fs.readFileSync(path.join(projectRoot, 'src/shared/detailsPresentation.mjs'), 'utf8');
-const textSource = fs.readFileSync(path.join(projectRoot, 'frontend/src/lib/text.ts'), 'utf8');
+const zhTextSource = fs.readFileSync(path.join(projectRoot, 'frontend/src/lib/text/zh.ts'), 'utf8');
+const enTextSource = fs.readFileSync(path.join(projectRoot, 'frontend/src/lib/text/en.ts'), 'utf8');
 
 test('detail tags are selectable controls with a one-click selected-tag search action', () => {
   assert.match(detailsSource, /onSearchTags\?: \(tags: string\[\]\) => void/);
@@ -20,12 +27,13 @@ test('detail tags are selectable controls with a one-click selected-tag search a
   assert.match(detailsSource, /onClick=\{\(\) => onToggleTag\(tag\)\}/);
   assert.match(detailsSource, /onClick=\{\(\) => onSearchTags\?\.\(selectedTags\)\}/);
   assert.match(detailsSource, /text\.searchSelectedTags/);
-  assert.match(appSource, /const searchByDetailTags = \(tags: string\[\]\) =>/);
-  assert.match(appSource, /updateFilter\(\{ search: encodeDetailTagSearch\(tags\) \}\)/);
+  assert.match(appSource, /const searchByDetailTags = React\.useCallback\(\(tags: string\[\]\) =>/);
+  assert.match(appSource, /const search = encodeDetailTagSearch\(tags\);/);
+  assert.match(appSource, /homeCoordinator\.updateFilter\(\{ search \}\)/);
   assert.match(querySource, /parseDetailTagSearch\(search\)/);
   assert.match(querySource, /params\.community_tag_filter = '1';/);
-  assert.match(textSource, /searchSelectedTags: '搜索所选标签'/);
-  assert.match(textSource, /searchSelectedTags: 'Search selected tags'/);
+  assert.match(zhTextSource, /searchSelectedTags: '搜索所选标签'/);
+  assert.match(enTextSource, /searchSelectedTags: 'Search selected tags'/);
 });
 
 test('classic detail keeps the selected-tag search row visible while only the tag chips scroll', () => {
@@ -49,7 +57,7 @@ test('detail tag hover and selection colors transition instead of switching inst
 
 test('redesigned details keep the left cover and information cards fixed while description scrolls inside the aligned right panel', () => {
   assert.match(detailsSource, /aspect-\[16\/9\]/);
-  assert.match(detailsSource, /className="h-16 rounded-lg border border-border\/70 bg-background\/35 p-2\.5 sm:p-3"/);
+  assert.match(detailsSource, /focused \? 'h-16 rounded-lg border border-border\/70 bg-background\/35 p-2\.5 sm:p-3'/);
   assert.match(presentationSource, /rightColumn: Object\.freeze\(\{\s*minHeight: 0,\s*\}\)/);
   assert.doesNotMatch(presentationSource, /rightColumn: Object\.freeze\(\{[\s\S]*height: '100%'/);
   assert.match(detailsSource, /overflow-y-auto overscroll-contain/);

@@ -34,7 +34,7 @@ test('Steam access enhancement does not force DepotDownloader Steam3 websocket',
   const env = runtimeSettings.buildSteamContentEnv({ HTTPS_PROXY: 'http://127.0.0.1:7890' });
 
   assert.equal(env.WALLHUB_DEPOT_STEAM3_PROTOCOL, undefined);
-  assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:7890');
+  assert.equal(env.HTTPS_PROXY, undefined);
 });
 
 test('explicit Steam3 protocol environment is still honored', () => {
@@ -101,11 +101,70 @@ test('SteamKit child environment no longer exports DoT resolver settings', () =>
 });
 
 test('SteamKit child environment leaves Depot CM resolver untouched when SteamAccess is off', () => {
-  const runtimeSettings = createSettings({ wallhubSteamAccessEnhance: false });
-  const env = runtimeSettings.buildSteamContentEnv({});
+  const runtimeSettings = createSettings(
+    { wallhubSteamAccessEnhance: false },
+    {
+      WALLHUB_DEPOT_RESOLVER_URL: 'http://127.0.0.1:3090/api/internal/steam/resolve',
+      WALLHUB_DEPOT_RESOLVER_TOKEN: 'resolver-token',
+      WALLHUB_DEPOT_WEBAPI_BROKER_URL: 'http://127.0.0.1:3090/api/internal/steam/webapi',
+      WALLHUB_DEPOT_WEBAPI_BROKER_TOKEN: 'broker-token',
+    },
+  );
+  const env = runtimeSettings.buildSteamContentEnv({
+    WALLHUB_DEPOT_RESOLVER_URL: 'stale-resolver',
+    WALLHUB_DEPOT_RESOLVER_TOKEN: 'stale-resolver-token',
+    WALLHUB_DEPOT_WEBAPI_BROKER_URL: 'stale-broker',
+    WALLHUB_DEPOT_WEBAPI_BROKER_TOKEN: 'stale-broker-token',
+  });
 
   assert.equal(env.WALLHUB_DEPOT_CM_RESOLVER, undefined);
   assert.equal(env.WALLHUB_DEPOT_DOH_CM, undefined);
+  assert.equal(env.WALLHUB_DEPOT_RESOLVER_URL, undefined);
+  assert.equal(env.WALLHUB_DEPOT_RESOLVER_TOKEN, undefined);
+  assert.equal(env.WALLHUB_DEPOT_WEBAPI_BROKER_URL, undefined);
+  assert.equal(env.WALLHUB_DEPOT_WEBAPI_BROKER_TOKEN, undefined);
+});
+
+test('persisted SteamAccess off state cannot be overridden by an inherited enhancement variable', () => {
+  const runtimeSettings = createSettings(
+    { wallhubSteamAccessEnhance: false },
+    {
+      WALLHUB_STEAM_ACCESS_ENHANCE: '1',
+      WALLHUB_DEPOT_RESOLVER_URL: 'http://127.0.0.1:3090/api/internal/steam/resolve',
+      WALLHUB_DEPOT_RESOLVER_TOKEN: 'resolver-token',
+      WALLHUB_DEPOT_WEBAPI_BROKER_URL: 'http://127.0.0.1:3090/api/internal/steam/webapi',
+      WALLHUB_DEPOT_WEBAPI_BROKER_TOKEN: 'broker-token',
+    },
+  );
+  const env = runtimeSettings.buildSteamContentEnv({});
+
+  assert.equal(runtimeSettings.steamAccessCoreEnhanceEnabled(), false);
+  assert.equal(env.WALLHUB_DEPOT_RESOLVER_URL, undefined);
+  assert.equal(env.WALLHUB_DEPOT_WEBAPI_BROKER_URL, undefined);
+});
+
+test('static CDN enhancement stays inactive when the main SteamAccess switch is off', () => {
+  const runtimeSettings = createSettings(
+    {
+      wallhubSteamAccessEnhance: false,
+      wallhubSteamAccessStaticCdnEnhance: true,
+    },
+    {
+      WALLHUB_DEPOT_RESOLVER_URL: 'http://127.0.0.1:3090/api/internal/steam/resolve',
+      WALLHUB_DEPOT_RESOLVER_TOKEN: 'resolver-token',
+      WALLHUB_DEPOT_WEBAPI_BROKER_URL: 'http://127.0.0.1:3090/api/internal/steam/webapi',
+      WALLHUB_DEPOT_WEBAPI_BROKER_TOKEN: 'broker-token',
+    },
+  );
+  const env = runtimeSettings.buildSteamContentEnv({});
+
+  assert.equal(runtimeSettings.steamAccessGatewayEnabled(), false);
+  assert.equal(runtimeSettings.steamAccessCoreEnhanceEnabled(), false);
+  assert.equal(runtimeSettings.steamAccessWebApiGatewayEnabled(), false);
+  assert.equal(runtimeSettings.steamAccessStaticCdnEnhanceEnabled(), false);
+  assert.equal(runtimeSettings.steamAccessStaticCdnHostEnhanceEnabled('images.steamusercontent.com'), false);
+  assert.equal(env.WALLHUB_DEPOT_RESOLVER_URL, undefined);
+  assert.equal(env.WALLHUB_DEPOT_WEBAPI_BROKER_URL, undefined);
 });
 
 

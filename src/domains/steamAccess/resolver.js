@@ -12,6 +12,33 @@ const {
   normalizeSteamAccessResolverMode,
 } = require('../../config/normalizers');
 
+const MAX_DOH_RESPONSE_BYTES = 1024 * 1024;
+
+function createRequestDeadline(req, timeoutMs, message) {
+  const timer = setTimeout(() => req.destroy(new Error(message)), Math.max(1, Number(timeoutMs || 1)));
+  timer.unref?.();
+  const clear = () => clearTimeout(timer);
+  req.once('close', clear);
+  req.once('error', clear);
+  return clear;
+}
+
+function collectDohResponse(rs, reject) {
+  const chunks = [];
+  let size = 0;
+  rs.on('data', (chunk) => {
+    const buffer = Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_DOH_RESPONSE_BYTES) {
+      rs.destroy(new Error('DoH response too large'));
+      return;
+    }
+    chunks.push(buffer);
+  });
+  rs.on('error', reject);
+  return chunks;
+}
+
 function encodeDnsName(hostname) {
   const labels = String(hostname || '').split('.').filter(Boolean);
   const parts = [];
@@ -102,8 +129,7 @@ function queryDohWire(endpoint, hostname, qtype, userAgent, timeoutMs) {
       },
       timeout: timeoutMs,
     }, (rs) => {
-      const chunks = [];
-      rs.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      const chunks = collectDohResponse(rs, reject);
       rs.on('end', () => {
         if (rs.statusCode < 200 || rs.statusCode >= 300) return reject(new Error(`DoH HTTP ${rs.statusCode || 0}`));
         try {
@@ -113,6 +139,7 @@ function queryDohWire(endpoint, hostname, qtype, userAgent, timeoutMs) {
         }
       });
     });
+    createRequestDeadline(req, timeoutMs, 'DoH timeout');
     req.on('timeout', () => req.destroy(new Error('DoH timeout')));
     req.on('error', reject);
     req.write(body);
@@ -132,8 +159,7 @@ function queryDohJson(endpoint, hostname, type, userAgent, timeoutMs) {
       },
       timeout: timeoutMs,
     }, (rs) => {
-      const chunks = [];
-      rs.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      const chunks = collectDohResponse(rs, reject);
       rs.on('end', () => {
         if (rs.statusCode < 200 || rs.statusCode >= 300) return reject(new Error(`DoH HTTP ${rs.statusCode || 0}`));
         try {
@@ -144,6 +170,7 @@ function queryDohJson(endpoint, hostname, type, userAgent, timeoutMs) {
         }
       });
     });
+    createRequestDeadline(req, timeoutMs, 'DoH timeout');
     req.on('timeout', () => req.destroy(new Error('DoH timeout')));
     req.on('error', reject);
     req.end();
@@ -382,4 +409,5 @@ module.exports = {
   queryDohJson,
   queryDot,
   parseDnsRecords,
+  createRequestDeadline,
 };

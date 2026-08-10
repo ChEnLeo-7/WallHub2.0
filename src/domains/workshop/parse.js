@@ -188,10 +188,22 @@ function parseWorkshopBrowseHtml(html) {
   const source = String(html || '');
   let totalCount = 0;
   let totalPages = 0;
+  let totalPagesExact = false;
 
-  const showingM = source.match(/[Ss]howing\s+[\d,]+-[\d,]+\s+of\s+([\d,]+)/) ||
-    source.match(/(?:正在)?显示(?:第)?\s*[\d,]+\s*-\s*[\d,]+\s*项?\s*[,，]?\s*共\s*([\d,]+)\s*项?/);
-  if (showingM) totalCount = parseInt(showingM[1].replace(/,/g, ''));
+  // Steam's current SSR page embeds the authoritative browse totals in an
+  // escaped React Query payload instead of the legacy paging DOM.
+  const ssrPagingM = source.match(/total_pages\\*"\s*:\s*(\d{1,6})[\s\S]{0,160}?total_count\\*"\s*:\s*([\d,]+)/i);
+  if (ssrPagingM) {
+    totalPages = parseInt(ssrPagingM[1], 10) || 0;
+    totalCount = parseInt(ssrPagingM[2].replace(/,/g, ''), 10) || 0;
+    totalPagesExact = totalPages > 0;
+  }
+
+  if (!totalCount) {
+    const showingM = source.match(/[Ss]howing\s+[\d,]+-[\d,]+\s+of\s+([\d,]+)/) ||
+      source.match(/(?:正在)?显示(?:第)?\s*[\d,]+\s*-\s*[\d,]+\s*项?\s*[,，]?\s*共\s*([\d,]+)\s*项?/);
+    if (showingM) totalCount = parseInt(showingM[1].replace(/,/g, ''));
+  }
 
   if (!totalCount) {
     const pagingM = source.match(/workshopBrowsePagingInfo[^>]*>([\s\S]*?)<\/div>/);
@@ -213,21 +225,23 @@ function parseWorkshopBrowseHtml(html) {
     if (pageSec) totalCount = parseInt(pageSec[1].replace(/,/g, ''));
   }
 
-  const pagingBlocks = [];
-  for (const match of source.matchAll(/<div\b[^>]*(?:\bid=["']workshopBrowsePaging|\bclass=["'][^"']*workshopBrowsePaging|\bid=["']paging_controls|\bclass=["'][^"']*paging_controls)[^>]*>[\s\S]{0,6000}?<\/div>/gi)) {
-    pagingBlocks.push(match[0]);
-  }
-  const pagingSource = pagingBlocks.join('\n');
-  for (const match of pagingSource.matchAll(/[?&](?:p|page)=(\d{1,6})(?:\D|$)/gi)) {
-    totalPages = Math.max(totalPages, parseInt(match[1], 10) || 0);
-  }
-  for (const match of pagingSource.matchAll(/(?:data-page|data-p|pageToLoad)=["']?(\d{1,6})["']?/gi)) {
-    totalPages = Math.max(totalPages, parseInt(match[1], 10) || 0);
-  }
-  if (!totalPages) {
-    const pageText = pagingSource.replace(/<[^>]+>/g, ' ');
-    for (const match of pageText.matchAll(/\b(\d{1,6})\b/g)) {
+  if (!totalPagesExact) {
+    const pagingBlocks = [];
+    for (const match of source.matchAll(/<div\b[^>]*(?:\bid=["']workshopBrowsePaging|\bclass=["'][^"']*workshopBrowsePaging|\bid=["']paging_controls|\bclass=["'][^"']*paging_controls)[^>]*>[\s\S]{0,6000}?<\/div>/gi)) {
+      pagingBlocks.push(match[0]);
+    }
+    const pagingSource = pagingBlocks.join('\n');
+    for (const match of pagingSource.matchAll(/[?&](?:p|page)=(\d{1,6})(?:\D|$)/gi)) {
       totalPages = Math.max(totalPages, parseInt(match[1], 10) || 0);
+    }
+    for (const match of pagingSource.matchAll(/(?:data-page|data-p|pageToLoad)=["']?(\d{1,6})["']?/gi)) {
+      totalPages = Math.max(totalPages, parseInt(match[1], 10) || 0);
+    }
+    if (!totalPages) {
+      const pageText = pagingSource.replace(/<[^>]+>/g, ' ');
+      for (const match of pageText.matchAll(/\b(\d{1,6})\b/g)) {
+        totalPages = Math.max(totalPages, parseInt(match[1], 10) || 0);
+      }
     }
   }
 
@@ -305,6 +319,7 @@ function parseWorkshopBrowseHtml(html) {
     ids,
     totalCount,
     totalPages,
+    totalPagesExact,
     hints,
     debugImages,
     foundFirstItem: firstIdx !== -1,

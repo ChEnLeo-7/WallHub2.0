@@ -50,6 +50,7 @@ function createIpPool(options = {}) {
   const logger = options.logger || console;
   const configDir = options.configDir || process.cwd();
   const filePath = options.filePath || path.join(configDir, DEFAULT_FILENAME);
+  const persistenceEnabled = options.persistenceEnabled !== false;
   let state = createEmptyState();
   let saveScheduled = null;
 
@@ -68,6 +69,7 @@ function createIpPool(options = {}) {
   }
 
   function load() {
+    if (!persistenceEnabled) return state;
     try {
       if (!fs.existsSync(filePath)) return state;
       const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -91,12 +93,14 @@ function createIpPool(options = {}) {
   }
 
   function saveNow() {
+    if (!persistenceEnabled) return;
     state.updatedAt = now();
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
   }
 
   function scheduleSave() {
+    if (!persistenceEnabled) return;
     if (saveScheduled) return;
     saveScheduled = setTimeout(() => {
       saveScheduled = null;

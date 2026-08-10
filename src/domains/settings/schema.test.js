@@ -22,6 +22,25 @@ test('experimental settings keep verbose network logs flag', () => {
   assert.equal(settings.wallhubSteamAccessExperimental.verboseNetworkLogs, true);
 });
 
+test('loaded settings retain the persisted startup onboarding completion time', () => {
+  const settings = normalizeLoadedCacheSettings({
+    wallhubOnboardingCompletedAt: 1720000000123,
+  }, { logger: { warn() {} } });
+
+  assert.equal(settings.wallhubOnboardingCompletedAt, 1720000000123);
+});
+
+test('settings patch cannot set the protected startup onboarding completion time', () => {
+  const result = applyCacheSettingsPatch({}, { wallhubOnboardingCompletedAt: 1720000000456 });
+  assert.equal(result.settings.wallhubOnboardingCompletedAt, 0);
+  const completed = applyCacheSettingsPatch(
+    { wallhubOnboardingCompletedAt: 1720000000123 },
+    { wallhubOnboardingCompletedAt: 0, wallhubLogLevel: 'debug' }
+  );
+  assert.equal(completed.settings.wallhubOnboardingCompletedAt, 1720000000123);
+  assert.equal(completed.settings.wallhubLogLevel, 'debug');
+});
+
 test('settings normalize server log level and per static CDN host controls', () => {
   const settings = normalizeLoadedCacheSettings({
     wallhubLogLevel: 'debug',
@@ -73,4 +92,17 @@ test('Steam Web API key is retained while removed query-source settings are disc
     assert.equal(Object.hasOwn(loaded, key), false);
     assert.equal(Object.hasOwn(patched.settings, key), false);
   }
+});
+
+test('Steam data source defaults to Community and persists supported values', () => {
+  assert.equal(normalizeLoadedCacheSettings({}).steamDataSource, 'community');
+  assert.equal(normalizeLoadedCacheSettings({ steamDataSource: ' WEBAPI ' }).steamDataSource, 'webapi');
+  assert.equal(normalizeLoadedCacheSettings({ steamDataSource: 'cm' }).steamDataSource, 'cm');
+  assert.equal(normalizeLoadedCacheSettings({ steamDataSource: 'unknown' }).steamDataSource, 'community');
+
+  const changed = applyCacheSettingsPatch({ steamDataSource: 'community' }, { steamDataSource: 'webapi' });
+  assert.equal(changed.settings.steamDataSource, 'webapi');
+  assert.equal(changed.steamDataSourceChanged, true);
+  const unchanged = applyCacheSettingsPatch(changed.settings, { steamDataSource: 'WEBAPI' });
+  assert.equal(unchanged.steamDataSourceChanged, false);
 });

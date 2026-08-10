@@ -11,6 +11,12 @@ function normalizeSteamCdnHost(host) {
     .toLowerCase();
 }
 
+function isSteamControlHost(host) {
+  const value = normalizeSteamCdnHost(host);
+  return value === 'steamserver.net' || value.endsWith('.steamserver.net') ||
+    value === 'cm.steampowered.com' || value.endsWith('.cm.steampowered.com');
+}
+
 function extractSteamContentHosts(text) {
   const source = String(text || '');
   const hosts = [];
@@ -18,9 +24,7 @@ function extractSteamContentHosts(text) {
   const patterns = [
     /\bhttps?:\/\/([^/\s"'<>]+steamcontent\.com)(?::(\d+))?/gi,
     /\b((?:cache\d+[-.]|[a-z0-9-]+\.)[a-z0-9.-]*steamcontent\.com)(?::(\d+))?/gi,
-    /\b((?:[a-z0-9.-]+\.)?steamserver\.net)(?::(\d+))?/gi,
     /\b((?:[a-z0-9.-]+\.)?steamcdn-a\.akamaihd\.net)(?::(\d+))?/gi,
-    /\b((?:[a-z0-9.-]+\.)?cm\.steampowered\.com)(?::(\d+))?/gi,
   ];
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
@@ -50,7 +54,7 @@ function createSteamCdnStatusStore(options = {}) {
 
   function update(data = {}) {
     const host = normalizeSteamCdnHost(data.host || data.vhost);
-    if (!host) return null;
+    if (!host || isSteamControlHost(host)) return null;
     const port = Math.max(0, parseInt(String(data.port || '0'), 10) || 0);
     const entry = {
       host,
@@ -104,6 +108,7 @@ function createSteamCdnStatusStore(options = {}) {
 
 module.exports = {
   normalizeSteamCdnHost,
+  isSteamControlHost,
   extractSteamContentHosts,
   createSteamCdnStatusStore,
 };

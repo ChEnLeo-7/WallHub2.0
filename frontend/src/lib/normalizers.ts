@@ -153,7 +153,7 @@ export function normalizeSteamAccessHostsUrl(value: unknown) {
   if (!raw) return '';
   try {
     const url = new URL(raw);
-    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) return '';
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname || url.username || url.password) return '';
     return url.toString();
   } catch {
     return '';

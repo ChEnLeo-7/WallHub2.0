@@ -69,3 +69,20 @@ test('SteamKit user files command uses remembered login without a Community web 
   assert.equal(calls[0].options.cwd, 'account');
   assert.equal(calls[0].options.steamAuth, true);
 });
+
+test('SteamKit Workshop query uses the persistent CM bridge without one-shot fallback', async () => {
+  let queryPayload;
+  const service = createSteamKitPersonalWorkshopService({
+    queryBridge: {
+      queryWorkshop: async (query) => {
+        queryPayload = query;
+        return { total: 1, publishedfiledetails: [{ result: 1, publishedfileid: '100000', title: 'CM item' }] };
+      },
+    },
+  });
+
+  const result = await service.queryWorkshop({ operation: 'query-files', appid: 431960 }, { username: 'tester' });
+  assert.equal(queryPayload.operation, 'query-files');
+  assert.deepEqual(result.ids, ['100000']);
+  assert.equal(result.details[0].title, 'CM item');
+});

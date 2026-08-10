@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 test('a delete tombstone hides an older queue snapshot but not an immediate same-id re-download', async () => {
-  const { filterQueueTasksAfterDelete } = await import('./queueTombstones.mjs');
+  const { filterQueueTasksAfterDelete } = await import('../../frontend/src/lib/queueTombstones.mjs');
   const tombstones = new Map([
     ['3750175441', { deletedAt: 10_000, expiresAt: 25_000 }],
   ]);

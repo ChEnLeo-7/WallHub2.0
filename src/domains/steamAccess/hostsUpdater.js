@@ -2,6 +2,7 @@
 
 const http = require('http');
 const https = require('https');
+const dns = require('dns');
 const net = require('net');
 const { URL } = require('url');
 const {
@@ -26,7 +27,7 @@ function parseHostsText(text) {
       continue;
     }
     const ip = parts[0];
-    if (net.isIP(ip) !== 4) {
+    if (!net.isIP(ip)) {
       ignoredEntries += 1;
       continue;
     }
@@ -43,37 +44,137 @@ function parseHostsText(text) {
   return { entries, validEntries, ignoredEntries };
 }
 
-function fetchText(url, options = {}) {
-  const maxBytes = options.maxBytes || DEFAULT_HOSTS_FETCH_MAX_BYTES;
-  const timeoutMs = options.timeoutMs || DEFAULT_HOSTS_FETCH_TIMEOUT_MS;
+function isPublicIpv4(address) {
+  const parts = String(address || '').split('.').map(Number);
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b, c] = parts;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && ((b === 0) || (b === 168))) return false;
+  if (a === 192 && b === 88 && c === 99) return false;
+  if (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) return false;
+  if (a === 203 && b === 0 && c === 113) return false;
+  return true;
+}
+
+function isPublicIpv6(address) {
+  const value = String(address || '').toLowerCase().split('%', 1)[0];
+  const mapped = value.match(/(?:^|:)ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isPublicIpv4(mapped[1]);
+  const halves = value.split('::');
+  if (halves.length > 2) return false;
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const groups = halves.length === 2
+    ? left.concat(Array(8 - left.length - right.length).fill('0'), right)
+    : left;
+  if (groups.length !== 8 || (halves.length === 2 && left.length + right.length >= 8) || groups.some(group => !/^[0-9a-f]{1,4}$/.test(group))) return false;
+  const words = groups.map(group => Number.parseInt(group, 16));
+  const first = words[0];
+  if (first < 0x2000 || first > 0x3fff) return false;
+  if ((first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00) return false;
+  if (first === 0x2001 && (words[1] === 0 || words[1] === 0x0002 || (words[1] & 0xfff0) === 0x0010 || words[1] === 0x0db8)) return false;
+  if (first === 0x64ff && words[1] === 0x009b) return false;
+  if (first === 0x2002) return false;
+  return true;
+}
+
+function isPublicAddress(address) {
+  const family = net.isIP(address);
+  return family === 4 ? isPublicIpv4(address) : family === 6 ? isPublicIpv6(address) : false;
+}
+
+async function resolvePublicTarget(hostname, options = {}) {
+  const host = String(hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  const family = net.isIP(host);
+  const addresses = family
+    ? [{ address: host, family }]
+    : await (options.lookup || dns.promises.lookup)(host, { all: true, verbatim: true });
+  if (!Array.isArray(addresses) || !addresses.length) throw new Error('Hosts URL host did not resolve');
+  if (addresses.some(item => !isPublicAddress(item && item.address))) {
+    throw new Error('Hosts URL resolved to a non-public IP address');
+  }
+  const selected = addresses[0];
+  return { address: selected.address, family: Number(selected.family) || net.isIP(selected.address) };
+}
+
+async function fetchText(url, options = {}) {
+  const maxBytes = Math.max(1, Math.min(DEFAULT_HOSTS_FETCH_MAX_BYTES, Math.floor(Number(options.maxBytes) || DEFAULT_HOSTS_FETCH_MAX_BYTES)));
+  const timeoutMs = Math.max(1, Math.floor(Number(options.timeoutMs) || DEFAULT_HOSTS_FETCH_TIMEOUT_MS));
   const parsed = new URL(normalizeSteamAccessHostsUrl(url));
-  const client = parsed.protocol === 'http:' ? http : https;
   return new Promise((resolve, reject) => {
-    const req = client.request(parsed, {
-      method: 'GET',
-      headers: { 'User-Agent': options.userAgent || 'WallHub' },
-      timeout: timeoutMs,
-    }, (res) => {
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        res.resume();
-        reject(new Error(`Hosts URL returned HTTP ${res.statusCode || 0}`));
-        return;
-      }
-      const chunks = [];
-      let total = 0;
-      res.on('data', (chunk) => {
-        total += chunk.length;
-        if (total > maxBytes) {
-          req.destroy(new Error('Hosts URL response is too large'));
+    let req = null;
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const deadline = setTimeout(() => {
+      const error = new Error('Hosts URL fetch timeout');
+      finish(error);
+      if (req) req.destroy(error);
+    }, timeoutMs);
+    deadline.unref?.();
+
+    resolvePublicTarget(parsed.hostname, options).then((target) => {
+      if (settled) return;
+      const client = parsed.protocol === 'http:' ? http : https;
+      const request = options.request || client.request.bind(client);
+      req = request(parsed, {
+        method: 'GET',
+        agent: false,
+        headers: { 'User-Agent': options.userAgent || 'WallHub' },
+        servername: parsed.hostname,
+        lookup(_hostname, lookupOptions, callback) {
+          if (lookupOptions && lookupOptions.all) {
+            callback(null, [{ address: target.address, family: target.family }]);
+            return;
+          }
+          callback(null, target.address, target.family);
+        },
+      }, (res) => {
+        const statusCode = Number(res.statusCode || 0);
+        if (statusCode < 200 || statusCode >= 300) {
+          const error = new Error(statusCode >= 300 && statusCode < 400
+            ? 'Hosts URL redirects are not allowed'
+            : `Hosts URL returned HTTP ${statusCode}`);
+          finish(error);
+          res.destroy();
+          req.destroy();
           return;
         }
-        chunks.push(Buffer.from(chunk));
+        const contentLength = Number(res.headers && res.headers['content-length']);
+        if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+          finish(new Error('Hosts URL response is too large'));
+          res.destroy();
+          req.destroy();
+          return;
+        }
+        const chunks = [];
+        let total = 0;
+        res.on('data', (chunk) => {
+          if (settled) return;
+          total += chunk.length;
+          if (total > maxBytes) {
+            const error = new Error('Hosts URL response is too large');
+            finish(error);
+            res.destroy(error);
+            req.destroy(error);
+            return;
+          }
+          chunks.push(Buffer.from(chunk));
+        });
+        res.on('end', () => finish(null, Buffer.concat(chunks).toString('utf8')));
+        res.on('error', finish);
       });
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    });
-    req.on('timeout', () => req.destroy(new Error('Hosts URL fetch timeout')));
-    req.on('error', reject);
-    req.end();
+      req.on('error', finish);
+      req.end();
+    }, finish);
   });
 }
 
@@ -81,6 +182,7 @@ function createHostsUpdater(options = {}) {
   const getSettings = typeof options.getSettings === 'function' ? options.getSettings : () => ({});
   const applyPatch = typeof options.applyPatch === 'function' ? options.applyPatch : () => null;
   const saveSettings = typeof options.saveSettings === 'function' ? options.saveSettings : () => false;
+  const restoreSettings = typeof options.restoreSettings === 'function' ? options.restoreSettings : () => {};
   const clearGateway = typeof options.clearGateway === 'function' ? options.clearGateway : () => {};
   const logger = options.logger || console;
   let timer = null;
@@ -98,15 +200,22 @@ function createHostsUpdater(options = {}) {
     try {
       const hosts = await fetchText(normalizedUrl, options);
       const parsed = parseHostsText(hosts);
+      if (!parsed.validEntries) throw new Error('Hosts URL did not contain any valid mappings');
       const lastUpdatedAt = Date.now();
       if (save) {
+        const previousSettings = JSON.parse(JSON.stringify(getSettings()));
         applyPatch({
           wallhubSteamAccessHosts: hosts,
           wallhubSteamAccessHostsUrl: normalizedUrl,
           wallhubSteamAccessHostsLastUpdatedAt: lastUpdatedAt,
           wallhubSteamAccessHostsLastError: '',
         });
-        saveSettings();
+        if (saveSettings() !== true) {
+          restoreSettings(previousSettings);
+          const error = new Error('Failed to save Hosts settings');
+          error.code = 'HOSTS_SETTINGS_SAVE_FAILED';
+          throw error;
+        }
         clearGateway();
         schedule();
       }
@@ -118,15 +227,17 @@ function createHostsUpdater(options = {}) {
         lastUpdatedAt,
       };
     } catch (e) {
-      if (save) {
+      if (save && e.code !== 'HOSTS_SETTINGS_SAVE_FAILED') {
+        const previousSettings = JSON.parse(JSON.stringify(getSettings()));
         try {
           applyPatch({
             wallhubSteamAccessHostsUrl: normalizedUrl,
             wallhubSteamAccessHostsLastError: e.message || String(e),
           });
-          saveSettings();
-          schedule();
+          if (saveSettings() === true) schedule();
+          else restoreSettings(previousSettings);
         } catch (patchErr) {
+          restoreSettings(previousSettings);
           logger.warn('[SteamAccess] failed to persist hosts fetch error:', patchErr.message);
         }
       }
@@ -162,6 +273,8 @@ module.exports = {
   DEFAULT_HOSTS_FETCH_MAX_BYTES,
   DEFAULT_HOSTS_FETCH_TIMEOUT_MS,
   parseHostsText,
+  isPublicAddress,
+  resolvePublicTarget,
   fetchText,
   createHostsUpdater,
 };

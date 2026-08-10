@@ -51,6 +51,12 @@ function createRuntimeSettings(options = {}) {
     return updateSettings(cacheSettingsStore.state);
   }
 
+  function saveChecked() {
+    const saved = cacheSettingsStore.save(settings());
+    updateSettings(cacheSettingsStore.state);
+    return saved;
+  }
+
   function getMaxConcurrentDownloads() {
     return normalizeMaxConcurrentDownloads(settings().maxConcurrentDownloads || env.WALLHUB_MAX_CONCURRENT_DOWNLOADS || 1);
   }
@@ -102,8 +108,16 @@ function createRuntimeSettings(options = {}) {
     return getSteamAccessMode() === 'hosts';
   }
 
+  function steamAccessCoreEnhanceEnabled() {
+    return !!settings().wallhubSteamAccessEnhance;
+  }
+
+  function steamAccessWebApiGatewayEnabled() {
+    return steamAccessCoreEnhanceEnabled() && !steamAccessDirectWebApiEnabled();
+  }
+
   function steamAccessGatewayEnabled() {
-    return !!settings().wallhubSteamAccessEnhance || steamAccessStaticCdnEnhanceEnabled() || env.WALLHUB_STEAM_ACCESS_ENHANCE === '1';
+    return steamAccessCoreEnhanceEnabled() || steamAccessStaticCdnEnhanceEnabled();
   }
 
   function steamAccessDirectWebApiEnabled() {
@@ -147,6 +161,7 @@ function createRuntimeSettings(options = {}) {
   }
 
   function steamAccessStaticCdnEnhanceEnabled() {
+    if (!steamAccessCoreEnhanceEnabled()) return false;
     const controls = getSteamAccessStaticCdnHosts();
     return !!settings().wallhubSteamAccessStaticCdnEnhance ||
       !!controls.imagesSteamusercontent.enhance ||
@@ -155,6 +170,7 @@ function createRuntimeSettings(options = {}) {
   }
 
   function steamAccessStaticCdnHostEnhanceEnabled(hostname) {
+    if (!steamAccessCoreEnhanceEnabled()) return false;
     if (env.WALLHUB_STEAM_ACCESS_STATIC_CDN === '1') return true;
     const key = staticCdnHostControlKey(hostname);
     if (key) return !!getSteamAccessStaticCdnHosts()[key]?.enhance;
@@ -234,14 +250,14 @@ function createRuntimeSettings(options = {}) {
     const bridgeToken = envValue('WALLHUB_DEPOT_RESOLVER_TOKEN');
     const brokerUrl = envValue('WALLHUB_DEPOT_WEBAPI_BROKER_URL');
     const brokerToken = envValue('WALLHUB_DEPOT_WEBAPI_BROKER_TOKEN') || bridgeToken;
-    if (steamAccessGatewayEnabled() && bridgeUrl && bridgeToken) {
+    if (steamAccessWebApiGatewayEnabled() && bridgeUrl && bridgeToken) {
       nextEnv.WALLHUB_DEPOT_RESOLVER_URL = bridgeUrl;
       nextEnv.WALLHUB_DEPOT_RESOLVER_TOKEN = bridgeToken;
     } else {
       delete nextEnv.WALLHUB_DEPOT_RESOLVER_URL;
       delete nextEnv.WALLHUB_DEPOT_RESOLVER_TOKEN;
     }
-    if (steamAccessGatewayEnabled() && brokerUrl && brokerToken) {
+    if (steamAccessWebApiGatewayEnabled() && brokerUrl && brokerToken) {
       nextEnv.WALLHUB_DEPOT_WEBAPI_BROKER_URL = brokerUrl;
       nextEnv.WALLHUB_DEPOT_WEBAPI_BROKER_TOKEN = brokerToken;
     } else {
@@ -321,6 +337,7 @@ function createRuntimeSettings(options = {}) {
     setState: updateSettings,
     load,
     save,
+    saveChecked,
     snapshot,
     applyPatch,
     getMaxConcurrentDownloads,
@@ -339,6 +356,8 @@ function createRuntimeSettings(options = {}) {
     buildSteamContentEnv,
     describeSteamCdnRouteStrategy,
     steamAccessGatewayEnabled,
+    steamAccessCoreEnhanceEnabled,
+    steamAccessWebApiGatewayEnabled,
     steamAccessDirectWebApiEnabled,
     getSteamAccessExperimental,
     getSteamAccessHostBlacklist,

@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { dohEndpointUrl, parseDnsRecords } = require('./resolver');
+const { dohEndpointUrl, parseDnsRecords, createRequestDeadline } = require('./resolver');
 const { createResolver } = require('./resolver/multiSource');
 const { resolveHostsText } = require('./resolver/hosts');
 
@@ -21,6 +21,24 @@ test('hosts resolver returns forced route metadata', () => {
 
 test('parseDnsRecords rejects invalid DNS response', () => {
   assert.throws(() => parseDnsRecords(Buffer.from([1, 2, 3])), /invalid DNS response/);
+});
+
+test('DoH request deadline destroys a request that never completes', async () => {
+  let destroyedWith = null;
+  const listeners = new Map();
+  const req = {
+    once(event, listener) { listeners.set(event, listener); },
+    destroy(error) {
+      destroyedWith = error;
+      const listener = listeners.get('error');
+      if (listener) listener(error);
+    },
+  };
+
+  createRequestDeadline(req, 5, 'DoH timeout');
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  assert.match(destroyedWith && destroyedWith.message, /DoH timeout/);
 });
 
 test('selected DoH endpoints are exclusive in fastest mode', () => {

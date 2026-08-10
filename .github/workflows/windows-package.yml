@@ -34,7 +34,7 @@ jobs:
       - name: Verify source
         run: |
           npm ci --no-audit --no-fund
-          npm test
-          npx tsc --noEmit
-          npm run build:ui
-          python -m py_compile tools/mpkg/mobile_mpkg.py tools/mpkg/wallpaper_engine_toolkit.py
+          python -m pip install --disable-pip-version-check -r tools/mpkg/requirements.txt
+          npm run check
+          python -m py_compile tools/mpkg/mobile_mpkg.py
+          python -m unittest tools/mpkg/test_mobile_mpkg.py

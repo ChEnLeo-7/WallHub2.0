@@ -26,6 +26,7 @@ export function Dialog({
   lightweight,
   titleFullWidth,
   closeButtonClassName,
+  dismissible = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -43,10 +44,16 @@ export function Dialog({
   lightweight?: boolean;
   titleFullWidth?: boolean;
   closeButtonClassName?: string;
+  dismissible?: boolean;
 }) {
+  const titleId = React.useId();
+  const panelRef = React.useRef<HTMLDivElement>(null);
+
   React.useEffect(() => {
     if (!open) return;
 
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = window.requestAnimationFrame(() => panelRef.current?.focus());
     const { style } = document.body;
     if (dialogLockCount === 0) {
       previousBodyOverflow = style.overflow;
@@ -61,13 +68,39 @@ export function Dialog({
     dialogLockCount += 1;
 
     return () => {
+      window.cancelAnimationFrame(frame);
       dialogLockCount = Math.max(0, dialogLockCount - 1);
       if (dialogLockCount === 0) {
         style.overflow = previousBodyOverflow;
         style.paddingRight = previousBodyPaddingRight;
       }
+      previousFocus?.focus();
     };
   }, [open]);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape' && dismissible) {
+      event.preventDefault();
+      onOpenChange(false);
+      return;
+    }
+    if (event.key !== 'Tab' || !panelRef.current) return;
+    const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+    if (!focusable.length) {
+      event.preventDefault();
+      panelRef.current.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   return (
     <AnimatePresence>
@@ -78,20 +111,27 @@ export function Dialog({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) onOpenChange(false);
+            if (dismissible && event.target === event.currentTarget) onOpenChange(false);
           }}
         >
           <motion.div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={bare ? undefined : titleId}
+            aria-label={bare && typeof title === 'string' ? title : undefined}
+            tabIndex={-1}
+            onKeyDown={handleKeyDown}
             layout={!lightweight}
             className={cn(
               bare
                 ? cn(
                     fitContent ? 'w-auto' : 'w-full',
-                    'touch-auto overflow-hidden rounded-2xl',
+                    'touch-auto overflow-hidden rounded-2xl outline-none',
                     fixedHeight ? 'h-[calc(100dvh-1rem)] sm:h-[88vh]' : 'max-h-[92vh]',
                   )
                 : cn(
-                    'flex touch-auto flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 text-popover-foreground shadow-panel backdrop-blur',
+                    'flex touch-auto flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 text-popover-foreground shadow-panel outline-none backdrop-blur',
                     fitContent ? 'w-auto' : 'w-full',
                     fixedHeight ? 'h-[calc(100dvh-1rem)] sm:h-[88vh]' : 'max-h-[92vh]',
                   ),
@@ -114,10 +154,12 @@ export function Dialog({
             ) : (
               <>
                 <div className="relative border-b border-border/50 px-5 py-4">
-                  <div className={cn('min-w-0 text-base font-semibold tracking-tight', titleFullWidth ? 'w-full' : 'pr-10')}>{title}</div>
-                  <Button className={cn('absolute right-5 top-4', closeButtonClassName)} variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} aria-label="关闭">
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <div id={titleId} className={cn('min-w-0 text-base font-semibold tracking-tight', titleFullWidth ? 'w-full' : 'pr-10')}>{title}</div>
+                  {dismissible ? (
+                    <Button className={cn('absolute right-5 top-4', closeButtonClassName)} variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} aria-label="关闭">
+                      <X className="h-4 w-4" />
+                    </Button>
+                  ) : null}
                 </div>
                 <ScrollArea ref={bodyRef} className={cn('min-h-0 p-4 sm:p-5', fitContent ? 'flex-none' : 'flex-1', bodyClassName)}>{children}</ScrollArea>
                 {footer ? <div className={cn("grid grid-cols-2 gap-2 border-t border-border/50 px-4 py-3 sm:flex sm:flex-wrap sm:justify-end sm:px-5 sm:py-4", footerClassName)}>{footer}</div> : null}

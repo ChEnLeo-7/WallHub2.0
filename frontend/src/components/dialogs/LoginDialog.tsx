@@ -67,6 +67,10 @@ export function LoginDialogV2({
         if (data.status === 'success' && !passwordSuccessHandledRef.current) {
           passwordSuccessHandledRef.current = true;
           onSuccess();
+        } else if (data.code === 'STEAM_NETWORK_UNREACHABLE' || data.code === 'STEAM_LOGIN_TIMEOUT') {
+          setUseSteamToken(false);
+          setNeedsGuard(false);
+          setError(data.error || data.message || text.networkHint);
         } else if (data.status === 'needs-guard' || data.needsSteamGuard) {
           setUseSteamToken(true);
           setNeedsGuard(true);
@@ -79,7 +83,7 @@ export function LoginDialogV2({
       }
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [mode, onSuccess, open, passwordSession?.id, passwordSession?.status, text.guardRequired, text.loginFailed]);
+  }, [mode, onSuccess, open, passwordSession?.id, passwordSession?.status, text.guardRequired, text.loginFailed, text.networkHint]);
 
   React.useEffect(() => {
     if (!open || mode !== 'qr' || !qrSession?.id || ['success', 'error', 'cancelled'].includes(qrSession.status)) return;
@@ -123,6 +127,12 @@ export function LoginDialogV2({
       if (data.status === 'success') {
         passwordSuccessHandledRef.current = true;
         onSuccess();
+        return;
+      }
+      if (data.code === 'STEAM_NETWORK_UNREACHABLE' || data.code === 'STEAM_LOGIN_TIMEOUT') {
+        setUseSteamToken(false);
+        setNeedsGuard(false);
+        setError(data.error || data.message || text.networkHint);
         return;
       }
       if (data.status === 'needs-guard' || data.needsSteamGuard) {

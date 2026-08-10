@@ -137,7 +137,9 @@ function createSteamAccessPolicyFactory(options = {}) {
     const sniStrategies = routeStrategy ? [routeStrategy] : defaultSniStrategies(host, experimental);
     const familyPreference = shouldProbeSteamAccessIpv6(host) ? [6, 4] : [4];
     const budget = requestBudgetForHost(host, isStaticCdnHost);
-    const enhanceEnabled = !!enabled() && !!host && isGatewayHost(host) && !(directWebApi() && isSteamWebApiHost(host));
+    const enhanceEnabled = !!host &&
+      (routeOptions.forceEnhance === true || (!!enabled() && isGatewayHost(host))) &&
+      !(directWebApi() && isSteamWebApiHost(host));
     const connectionReuseEnabled = routeOptions.connectionReuse !== false && reuseConnectionForHost(host) !== false;
     const protocols = isSteamWebApiHost(host)
       ? ['h1']
@@ -170,7 +172,7 @@ function createSteamAccessPolicyFactory(options = {}) {
     if (proxy) return false;
     if (!opts || (opts.protocol || 'https:') !== 'https:') return false;
     if (opts.disableSteamAccessGateway) return false;
-    return forHost(opts.hostname).enhanceEnabled;
+    return forHost(opts.hostname, opts.routeOptions).enhanceEnabled;
   }
 
   return { forHost, shouldUse };

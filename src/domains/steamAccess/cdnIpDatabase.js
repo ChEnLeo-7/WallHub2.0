@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const githubSource = require('../steamkit/githubSource');
+const githubRoutes = require('../../infrastructure/http/githubRoutes');
 
 const DEFAULT_FILENAME = 'steam-access-cdn-db.json';
 const DEFAULT_SOURCE = 'https://raw.githubusercontent.com/mansourjabin/cdn-ip-database/main/data/resolved_ips.json';
@@ -155,7 +155,7 @@ function createCdnIpDatabase(options = {}) {
   }
 
   function sourceRoutes() {
-    const routes = githubSource.githubProxyCandidates(sourceUrl, { env, acceleratorMode });
+    const routes = githubRoutes.githubProxyCandidates(sourceUrl, { env, acceleratorMode });
     if (routes.length > 1) {
       logger.log(`[SteamAccess] CDN database route order: ${routes.map(routeName).join(' -> ')}`);
     }

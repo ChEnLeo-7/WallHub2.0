@@ -165,7 +165,7 @@ test('MPKG compact profile uses an isolated cache file and forwards the profile 
       logger: { log() {}, warn() {} },
     });
 
-    const prepared = await service.prepareDownloadFile('123', 'Demo', 'compact');
+    const prepared = await service.prepareDownloadFile('wallpaper-123', 'Demo', ' COMPACT ');
     const result = prepared.filePath;
 
     assert.equal(result, path.join(itemDir, 'Mpkg', '123.compact.mpkg'));

@@ -1,233 +1,367 @@
-import { useCallback } from 'react';
-import { queryWorkshop, type WorkshopItem } from '@/lib/api';
-import { parseDetailTagSearch } from '@/lib/detailTagSearch.mjs';
+import * as React from 'react';
 import {
-  normalizeFilterTypes,
-  normalizeRatings,
-  type Filters,
-} from '@/lib/normalizers';
+  getDetailsBatch,
+  queryWorkshop,
+  waitSteamAccessReady,
+  type WorkshopItem,
+} from '@/lib/api';
+import type { Filters } from '@/lib/normalizers';
+import {
+  buildQuery,
+  findWorkshopCacheEntry,
+  workshopCacheKey,
+  WORKSHOP_QUERY_CACHE_TTL_MS,
+  type WorkshopCacheEntry,
+  type WorkshopQuerySnapshot,
+} from '@/lib/workshopQuery';
+import { getNextPagePrefetchPlan } from '@/lib/paginationPrefetch.mjs';
+import { pruneWorkshopCache } from '@/lib/workshopCache.mjs';
+import { scheduleIdleTask } from '@/lib/idleTask.mjs';
 
-const APPID = 431960;
+export type { WorkshopQuerySnapshot } from '@/lib/workshopQuery';
 
-export const WORKSHOP_QUERY_CACHE_TTL_MS = 2 * 60 * 1000; // 1-3 分钟窗口，取中值 2 分钟
-const ALL_RESOLUTION_TAGS = [
-  'Standard',
-  '1280 x 720',
-  '1366 x 768',
-  '1920 x 1080',
-  '2560 x 1440',
-  '3840 x 2160',
-  'Ultrawide',
-  '2560 x 1080',
-  '3440 x 1440',
-  'Dual monitor',
-  '3840 x 1080',
-  '5120 x 1440',
-  '7680 x 2160',
-  'Triple monitor',
-  '4096 x 768',
-  '5760 x 1080',
-  '7680 x 1440',
-  '11520 x 2160',
-  'Portrait',
-  '720 x 1280',
-  '1080 x 1920',
-  '1440 x 2560',
-  '2160 x 3840',
-  'Other resolution',
-  'Dynamic resolution',
-];
-const PERSONAL_FILTER_PARAM_MAP: Record<string, { browsefilter?: string; special_filter?: number; path?: string; browsesort?: string; actualsort?: string; section?: string }> = {
-  mysubscriptions: { browsefilter: 'mysubscriptions', path: 'myfiles' },
-  myfavorites: { browsefilter: 'myfavorites', path: 'myfiles' },
-  voted: { browsefilter: 'myvotes', path: 'myfiles' },
-  // Steam's current Workshop UI exposes friend/follow filters through
-  // special_filter rather than the old browsefilter aliases.
-  friendsfavorites: { special_filter: 2 },
-  friendscreated: { special_filter: 3 },
-  followedcreated: { special_filter: 4 },
-};
-
-export type WorkshopCacheEntry = {
+type UseWorkshopQueryOptions = {
+  enabled: boolean;
+  filters: Filters;
+  page: number;
   pageSize: number;
-  items: WorkshopItem[];
-  total: number;
-  totalPages?: number;
-  source?: string;
-  fallbackUsed?: boolean;
-  cachedAt: number;
+  exactPhrase: boolean;
+  nsfw: boolean;
+  prefetchNextPage: boolean;
+  steamAccessEnhance: boolean;
+  steamDataSource: 'community' | 'webapi' | 'cm';
+  refreshToken: number;
+  setPage: React.Dispatch<React.SetStateAction<number>>;
+  onWarning: (message: string) => void;
 };
 
-export function workshopCacheKey(filters: Filters, page: number, pageSize: number, exactPhrase: boolean) {
-  const query = exactPhrase ? { filters, exactPhrase: true } : { filters };
-  return JSON.stringify(page === 1 ? { ...query, page } : { ...query, page, pageSize });
-}
+const MAX_WORKSHOP_QUERY_CACHE_ENTRIES = 60;
 
-export function findWorkshopCacheEntry(cache: Map<string, WorkshopCacheEntry>, filters: Filters, page: number, pageSize: number, exactPhrase: boolean) {
-  const exact = cache.get(workshopCacheKey(filters, page, pageSize, exactPhrase));
-  if (exact && exact.items.length >= pageSize && !isCacheStale(exact)) return exact;
-  let best: WorkshopCacheEntry | undefined;
-  for (const [key, entry] of cache) {
-    try {
-      const parsed = JSON.parse(key);
-      if (parsed.page !== page || JSON.stringify(parsed.filters) !== JSON.stringify(filters) || !!parsed.exactPhrase !== !!exactPhrase) continue;
-      if (entry.items.length < pageSize) continue;
-      if (isCacheStale(entry)) continue;
-      if (!best || entry.items.length < best.items.length) best = entry;
-    } catch {}
-  }
-  return best;
-}
+export function useWorkshopQuery({
+  enabled,
+  filters,
+  page,
+  pageSize,
+  exactPhrase,
+  nsfw,
+  prefetchNextPage,
+  steamAccessEnhance,
+  steamDataSource,
+  refreshToken,
+  setPage,
+  onWarning,
+}: UseWorkshopQueryOptions) {
+  const [items, setItems] = React.useState<WorkshopItem[]>([]);
+  const [total, setTotal] = React.useState(0);
+  const [serverTotalPages, setServerTotalPages] = React.useState(0);
+  const [dataSource, setDataSource] = React.useState('');
+  const [fallbackUsed, setFallbackUsed] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
+  const [warmingSteamIp, setWarmingSteamIp] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const [suppressGridLayoutAnimation, setSuppressGridLayoutAnimation] = React.useState(false);
+  const queryCacheRef = React.useRef(new Map<string, WorkshopCacheEntry>());
+  const queryRequestRef = React.useRef(0);
+  const searchRequestRef = React.useRef<AbortController | null>(null);
+  const prefetchRequestRef = React.useRef<AbortController | null>(null);
+  const prefetchRequestTokenRef = React.useRef(0);
+  const backgroundDetailsTokenRef = React.useRef(0);
+  const backgroundDetailsCancelRef = React.useRef<(() => void) | null>(null);
+  const forceRefreshRef = React.useRef(false);
+  const restoreKeyRef = React.useRef('');
+  const warningShownAtRef = React.useRef(0);
 
-function isCacheStale(entry: WorkshopCacheEntry): boolean {
-  return (Date.now() - entry.cachedAt) > WORKSHOP_QUERY_CACHE_TTL_MS;
-}
+  const cancelNextPagePrefetch = React.useCallback(() => {
+    prefetchRequestTokenRef.current += 1;
+    prefetchRequestRef.current?.abort();
+    prefetchRequestRef.current = null;
+  }, []);
 
-export function buildQuery(filters: Filters, page: number, pageSize: number, exactPhrase: boolean, nsfw = true) {
-  const queryTypeMap: Record<string, number> = { trend: 1, mostrecent: 2, toprated: 0, mostvotes: 11, totaluniquesubscribers: 16 };
-  const params: Record<string, string | number> = {
-    appid: APPID,
-    query_type: queryTypeMap[filters.sort] ?? 1,
-    page,
-    numperpage: pageSize,
-  };
-  const search = filters.search.trim();
-  const detailTagSearch = parseDetailTagSearch(search);
-  const workshopId = extractWorkshopId(search);
-  if (workshopId) params.workshop_id = workshopId;
-  else if (search.startsWith('author:')) params.creator = search.replace(/^author:/, '').trim();
-  else if (detailTagSearch.length === 0 && search) params.search_text = search;
-  if (exactPhrase && search && !workshopId && !search.startsWith('author:') && detailTagSearch.length === 0) params.exact_phrase = 1;
-  if (filters.personalFilter) {
-    const personal = PERSONAL_FILTER_PARAM_MAP[filters.personalFilter] || { browsefilter: filters.personalFilter };
-    if (personal.browsefilter) params.browsefilter = personal.browsefilter;
-    if (personal.special_filter != null) params.special_filter = personal.special_filter;
-    if (personal.path) params.path = personal.path;
-    if (personal.browsesort) params.browsesort = personal.browsesort;
-    if (personal.actualsort) params.actualsort = personal.actualsort;
-    if (personal.section) params.section = personal.section;
-    params.sortmethod = filters.personalSort;
-  }
-  if (!filters.personalFilter && filters.days && filters.sort === 'trend' && filters.days !== '0') params.days = Number(filters.days);
+  const cancelBackgroundDetails = React.useCallback(() => {
+    backgroundDetailsTokenRef.current += 1;
+    backgroundDetailsCancelRef.current?.();
+    backgroundDetailsCancelRef.current = null;
+  }, []);
 
-  const tags: string[] = [...detailTagSearch];
-  const validTypes = normalizeFilterTypes(filters.types);
-  if (validTypes.length === 1) tags.push(validTypes[0]);
-  if (validTypes.length > 1 && validTypes.length < 4) {
-    validTypes.forEach((type, index) => {
-      params[`type_or[${index}]`] = type;
+  const cancelActiveQuery = React.useCallback(() => {
+    queryRequestRef.current += 1;
+    searchRequestRef.current?.abort();
+    searchRequestRef.current = null;
+    cancelNextPagePrefetch();
+    cancelBackgroundDetails();
+    setWarmingSteamIp(false);
+    setLoading(false);
+  }, [cancelBackgroundDetails, cancelNextPagePrefetch]);
+
+  const clearCache = React.useCallback(() => {
+    queryCacheRef.current.clear();
+  }, []);
+
+  const markForceRefresh = React.useCallback(() => {
+    forceRefreshRef.current = true;
+  }, []);
+
+  const restoreState = React.useCallback((snapshot: WorkshopQuerySnapshot) => {
+    cancelActiveQuery();
+    restoreKeyRef.current = workshopCacheKey(
+      snapshot.filters,
+      snapshot.page,
+      pageSize,
+      !!snapshot.filters.search.trim() && snapshot.exactPhrase,
+      snapshot.steamDataSource,
+    );
+    setItems(snapshot.items);
+    setTotal(snapshot.total);
+    setServerTotalPages(snapshot.serverTotalPages);
+    setDataSource(snapshot.dataSource);
+    setFallbackUsed(snapshot.fallbackUsed);
+    setError(snapshot.error);
+    setLoading(false);
+    setWarmingSteamIp(false);
+  }, [cancelActiveQuery, pageSize]);
+
+  const scheduleBackgroundDetails = React.useCallback((baseItems: WorkshopItem[], cacheKey: string, totalValue: number, requestId: number) => {
+    const needsDetails = baseItems.filter((item) => {
+      const tags = Array.isArray(item.tags) ? item.tags : [];
+      const preview = String(item.preview_url || '');
+      return item.detailsPending || !preview || /[?&](?:ima|impolicy)=/i.test(preview) || !tags.length || !item.file_size || item.file_size === '未知';
     });
-  }
-  const validRatings = normalizeRatings(filters.ratings, nsfw, undefined, filters.rating);
-  if (validRatings.length === 1 && validRatings[0]) tags.push(validRatings[0]);
-  if (validRatings.length > 1) {
-    validRatings.filter(Boolean).forEach((rating, index) => {
-      params[`rating_or[${index}]`] = rating;
+    if (!needsDetails.length) return;
+
+    const token = ++backgroundDetailsTokenRef.current;
+    backgroundDetailsCancelRef.current?.();
+    const batches = Array.from({ length: Math.ceil(needsDetails.length / 12) }, (_, index) => needsDetails.slice(index * 12, index * 12 + 12));
+    const runBatch = (batchIndex: number) => {
+      const batch = batches[batchIndex];
+      if (!batch || token !== backgroundDetailsTokenRef.current || requestId !== queryRequestRef.current) return;
+      backgroundDetailsCancelRef.current = scheduleIdleTask(() => {
+        const requestedIds = new Set(batch.map((item) => String(item.publishedfileid)));
+        const applyDetails = (detailItems: WorkshopItem[]) => {
+          if (token !== backgroundDetailsTokenRef.current || requestId !== queryRequestRef.current) return;
+          const detailsById = new Map(detailItems.map((item) => [String(item.publishedfileid), item]));
+          const mergeItem = (item: WorkshopItem): WorkshopItem => {
+            const id = String(item.publishedfileid);
+            if (!requestedIds.has(id)) return item;
+            const detail = detailsById.get(id);
+            if (!detail) return { ...item, detailsPending: false };
+            return {
+              ...item,
+              ...detail,
+              title: detail.title || item.title,
+              preview_url: detail.preview_url || item.preview_url,
+              short_description: detail.short_description || item.short_description,
+              author: detail.author || item.author,
+              creator: detail.creator || item.creator,
+              tags: detail.tags && detail.tags.length ? detail.tags : item.tags,
+              detailsPending: false,
+            };
+          };
+          setSuppressGridLayoutAnimation(true);
+          setItems((current) => current.map(mergeItem));
+          window.requestAnimationFrame(() => setSuppressGridLayoutAnimation(false));
+          const previous = queryCacheRef.current.get(cacheKey);
+          if (previous) {
+            queryCacheRef.current.set(cacheKey, {
+              ...previous,
+              pageSize,
+              items: previous.items.map(mergeItem),
+              total: previous.total || totalValue,
+            });
+            pruneWorkshopCache(queryCacheRef.current, {
+              ttlMs: WORKSHOP_QUERY_CACHE_TTL_MS,
+              maxEntries: MAX_WORKSHOP_QUERY_CACHE_ENTRIES,
+            });
+          }
+        };
+        getDetailsBatch(batch.map((item) => item.publishedfileid))
+          .then(applyDetails)
+          .catch((detailsError) => {
+            applyDetails([]);
+            console.warn('[details-batch]', detailsError);
+          })
+          .finally(() => {
+            if (token !== backgroundDetailsTokenRef.current || requestId !== queryRequestRef.current) return;
+            if (batchIndex + 1 < batches.length) runBatch(batchIndex + 1);
+            else backgroundDetailsCancelRef.current = null;
+          });
+      });
+    };
+    runBatch(0);
+  }, [pageSize]);
+
+  const prefetchFollowingPage = React.useCallback((currentPage: number, currentTotalPages: number) => {
+    const nextPage = currentPage + 1;
+    const alreadyCached = !!findWorkshopCacheEntry(queryCacheRef.current, filters, nextPage, pageSize, exactPhrase, steamDataSource);
+    const plan = getNextPagePrefetchPlan({
+      enabled: prefetchNextPage,
+      page: currentPage,
+      totalPages: currentTotalPages,
+      alreadyCached,
     });
-  }
-  const validGenres = filters.genres.filter((g) => {
-    const GENRES = [
-      { id: 'Abstract' }, { id: 'Animal' }, { id: 'Anime' }, { id: 'Cartoon' }, { id: 'CGI' },
-      { id: 'Cyberpunk' }, { id: 'Fantasy' }, { id: 'Game' }, { id: 'Girls' }, { id: 'Guys' },
-      { id: 'Landscape' }, { id: 'Medieval' }, { id: 'Memes' }, { id: 'MMD' }, { id: 'Music' },
-      { id: 'Nature' }, { id: 'Pixel art' }, { id: 'Relaxing' }, { id: 'Retro' }, { id: 'Sci-Fi' },
-      { id: 'Sports' }, { id: 'Technology' }, { id: 'Television' }, { id: 'Vehicle' }, { id: 'Unspecified' }
-    ];
-    return GENRES.some((x) => x.id === g);
-  });
-  if (validGenres.length === 1) tags.push(validGenres[0]);
-  if (validGenres.length > 1 && validGenres.length < 25) {
-    validGenres.forEach((genre, index) => {
-      params[`genre_or[${index}]`] = genre;
-    });
-  }
-  tags.forEach((tag, index) => {
-    params[`requiredtags[${index}]`] = tag;
-  });
-  const resolutionTags = filters.resolutions?.length === ALL_RESOLUTION_TAGS.length ? [] : (filters.resolutions || []);
-  (filters.officialTags || []).forEach((tag) => {
-    if (!tags.includes(tag)) params[`requiredtags[${Object.keys(params).filter((key) => /^requiredtags/.test(key)).length}]`] = tag;
-  });
-  if (resolutionTags.length === 1) {
-    const tag = resolutionTags[0];
-    if (!tags.includes(tag)) params[`requiredtags[${Object.keys(params).filter((key) => /^requiredtags/.test(key)).length}]`] = tag;
-  }
-  const hasPartialGenreSelection = validGenres.length > 0 && validGenres.length < 25;
-  // Explicit Workshop tag selections keep their Community-compatible query marker.
-  if (detailTagSearch.length > 0 || hasPartialGenreSelection || filters.officialTags.length > 0 || resolutionTags.length > 0) {
-    params.community_tag_filter = '1';
-  }
-  return params;
-}
+    if (!plan) return;
 
-function extractWorkshopId(value: string) {
-  const raw = String(value || '').trim();
-  if (/^\d{6,}$/.test(raw)) return raw;
-  const match = raw.match(/(?:publishedfileid|id)=([0-9]{6,})/i) || raw.match(/sharedfiles\/filedetails\/\?id=([0-9]{6,})/i);
-  return match ? match[1] : '';
-}
+    cancelNextPagePrefetch();
+    const controller = new AbortController();
+    const token = prefetchRequestTokenRef.current;
+    prefetchRequestRef.current = controller;
+    const cacheKey = workshopCacheKey(filters, plan.page, pageSize, exactPhrase, steamDataSource);
+    void queryWorkshop(buildQuery(filters, plan.page, pageSize, exactPhrase, nsfw, steamDataSource), { signal: controller.signal })
+      .then((data) => {
+        if (token !== prefetchRequestTokenRef.current || controller.signal.aborted) return;
+        const totalValue = data.total || data.items.length;
+        const nextEntry = {
+          pageSize,
+          items: data.items,
+          total: totalValue,
+          totalPages: Math.max(1, data.totalPages || Math.ceil(totalValue / pageSize)),
+          source: data.source,
+          fallbackUsed: data.fallbackUsed,
+          cachedAt: Date.now(),
+        };
+        const previous = queryCacheRef.current.get(cacheKey);
+        if (!previous || previous.items.length <= nextEntry.items.length) queryCacheRef.current.set(cacheKey, nextEntry);
+        pruneWorkshopCache(queryCacheRef.current, {
+          ttlMs: WORKSHOP_QUERY_CACHE_TTL_MS,
+          maxEntries: MAX_WORKSHOP_QUERY_CACHE_ENTRIES,
+        });
+      })
+      .catch((prefetchError) => {
+        if (!controller.signal.aborted) console.warn('[next-page-prefetch]', prefetchError);
+      })
+      .finally(() => {
+        if (token === prefetchRequestTokenRef.current && prefetchRequestRef.current === controller) prefetchRequestRef.current = null;
+      });
+  }, [cancelNextPagePrefetch, exactPhrase, filters, nsfw, pageSize, prefetchNextPage, steamDataSource]);
 
-export interface UseWorkshopQueryResult {
-  items: WorkshopItem[];
-  total: number;
-  loading: boolean;
-  error: string;
-  loadItems: () => Promise<void>;
-}
+  const loadItems = React.useCallback(async () => {
+    if (!enabled) return;
+    const currentKey = workshopCacheKey(filters, page, pageSize, exactPhrase, steamDataSource);
+    if (restoreKeyRef.current === currentKey) {
+      restoreKeyRef.current = '';
+      return;
+    }
 
-export function useWorkshopQuery(
-  filters: Filters,
-  page: number,
-  pageSize: number,
-  effectiveExactPhrase: boolean,
-  nsfw: boolean,
-  queryCacheRef: React.MutableRefObject<Map<string, WorkshopCacheEntry>>,
-  queryRequestRef: React.MutableRefObject<number>,
-  setItems: (items: WorkshopItem[]) => void,
-  setTotal: (total: number) => void,
-  setLoading: (loading: boolean) => void,
-  setError: (error: string) => void,
-): UseWorkshopQueryResult {
-  const loadItems = useCallback(async () => {
-    const cacheKey = workshopCacheKey(filters, page, pageSize, effectiveExactPhrase);
-    const cached = findWorkshopCacheEntry(queryCacheRef.current, filters, page, pageSize, effectiveExactPhrase);
+    cancelActiveQuery();
+    const forceThis = forceRefreshRef.current;
+    if (forceThis) forceRefreshRef.current = false;
+    const cacheKey = workshopCacheKey(filters, page, pageSize, exactPhrase, steamDataSource);
+    const cached = forceThis ? null : findWorkshopCacheEntry(queryCacheRef.current, filters, page, pageSize, exactPhrase, steamDataSource);
     if (cached) {
       setError('');
       setItems(cached.items.slice(0, pageSize));
       setTotal(cached.total);
+      setServerTotalPages(cached.totalPages || Math.ceil(cached.total / pageSize));
+      setDataSource(cached.source || '');
+      setFallbackUsed(!!cached.fallbackUsed);
       setLoading(false);
+      scheduleBackgroundDetails(cached.items.slice(0, pageSize), cacheKey, cached.total, queryRequestRef.current);
+      prefetchFollowingPage(page, cached.totalPages || Math.ceil(cached.total / pageSize));
       return;
     }
 
     const requestId = ++queryRequestRef.current;
+    const searchController = new AbortController();
+    searchRequestRef.current = searchController;
     setItems([]);
     setLoading(true);
     setError('');
     try {
-      const data = await queryWorkshop(buildQuery(filters, page, pageSize, effectiveExactPhrase, nsfw));
+      const queryParams = buildQuery(filters, page, pageSize, exactPhrase, nsfw, steamDataSource);
+      if (forceThis) queryParams._refresh = 1;
+      if (steamAccessEnhance && steamDataSource !== 'community') {
+        setWarmingSteamIp(true);
+        await waitSteamAccessReady({ signal: searchController.signal });
+        if (requestId !== queryRequestRef.current) return;
+        setWarmingSteamIp(false);
+      }
+      const data = await queryWorkshop(queryParams, { signal: searchController.signal });
       if (requestId !== queryRequestRef.current) return;
-      const nextEntry = { pageSize, items: data.items, total: data.total || data.items.length, totalPages: data.totalPages, source: data.source, fallbackUsed: data.fallbackUsed, cachedAt: Date.now() };
-      const previous = queryCacheRef.current.get(cacheKey);
-      if (!previous || previous.items.length <= nextEntry.items.length) {
-        queryCacheRef.current.set(cacheKey, nextEntry);
+      if (data.warningCode === 'STEAM_WEBAPI_SLOW_OR_FAILED' && Date.now() - warningShownAtRef.current > 30000) {
+        warningShownAtRef.current = Date.now();
+        onWarning('api.steampowered.com 加载较慢或失败，可在实验性选项中调整 API 域名控制以改善连接。');
+      }
+      const responseTotal = data.total || data.items.length;
+      const responseTotalPages = Math.max(1, data.totalPages || Math.ceil(responseTotal / pageSize));
+      if (!data.items.length && responseTotal > 0 && page > responseTotalPages) {
+        setTotal(responseTotal);
+        setLoading(false);
+        setPage(responseTotalPages);
+        return;
+      }
+      const nextEntry = {
+        pageSize,
+        items: data.items,
+        total: responseTotal,
+        totalPages: responseTotalPages,
+        source: data.source,
+        fallbackUsed: data.fallbackUsed,
+        cachedAt: Date.now(),
+      };
+      if (!forceThis) {
+        const previous = queryCacheRef.current.get(cacheKey);
+        if (!previous || previous.items.length <= nextEntry.items.length) queryCacheRef.current.set(cacheKey, nextEntry);
+        pruneWorkshopCache(queryCacheRef.current, {
+          ttlMs: WORKSHOP_QUERY_CACHE_TTL_MS,
+          maxEntries: MAX_WORKSHOP_QUERY_CACHE_ENTRIES,
+        });
       }
       setItems(data.items);
-      setTotal(data.total || data.items.length);
-    } catch (e) {
+      setTotal(responseTotal);
+      setServerTotalPages(responseTotalPages);
+      setDataSource(data.source || '');
+      setFallbackUsed(!!data.fallbackUsed);
+      scheduleBackgroundDetails(data.items, cacheKey, responseTotal, requestId);
+      prefetchFollowingPage(page, responseTotalPages);
+    } catch (queryError) {
       if (requestId !== queryRequestRef.current) return;
-      setError(e instanceof Error ? e.message : String(e));
+      if (queryError instanceof DOMException && queryError.name === 'AbortError') return;
+      if (queryError instanceof Error && queryError.name === 'AbortError') return;
+      setError(queryError instanceof Error ? queryError.message : String(queryError));
       setItems([]);
       setTotal(0);
+      setServerTotalPages(0);
+      setDataSource('');
+      setFallbackUsed(false);
     } finally {
-      if (requestId === queryRequestRef.current) setLoading(false);
+      if (requestId === queryRequestRef.current) {
+        if (searchRequestRef.current === searchController) searchRequestRef.current = null;
+        setWarmingSteamIp(false);
+        setLoading(false);
+      }
+      if (forceThis) forceRefreshRef.current = false;
     }
-  }, [effectiveExactPhrase, filters, nsfw, page, pageSize, queryCacheRef, queryRequestRef, setItems, setLoading, setError, setTotal]);
+  }, [cancelActiveQuery, enabled, exactPhrase, filters, nsfw, onWarning, page, pageSize, prefetchFollowingPage, refreshToken, scheduleBackgroundDetails, setPage, steamAccessEnhance, steamDataSource]);
+
+  React.useEffect(() => {
+    if (!prefetchNextPage) cancelNextPagePrefetch();
+  }, [cancelNextPagePrefetch, prefetchNextPage]);
+
+  React.useEffect(() => {
+    if (enabled) return;
+    cancelActiveQuery();
+  }, [cancelActiveQuery, enabled]);
+
+  React.useEffect(() => {
+    void loadItems();
+  }, [loadItems]);
+
+  React.useEffect(() => () => cancelActiveQuery(), [cancelActiveQuery]);
 
   return {
-    items: [],
-    total: 0,
-    loading: false,
-    error: '',
+    items,
+    total,
+    serverTotalPages,
+    dataSource,
+    fallbackUsed,
+    loading,
+    warmingSteamIp,
+    error,
+    suppressGridLayoutAnimation,
     loadItems,
+    cancelActiveQuery,
+    cancelNextPagePrefetch,
+    clearCache,
+    markForceRefresh,
+    restoreState,
   };
 }

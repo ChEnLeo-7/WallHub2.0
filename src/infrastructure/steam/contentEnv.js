@@ -4,25 +4,11 @@ const { normalizeSteamCdnRouteStrategy, normalizeSteamHttpProxyUrl } = require('
 
 const PROXY_ENV_KEYS = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'];
 
-const STEAM_CONTENT_NO_PROXY_HOSTS = [
-  'steamcontent.com',
-  '.steamcontent.com',
-  'steamserver.net',
-  '.steamserver.net',
-  'cm.steampowered.com',
-  '.cm.steampowered.com',
-  'steamstatic.com',
-  '.steamstatic.com',
-  'steamcdn-a.akamaihd.net',
-  'akamaihd.net',
-  '.akamaihd.net',
-  'cdn.cloudflare.steamstatic.com',
-  'fastly.steamstatic.com',
-  '.fastly.steamstatic.com',
-  'akamai.steamstatic.com',
-  '.akamai.steamstatic.com',
-  'lancache.steamcontent.com',
-];
+function stripProxyEnv(baseEnv = process.env) {
+  const env = Object.assign({}, baseEnv);
+  for (const key of PROXY_ENV_KEYS) delete env[key];
+  return env;
+}
 
 function applySteamHttpProxyEnvFromUrl(baseEnv = process.env, rawProxyUrl = '') {
   const env = Object.assign({}, baseEnv);
@@ -51,25 +37,29 @@ function buildSteamContentEnvForStrategy(baseEnv = process.env, options = {}) {
   const strategy = normalizeSteamCdnRouteStrategy(options.strategy);
   if (strategy === 'proxy') {
     const env = applySteamHttpProxyEnvFromUrl(baseEnv, options.proxyUrl || '');
-    const noProxy = mergeNoProxyValue(env.NO_PROXY || env.no_proxy || '', STEAM_CONTENT_NO_PROXY_HOSTS);
-    env.NO_PROXY = noProxy;
-    env.no_proxy = noProxy;
     delete env.WALLHUB_STEAM_CONTENT_DIRECT;
     env.WALLHUB_STEAM_CDN_ROUTE_STRATEGY = 'proxy';
     env.WALLHUB_STEAM_CONTENT_CDN_MODE = 'proxy';
     return env;
   }
-  const env = Object.assign({}, baseEnv);
+  const env = stripProxyEnv(baseEnv);
   delete env.WALLHUB_STEAM_CONTENT_DIRECT;
   env.WALLHUB_STEAM_CDN_ROUTE_STRATEGY = 'nearest';
   env.WALLHUB_STEAM_CONTENT_CDN_MODE = 'nearest';
   return env;
 }
 
+function buildSteamContentDirectEnv(baseEnv = process.env, strategy = 'nearest') {
+  return normalizeSteamCdnRouteStrategy(strategy) === 'proxy'
+    ? buildSteamContentEnvForStrategy(baseEnv, { strategy, proxyUrl: '' })
+    : buildSteamContentEnvForStrategy(baseEnv, { strategy: 'nearest' });
+}
+
 module.exports = {
   PROXY_ENV_KEYS,
-  STEAM_CONTENT_NO_PROXY_HOSTS,
   applySteamHttpProxyEnvFromUrl,
+  stripProxyEnv,
   mergeNoProxyValue,
   buildSteamContentEnvForStrategy,
+  buildSteamContentDirectEnv,
 };

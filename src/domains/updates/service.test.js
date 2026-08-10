@@ -11,9 +11,12 @@ const { spawnSync } = require('child_process');
 const {
   compareVersions,
   detectInstallMode,
+  isAllowedWallhubHost,
+  isWallhubReadAllowed,
   parseChecksum,
   parseReleaseChecksum,
   selectReleaseAsset,
+  assertTrustedGithubUrl,
   updaterLaunchRequest,
   spawnDetachedUpdater,
   UPDATE_REQUEST_FILE,
@@ -93,6 +96,7 @@ test('update download verifies a release body checksum without a checksum asset'
     mode: 'source',
     platform: 'linux',
     arch: 'x64',
+    checkGoogleReachability: async () => true,
     requestBuffer: async () => Buffer.from(JSON.stringify(bodyRelease)),
     downloadFile: async (_url, destination, options) => {
       fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -107,14 +111,110 @@ test('update download verifies a release body checksum without a checksum asset'
   service.stopSchedule();
 });
 
+test('update metadata stays direct while verified package downloads may use an accelerator', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-accelerated-update-'));
+  const payload = Buffer.from('accelerated archive');
+  const hash = crypto.createHash('sha256').update(payload).digest('hex');
+  const requestedUrls = [];
+  const downloadedUrls = [];
+  const tokens = [];
+  const service = createUpdateService({
+    currentVersion: '2.0.1',
+    projectRoot: root,
+    mode: 'source',
+    env: { GITHUB_TOKEN: 'secret-token' },
+    checkGoogleReachability: async () => false,
+    requestBuffer: async (url, options) => {
+      requestedUrls.push(url);
+      tokens.push(options.token);
+      return url.includes('sha256')
+        ? Buffer.from(`${hash}  WallHub-Source.zip`)
+        : Buffer.from(JSON.stringify(release()));
+    },
+    downloadFile: async (url, destination, options) => {
+      downloadedUrls.push(url);
+      tokens.push(options.token);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.writeFileSync(destination, payload);
+    },
+  });
+
+  await service.checkNow();
+  service.startDownload();
+  await service._waitForDownload();
+
+  assert.equal(requestedUrls[0], 'https://api.github.com/repos/ChEnLeo-7/WallHub2.0/releases/latest');
+  assert.equal(requestedUrls[1], 'https://github.com/source.sha256');
+  assert.match(downloadedUrls[0], /^https:\/\/gh-proxy\.com\/https:\/\/github\.com\//);
+  assert.deepEqual(tokens, ['secret-token', 'secret-token', '']);
+  assert.equal(service.snapshot().status, 'downloaded');
+  service.stopSchedule();
+});
+
+test('update requests use original GitHub URLs when Google is reachable', async () => {
+  const requestedUrls = [];
+  const service = createUpdateService({
+    currentVersion: '2.0.1',
+    mode: 'source',
+    env: { GITHUB_TOKEN: 'secret-token' },
+    checkGoogleReachability: async () => true,
+    requestBuffer: async (url, options) => {
+      requestedUrls.push([url, options.token]);
+      return Buffer.from(JSON.stringify(release()));
+    },
+  });
+
+  await service.checkNow();
+
+  assert.deepEqual(requestedUrls, [[
+    'https://api.github.com/repos/ChEnLeo-7/WallHub2.0/releases/latest',
+    'secret-token',
+  ]]);
+  service.stopSchedule();
+});
+
+test('update metadata never falls back to an untrusted accelerator', async () => {
+  const requestedUrls = [];
+  const tokens = [];
+  const service = createUpdateService({
+    currentVersion: '2.0.1',
+    mode: 'source',
+    env: { GITHUB_TOKEN: 'secret-token' },
+    checkGoogleReachability: async () => true,
+    requestBuffer: async (url, options) => {
+      requestedUrls.push(url);
+      tokens.push(options.token);
+      if (url.startsWith('https://api.github.com/')) throw new Error('curl: (22) The requested URL returned error: 403');
+      return Buffer.from(JSON.stringify(release()));
+    },
+    logger: { log() {}, warn() {} },
+  });
+
+  await assert.rejects(() => service.checkNow(), /403/);
+  assert.deepEqual(requestedUrls, ['https://api.github.com/repos/ChEnLeo-7/WallHub2.0/releases/latest']);
+  assert.deepEqual(tokens, ['secret-token']);
+  service.stopSchedule();
+});
+
+test('update assets must use trusted HTTPS GitHub hosts', () => {
+  assert.equal(assertTrustedGithubUrl('https://github.com/example/archive.zip', ['github.com']), 'https://github.com/example/archive.zip');
+  assert.throws(() => assertTrustedGithubUrl('https://evil.example/archive.zip', ['github.com']), /untrusted/);
+  assert.throws(() => assertTrustedGithubUrl('http://github.com/example/archive.zip', ['github.com']), /untrusted/);
+  assert.throws(() => assertTrustedGithubUrl('https://github.com@evil.example/archive.zip', ['github.com']), /untrusted/);
+});
+
 test('update mutations require loopback when Origin is absent but allow same-origin LAN requests', () => {
-  assert.equal(isUpdateMutationAllowed({ headers: {}, socket: { remoteAddress: '127.0.0.1' } }), true);
-  assert.equal(isUpdateMutationAllowed({ headers: {}, socket: { remoteAddress: '::1' } }), true);
-  assert.equal(isUpdateMutationAllowed({ headers: {}, socket: { remoteAddress: '192.168.1.20' } }), false);
+  assert.equal(isUpdateMutationAllowed({ headers: { host: 'localhost:3090' }, socket: { remoteAddress: '127.0.0.1' } }), true);
+  assert.equal(isUpdateMutationAllowed({ headers: { host: '[::1]:3090' }, socket: { remoteAddress: '::1' } }), true);
+  assert.equal(isUpdateMutationAllowed({ headers: { host: '192.168.1.20:3090' }, socket: { remoteAddress: '192.168.1.20' } }), false);
+  assert.equal(isUpdateMutationAllowed({
+    headers: { host: '192.168.1.20:3090', 'sec-fetch-site': 'same-origin' },
+    socket: { remoteAddress: '192.168.1.20' },
+  }), true);
   assert.equal(isUpdateMutationAllowed({
     headers: { origin: 'http://wallhub.lan:3090', host: 'wallhub.lan:3090' },
     socket: { remoteAddress: '192.168.1.20' },
-  }), true);
+  }, { allowedHosts: 'wallhub.lan' }), true);
   assert.equal(isUpdateMutationAllowed({
     headers: { origin: 'http://evil.example', host: 'wallhub.lan:3090' },
     socket: { remoteAddress: '192.168.1.20' },
@@ -122,7 +222,48 @@ test('update mutations require loopback when Origin is absent but allow same-ori
   assert.equal(isUpdateMutationAllowed({
     headers: { origin: 'http://wallhub.lan:3090', host: 'wallhub.lan:3090', 'sec-fetch-site': 'cross-site' },
     socket: { remoteAddress: '192.168.1.20' },
-  }), false);
+  }, { allowedHosts: 'wallhub.lan' }), false);
+  assert.equal(isUpdateMutationAllowed({
+    headers: { origin: 'http://evil.example', host: 'evil.example', 'sec-fetch-site': 'same-origin' },
+    socket: { remoteAddress: '192.168.1.20' },
+  }), true);
+  assert.equal(isUpdateMutationAllowed({
+    headers: { origin: 'http://evil.example', host: 'evil.example', 'sec-fetch-site': 'same-origin' },
+    socket: { remoteAddress: '192.168.1.20' },
+  }, { allowedHosts: 'wallhub.lan' }), false);
+  assert.equal(isAllowedWallhubHost('localhost:3090'), true);
+  assert.equal(isAllowedWallhubHost('192.168.1.20:3090'), true);
+  assert.equal(isAllowedWallhubHost('wallhub.ipv6.ltss7.top:15556', ''), true);
+  assert.equal(isAllowedWallhubHost('WALLHUB.IPV6.LTSS7.TOP:15556', '   '), true);
+  assert.equal(isAllowedWallhubHost('', ''), false);
+  assert.equal(isAllowedWallhubHost('bad host', ''), false);
+  assert.equal(isAllowedWallhubHost('wallhub.lan:3090', 'wallhub.lan,proxy.example'), true);
+  assert.equal(isAllowedWallhubHost('evil.example:3090', 'wallhub.lan,proxy.example'), false);
+});
+
+test('read requests allow metadata-free LAN clients while enforcing Host and explicit browser trust signals', () => {
+  const lanRequest = {
+    headers: { host: '192.168.1.20:3090' },
+    socket: { remoteAddress: '192.168.1.42' },
+  };
+  assert.equal(isWallhubReadAllowed(lanRequest), true);
+  assert.equal(isUpdateMutationAllowed(lanRequest), false);
+  assert.equal(isWallhubReadAllowed({
+    headers: { host: 'wallhub.lan:3090', origin: 'http://wallhub.lan:3090' },
+    socket: { remoteAddress: '192.168.1.42' },
+  }, { allowedHosts: 'wallhub.lan' }), true);
+  assert.equal(isWallhubReadAllowed({
+    headers: { host: 'wallhub.lan:3090', origin: 'http://evil.example' },
+    socket: { remoteAddress: '192.168.1.42' },
+  }, { allowedHosts: 'wallhub.lan' }), false);
+  assert.equal(isWallhubReadAllowed({
+    headers: { host: 'wallhub.lan:3090', 'sec-fetch-site': 'cross-site' },
+    socket: { remoteAddress: '192.168.1.42' },
+  }, { allowedHosts: 'wallhub.lan' }), false);
+  assert.equal(isWallhubReadAllowed({
+    headers: { host: 'evil.example:3090' },
+    socket: { remoteAddress: '192.168.1.42' },
+  }, { allowedHosts: 'wallhub.lan' }), false);
 });
 
 test('update lock blocks a live owner and removes a crashed owner lock', () => {
@@ -166,6 +307,7 @@ test('update service checks, downloads, verifies, and prepares an install', asyn
     mode: 'source',
     platform: 'linux',
     arch: 'x64',
+    checkGoogleReachability: async () => true,
     requestBuffer: async (url) => url.includes('sha256') ? Buffer.from(`${hash}  WallHub-Source.zip`) : Buffer.from(JSON.stringify(release())),
     downloadFile: async (_url, destination, options) => {
       fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -212,6 +354,9 @@ test('persistent updater request excludes proxy fields', async () => {
   request.WALLHUB_UPDATE_NPM_PROXY = 'http://user:secret@example.test:8080';
   const helper = spawnDetachedUpdater(request, { scriptPath: helperSource, env: { WALLHUB_UPDATE_NPM_PROXY: request.proxyUrl } });
   const persisted = JSON.parse(fs.readFileSync(request.requestPath, 'utf8'));
+  for (const dependency of ['manifestSafety.js', 'updaterProcess.js', 'updateTransaction.js', 'updateHealth.js']) {
+    assert.equal(fs.existsSync(path.join(helper.tempDir, dependency)), true);
+  }
   assert.equal(persisted.requestPath, request.requestPath);
   assert.equal(Object.prototype.hasOwnProperty.call(persisted, 'proxyUrl'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(persisted, 'updateProxy'), false);
@@ -429,6 +574,7 @@ test('manual and automatic downloads share one in-flight operation', async () =>
     mode: 'source',
     getAutoUpdateEnabled: () => true,
     isInstallSafe: () => false,
+    checkGoogleReachability: async () => true,
     requestBuffer: async (url) => url.includes('sha256') ? Buffer.from(`${hash}  WallHub-Source.zip`) : Buffer.from(JSON.stringify(release())),
     downloadFile: async (_url, destination) => {
       downloadCount += 1;
@@ -457,6 +603,7 @@ test('a check requested during download waits for the stable download snapshot',
     currentVersion: '2.0.1',
     projectRoot: root,
     mode: 'source',
+    checkGoogleReachability: async () => true,
     requestBuffer: async (url) => {
       if (url.includes('sha256')) return Buffer.from(`${hash}  WallHub-Source.zip`);
       releaseCalls += 1;

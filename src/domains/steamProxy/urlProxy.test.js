@@ -39,6 +39,34 @@ function createTools(calls) {
   });
 }
 
+test('URL proxy factory preserves its public tool surface', () => {
+  const tools = createWallhubUrlProxyTools();
+
+  assert.deepEqual(Object.keys(tools), [
+    'shouldCacheTarget',
+    'cachePaths',
+    'readCache',
+    'writeCache',
+    'cleanupCacheSoon',
+    'cleanupCache',
+    'referer',
+    'origin',
+    'normalizeSteamApiOrigin',
+    'buildRequestHeaders',
+    'requestOnce',
+    'requestUrl',
+    'responseHeaders',
+    'prefetchTargets',
+    'steamPublicBaseFromReferer',
+    'steamAppRelativeProxyTarget',
+    'handleSteamAppRelativeAsset',
+    'handleVirtualSteamProxy',
+    'handleUrlProxy',
+    'normalizeSteamLoginPostBody',
+    'localProxyValueToSteamUrl',
+  ]);
+});
+
 test('extensionless broadcast MPD uses the media-manifest rewriter', () => {
   const target = new URL('https://cache5-hkg1.steamcontent.com/broadcast/123/manifest/0/cache5-hkg1.steamcontent.com/');
   assert.equal(isExtensionlessBroadcastMediaManifest('<?xml version="1.0"?><MPD><Period /></MPD>', target), true);

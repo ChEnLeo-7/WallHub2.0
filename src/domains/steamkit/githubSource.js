@@ -1,56 +1,7 @@
 'use strict';
 
 const fs = require('fs');
-
-const DEFAULT_GITHUB_PROXY_URLS = [
-  'https://gh-proxy.com/',
-  'https://ghproxy.net/',
-];
-
-function parseCsvEnv(env, name) {
-  return String((env || process.env)[name] || '')
-    .split(',')
-    .map(value => value.trim())
-    .filter(Boolean);
-}
-
-function isGithubDownloadUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return /(^|\.)github\.com$/i.test(parsed.hostname) ||
-      /(^|\.)githubusercontent\.com$/i.test(parsed.hostname) ||
-      /objects\.githubusercontent\.com$/i.test(parsed.hostname);
-  } catch {
-    return false;
-  }
-}
-
-function buildGithubProxyUrl(proxy, url) {
-  const value = String(proxy || '').trim();
-  if (!value || value.toLowerCase() === 'direct') return url;
-  if (value.includes('{url}')) return value.replace(/\{url\}/g, encodeURIComponent(url));
-  return `${value.replace(/\/+$/, '')}/${url}`;
-}
-
-function githubProxyCandidates(url, options = {}) {
-  const env = options.env || process.env;
-  const mode = String(options.acceleratorMode || env.WALLHUB_GITHUB_ACCELERATOR || 'auto').trim().toLowerCase();
-  if (mode === 'off' || mode === '0' || mode === 'false' || mode === 'direct') return [{ name: 'direct', url }];
-  if (!isGithubDownloadUrl(url)) return [{ name: 'direct', url }];
-
-  const custom = parseCsvEnv(env, 'WALLHUB_GITHUB_PROXY_URLS').concat(parseCsvEnv(env, 'GITHUB_PROXY_URLS'));
-  const proxies = custom.length ? custom : (options.defaultProxyUrls || DEFAULT_GITHUB_PROXY_URLS);
-  const rows = [];
-  const seen = new Set();
-  for (const proxy of proxies) {
-    const candidateUrl = buildGithubProxyUrl(proxy, url);
-    if (seen.has(candidateUrl)) continue;
-    seen.add(candidateUrl);
-    rows.push({ name: proxy, url: candidateUrl });
-  }
-  if (!seen.has(url)) rows.push({ name: 'direct', url });
-  return rows;
-}
+const githubRoutes = require('../../infrastructure/http/githubRoutes');
 
 function looksLikeZipBuffer(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 4) return false;
@@ -60,7 +11,7 @@ function looksLikeZipBuffer(buffer) {
 }
 
 async function chooseGithubDownloadRoutes(url, options = {}) {
-  const candidates = githubProxyCandidates(url, options);
+  const candidates = githubRoutes.githubProxyCandidates(url, options);
   if (candidates.length <= 1) return candidates;
 
   const logger = options.logger || console;
@@ -129,11 +80,7 @@ async function downloadFileBuffer(url, dest, options = {}) {
 }
 
 module.exports = {
-  DEFAULT_GITHUB_PROXY_URLS,
-  parseCsvEnv,
-  isGithubDownloadUrl,
-  buildGithubProxyUrl,
-  githubProxyCandidates,
+  ...githubRoutes,
   looksLikeZipBuffer,
   chooseGithubDownloadRoutes,
   downloadGithubRouteToFile,

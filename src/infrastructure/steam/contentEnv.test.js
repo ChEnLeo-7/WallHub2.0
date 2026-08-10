@@ -10,8 +10,8 @@ test('nearest Steam content route keeps proxy environment available', () => {
     http_proxy: 'http://127.0.0.1:7890',
   }, { strategy: 'nearest' });
 
-  assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:7890');
-  assert.equal(env.http_proxy, 'http://127.0.0.1:7890');
+  assert.equal(env.HTTPS_PROXY, undefined);
+  assert.equal(env.http_proxy, undefined);
   assert.equal(env.WALLHUB_STEAM_CONTENT_DIRECT, undefined);
   assert.equal(env.WALLHUB_STEAM_CONTENT_CDN_MODE, 'nearest');
   assert.equal(env.WALLHUB_STEAM_CDN_ROUTE_STRATEGY, 'nearest');
@@ -23,8 +23,8 @@ test('legacy direct Steam content route now uses default route and keeps proxy e
     http_proxy: 'http://127.0.0.1:7890',
   }, { strategy: 'direct' });
 
-  assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:7890');
-  assert.equal(env.http_proxy, 'http://127.0.0.1:7890');
+  assert.equal(env.HTTPS_PROXY, undefined);
+  assert.equal(env.http_proxy, undefined);
   assert.equal(env.WALLHUB_STEAM_CONTENT_DIRECT, undefined);
   assert.equal(env.DOTNET_SYSTEM_NET_HTTP_USEPROXY, undefined);
   assert.equal(env.WALLHUB_STEAM_CONTENT_CDN_MODE, 'nearest');
@@ -45,7 +45,7 @@ test('custom Steam content proxy overrides proxy environment', () => {
   assert.equal(env.WALLHUB_STEAM_CONTENT_CDN_MODE, 'proxy');
 });
 
-test('custom Steam content proxy preserves SteamKit no-proxy hosts', () => {
+test('custom Steam content proxy does not bypass CDN through NO_PROXY', () => {
   const env = buildSteamContentEnvForStrategy({
     NO_PROXY: 'localhost',
   }, {
@@ -54,7 +54,6 @@ test('custom Steam content proxy preserves SteamKit no-proxy hosts', () => {
   });
 
   assert.match(env.NO_PROXY, /(?:^|,)localhost(?:,|$)/);
-  assert.match(env.NO_PROXY, /(?:^|,)steamserver\.net(?:,|$)/);
-  assert.match(env.NO_PROXY, /(?:^|,)\.steamserver\.net(?:,|$)/);
-  assert.equal(env.no_proxy, env.NO_PROXY);
+  assert.equal(env.NO_PROXY, 'localhost');
+  assert.equal(env.no_proxy, undefined);
 });

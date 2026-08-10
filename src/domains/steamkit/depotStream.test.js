@@ -90,8 +90,11 @@ function fakeWorker() {
   const stdin = new EventEmitter();
   stdin.destroyed = false;
   stdin.writableEnded = false;
-  stdin.write = (line) => {
+  stdin.writable = true;
+  stdin.write = (line, callback) => {
     messages.push(JSON.parse(String(line).trim()));
+    if (typeof callback === 'function') queueMicrotask(callback);
+    return true;
   };
   const cp = new EventEmitter();
   cp.stdin = stdin;
@@ -214,6 +217,40 @@ test('foreground demand evicts queued prefetch and dispatches next', async (t) =
   await Promise.all([blocker, foreground]);
 });
 
+test('completed range file recovers when worker stdout omits its completion message', async (t) => {
+  const fixture = createFixture();
+  t.after(() => fixture.cleanup());
+  const { worker } = fakeWorker();
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  const originalNow = Date.now;
+  const polls = [];
+  let now = 1;
+  global.setInterval = callback => {
+    polls.push(callback);
+    return 1;
+  };
+  global.clearInterval = () => {};
+  Date.now = () => now;
+  try {
+    const outPath = path.join(fixture.cacheDir, 'recovered.bin');
+    const pending = fixture.service._test.requestDepotStreamWorkerRange(worker, 0, 3, outPath, { epoch: 1 });
+    await tick();
+    fs.writeFileSync(outPath, 'test');
+    polls[0]();
+    now += 1500;
+    polls[0]();
+
+    const result = await pending;
+    assert.equal(result.recovered, true);
+    assert.equal(worker.closed, true);
+  } finally {
+    Date.now = originalNow;
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  }
+});
+
 test('active prefetch cancellation keeps the worker reusable', async (t) => {
   const fixture = createFixture();
   t.after(() => fixture.cleanup());
@@ -249,6 +286,21 @@ test('asynchronous worker stdin failure rejects active work without an uncaught 
   assert.equal(worker.closed, true);
   assert.equal(worker.stdinFailed, true);
   assert.deepEqual(messages.map(message => message.type), ['range']);
+});
+
+test('worker command write failure rejects range instead of leaving it pending', async (t) => {
+  const fixture = createFixture();
+  t.after(() => fixture.cleanup());
+  const { worker } = fakeWorker();
+  const failure = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+  worker.cp.stdin.write = (line, callback) => {
+    if (typeof callback === 'function') queueMicrotask(() => callback(failure));
+    return false;
+  };
+  const range = fixture.service._test.requestDepotStreamWorkerRange(worker, 0, 3, 'a', { epoch: 1 });
+  await assert.rejects(range, error => error === failure);
+  assert.equal(worker.closed, true);
+  assert.equal(range.job.timer, null);
 });
 
 test('worker exit clears force-kill timer and exited child is never killed again', (t) => {

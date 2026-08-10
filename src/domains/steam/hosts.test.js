@@ -7,11 +7,11 @@ const {
   isSteamBroadcastResource,
 } = require('./hosts');
 
-test('broadcast media CDN hosts remain on the enhanced gateway path', () => {
-  assert.equal(isSteamAccessGatewayHost('steambroadcast.akamaized.net'), true);
-  assert.equal(isSteamAccessGatewayHost('steambroadcastchat.akamaized.net'), true);
-  assert.equal(isSteamAccessGatewayHost('steamvideo-a.akamaihd.net'), true);
-  assert.equal(isSteamAccessGatewayHost('video.akamai.steamstatic.com'), true);
+test('broadcast media CDN hosts stay on the direct CDN path', () => {
+  assert.equal(isSteamAccessGatewayHost('steambroadcast.akamaized.net'), false);
+  assert.equal(isSteamAccessGatewayHost('steambroadcastchat.akamaized.net'), false);
+  assert.equal(isSteamAccessGatewayHost('steamvideo-a.akamaihd.net'), false);
+  assert.equal(isSteamAccessGatewayHost('video.akamai.steamstatic.com'), false);
 });
 
 test('broadcast resources are path-scoped for shared Steam content hosts', () => {

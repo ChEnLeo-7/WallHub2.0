@@ -488,7 +488,7 @@ restore-mirrors
 | 2026-07-17 | 阶段 1 | 日志、脱敏与 trap | 完成 | URL 凭据/Token 脱敏自测；伪终端结束后临时目录为空 | 日志按阶段记录，临时认证信息不进入项目日志 |
 | 2026-07-17 | 阶段 1 | 无副作用 dry-run | 完成 | Debian/Fedora/Arch/openSUSE/Proot/Termux 六路径通过；代码、数据和 `/etc/wallhub-installer` 前后不变 | 覆盖 x86_64 与模拟 ARM64 |
 | 2026-07-17 | 阶段 1 | 状态格式与退出码 | 完成 | 含空格路径状态往返；非法参数 2、拒绝架构 10；阶段错误统一映射 | 状态值由 `printf %q` 生成并以 0600 保存 |
-| 2026-07-17 | 阶段 1 | Bash 与 ShellCheck 门禁 | 完成 | 两个脚本 `bash -n`；ShellCheck 0.11.0 零告警 | 检查 `install.sh` 与 `tools/installer/test_install.sh` |
+| 2026-07-17 | 阶段 1 | Bash 与 ShellCheck 门禁 | 完成 | 当时的安装器入口与测试脚本通过 `bash -n`；ShellCheck 0.11.0 零告警 | 历史验证记录，相关脚本未合入当前主分支 |
 | 2026-07-17 | 阶段 1 | 阶段验收 | 完成 | 安装器自测 56/56，交互管道和 dry-run 矩阵通过 | 未启动本地 WallHub 服务 |
 | 2026-07-17 | 阶段 2 | 六类环境识别 | 完成 | 伪造 os-release 覆盖 Debian、Ubuntu、Fedora、Rocky、Arch、openSUSE；另测 Termux 与 Proot | 对应 apt/dnf/pacman/zypper/pkg 正确 |
 | 2026-07-17 | 阶段 2 | 架构规范化与拒绝 | 完成 | x86_64、aarch64/arm64 通过；armv7l 退出 10 | 仅承诺 x86_64 与 ARM64 |
@@ -537,7 +537,7 @@ restore-mirrors
 | 2026-07-17 | 阶段 7 | purge 路径约束 | 完成 | 仅登记 code/data/config 删除，相邻 unrelated 文件保留 | 交互要求两次 yes；`--yes` 可供无人值守 |
 | 2026-07-17 | 阶段 7 | 镜像恢复冲突 | 完成 | 安装后用户修改文件保持不变并返回冲突 | 安装器自建配置可安全删除 |
 | 2026-07-17 | 阶段 7 | 阶段验收 | 完成 | 安装器自测 97/97；ShellCheck 零告警 | 全维护命令在真实安装后继续端到端验证 |
-| 2026-07-17 | 阶段 8 | Bash 语法 | 完成 | `bash -n install.sh tools/installer/test_install.sh` | PVE 宿主临时只读检查，脚本随后清理 |
+| 2026-07-17 | 阶段 8 | Bash 语法 | 完成 | 当时的安装器入口与测试脚本通过 `bash -n` | 历史验证记录；PVE 宿主临时只读检查，脚本随后清理 |
 | 2026-07-17 | 阶段 8 | ShellCheck | 完成 | ShellCheck 0.11.0，两个 Bash 文件零告警 | 仅两处运行时字面量有局部说明性抑制 |
 | 2026-07-17 | 阶段 8 | 平台/参数/dry-run | 完成 | 安装器自测 97/97；六环境矩阵；curl-pipe TTY；退出码 2/10/20/30/50 | dry-run 前后系统配置与目标目录均不变 |
 | 2026-07-17 | 阶段 8 | Node 测试 | 完成 | `npm test`：255/255 | 无失败、取消或跳过 |

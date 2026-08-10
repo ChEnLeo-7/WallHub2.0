@@ -4,8 +4,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildCommunityWorkshopBrowseUrl,
+  buildSteamCmQueryInput,
   buildSteamApiQueryInput,
   buildSteamApiQueryUrl,
+  buildSteamUserFilesInput,
   queryWorkshopBySteamApi,
   scrapeWorkshopIds,
   normalizePersonalSortMethod,
@@ -31,21 +33,32 @@ test('top rated sort maps to Steam query type 0 and browse sort', () => {
   assert.equal(new URL(url).searchParams.get('numperpage'), null);
 });
 
-test('community browse URL uses Steam num_per_page parameter', () => {
+test('community browse URL maps the complete selected tag list into one Steam request', () => {
   const url = buildCommunityWorkshopBrowseUrl({
     appid: 431960,
     query_type: 1,
-    page: 1,
+    page: 4,
     numperpage: 50,
     days: 30,
     'requiredtags[0]': 'Everyone',
     'requiredtags[1]': 'Video',
+    'requiredtags[2]': 'Scene',
+    'requiredtags[3]': 'Questionable',
+    'requiredtags[4]': 'Anime',
+    'requiredtags[5]': 'Nature',
+    'requiredtags[6]': 'Approved',
+    'requiredtags[7]': 'HDR',
+    'requiredtags[8]': '1920 x 1080',
+    'requiredtags[9]': '3440 x 1440',
   });
   const parsed = new URL(url);
 
   assert.equal(parsed.searchParams.get('num_per_page'), '50');
   assert.equal(parsed.searchParams.get('numperpage'), null);
-  assert.deepEqual(parsed.searchParams.getAll('requiredtags[]'), ['Everyone', 'Video']);
+  assert.equal(parsed.searchParams.get('p'), '4');
+  assert.deepEqual(parsed.searchParams.getAll('requiredtags[]'), [
+    'Everyone', 'Video', 'Scene', 'Questionable', 'Anime', 'Nature', 'Approved', 'HDR', '1920 x 1080', '3440 x 1440',
+  ]);
 });
 
 test('public Workshop scrape retries transient curl failures through the native HTTP path', async () => {
@@ -156,6 +169,60 @@ test('buildSteamApiQueryInput uses the legacy Web API fields', () => {
   assert.deepEqual(input.requiredtags, ['Everyone']);
   assert.equal(input.return_metadata, true);
   assert.equal(input.return_vote_data, true);
+});
+
+test('friend and followed filters map to official QueryFiles query types', () => {
+  assert.equal(buildSteamApiQueryInput({ special_filter: 2 }).query_type, 4);
+  assert.equal(buildSteamApiQueryInput({ special_filter: 3 }).query_type, 5);
+  assert.equal(buildSteamApiQueryInput({ special_filter: 4 }).query_type, 7);
+
+  const url = new URL(buildSteamApiQueryUrl('test-key', { appid: 431960, special_filter: 4 }));
+  assert.equal(url.searchParams.get('query_type'), '7');
+  assert.equal(url.searchParams.has('special_filter'), false);
+});
+
+test('Steam CM public queries preserve search and tag filters', () => {
+  const input = buildSteamCmQueryInput({
+    appid: 431960,
+    query_type: 1,
+    page: 2,
+    numperpage: 50,
+    search_text: 'city rain',
+    'requiredtags[0]': 'Video',
+    'excludedtags[0]': 'Mature',
+  });
+
+  assert.equal(input.operation, 'query-files');
+  assert.equal(input.query_type, 12);
+  assert.equal(input.search_text, 'city rain');
+  assert.deepEqual(input.requiredtags, ['Video']);
+  assert.deepEqual(input.excludedtags, ['Mature']);
+});
+
+test('Steam CM author queries use GetUserFiles for the requested SteamID', () => {
+  const input = buildSteamCmQueryInput({
+    appid: 431960,
+    creator: '76561198000000001',
+    page: 3,
+    numperpage: 30,
+    sortmethod: 'creationorder',
+    'requiredtags[0]': 'Scene',
+  });
+
+  assert.equal(input.operation, 'user-files');
+  assert.equal(input.steamid, '76561198000000001');
+  assert.equal(input.type, 'myfiles');
+  assert.equal(input.sortmethod, 'creationorder');
+  assert.deepEqual(input.requiredtags, ['Scene']);
+});
+
+test('Steam user list queries map subscriptions, favorites, and votes without a fake SteamID', () => {
+  for (const browsefilter of ['mysubscriptions', 'myfavorites', 'myvotes']) {
+    const input = buildSteamUserFilesInput({ appid: 431960, browsefilter });
+    assert.equal(input.operation, 'user-files');
+    assert.equal(input.type, browsefilter);
+    assert.equal(Object.hasOwn(input, 'steamid'), false);
+  }
 });
 
 test('Steam Web API query includes the configured key and does not need Community browsing', async () => {

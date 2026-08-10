@@ -6,8 +6,9 @@ const { applicationProbeOk } = require('./probe');
 const { httpProbePath, shouldHttpProbeHost, shouldProbeSteamAccessIpv6 } = require('./routes');
 
 test('application probe validates Steam community-like HTML', () => {
-  assert.equal(applicationProbeOk('steamcommunity.com', 200, { 'content-type': 'text/html' }, '<html>Steam Workshop</html>'), true);
+  assert.equal(applicationProbeOk('steamcommunity.com', 200, { 'content-type': 'text/html' }, '<html>Steam Community Workshop</html>'), true);
   assert.equal(applicationProbeOk('steamcommunity.com', 200, { 'content-type': 'text/html' }, 'blocked'), false);
+  assert.equal(applicationProbeOk('steamcommunity.com', 200, { 'content-type': 'text/html' }, '<html>Workshop</html>'), false);
 });
 
 test('application probe accepts lightweight WebAPI JSON', () => {

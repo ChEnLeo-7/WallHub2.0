@@ -2,6 +2,7 @@
 
 const os = require('os');
 const { spawn, execFileSync } = require('child_process');
+const { controlWindowsProcessTree } = require('./windowsProcessControl');
 
 const DEFAULT_MAX_CAPTURED_OUTPUT_BYTES = 128 * 1024;
 
@@ -26,8 +27,8 @@ function killProcessTree(cp) {
   if (!cp) return;
   try {
     if (process.platform === 'win32') {
-      cp.kill('SIGKILL');
       try { execFileSync('taskkill', ['/pid', cp.pid, '/T', '/F'], { stdio: 'ignore' }); } catch {}
+      try { cp.kill('SIGKILL'); } catch {}
     } else {
       try { process.kill(-cp.pid, 'SIGKILL'); } catch { cp.kill('SIGKILL'); }
     }
@@ -39,7 +40,9 @@ function controlProcessGroup(cp, signal, options = {}) {
   if (typeof options.controlProcessGroup === 'function') {
     return options.controlProcessGroup(cp.pid, signal, cp) !== false;
   }
-  if (process.platform === 'win32') return false;
+  if (process.platform === 'win32') {
+    return controlWindowsProcessTree(cp.pid, signal === 'SIGSTOP' ? 'suspend' : 'resume', options.windowsProcessControlOptions);
+  }
   try {
     process.kill(-cp.pid, signal);
     return true;
@@ -79,6 +82,11 @@ function runProcess(bin, args, timeoutMs, options = {}, prepareEnv) {
       if (timer) clearTimeout(timer);
       fn(value);
     };
+    const processError = (message, details = {}) => Object.assign(new Error(String(message || '').trim()), {
+      stdout: out.toString('utf8'),
+      stderr: err.toString('utf8'),
+      ...details,
+    });
 
     if (Array.isArray(options.inputLines) && cp.stdin) {
       const lines = options.inputLines.map(value => String(value || ''));
@@ -114,7 +122,10 @@ function runProcess(bin, args, timeoutMs, options = {}, prepareEnv) {
       }
     });
 
-    cp.on('error', error => finish(reject, error));
+    cp.on('error', error => finish(reject, Object.assign(error, {
+      stdout: out.toString('utf8'),
+      stderr: err.toString('utf8'),
+    })));
     cp.on('close', code => {
       const outText = out.toString('utf8');
       const errText = err.toString('utf8');
@@ -127,22 +138,24 @@ function runProcess(bin, args, timeoutMs, options = {}, prepareEnv) {
           if (sanitized) message = sanitized;
         } catch {}
       }
-      finish(reject, new Error((message || rawMessage || `exit ${code}`).trim().slice(-1200)));
+      finish(reject, processError((message || rawMessage || `exit ${code}`).trim().slice(-1200), { exitCode: code }));
     });
 
     if (timeoutMs && timeoutMs > 0) {
       timer = setTimeout(() => {
         killProcessTree(cp);
-        finish(reject, new Error(options.timeoutMessage || `Process timed out: ${bin}`));
+        finish(reject, processError(options.timeoutMessage || `Process timed out: ${bin}`, { timedOut: true }));
       }, timeoutMs);
     }
 
     killFn = () => {
+      if (done) return false;
       killProcessTree(cp);
-      finish(reject, new Error(options.cancelMessage || 'Task canceled or paused'));
+      finish(reject, processError(options.cancelMessage || 'Task canceled or paused', { cancelled: true }));
+      return true;
     };
-    pauseFn = () => controlProcessGroup(cp, 'SIGSTOP', options);
-    resumeFn = () => controlProcessGroup(cp, 'SIGCONT', options);
+    pauseFn = () => !done && controlProcessGroup(cp, 'SIGSTOP', options);
+    resumeFn = () => !done && controlProcessGroup(cp, 'SIGCONT', options);
   });
 
   promise.kill = killFn;

@@ -7,6 +7,11 @@ const assert = require('node:assert/strict');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
 const detailsDialogPath = path.join(projectRoot, 'frontend', 'src', 'components', 'dialogs', 'DetailsDialog.tsx');
+const detailsDialogSource = [
+  path.join(path.dirname(detailsDialogPath), 'details-dialog', 'DetailsMetadata.tsx'),
+  path.join(path.dirname(detailsDialogPath), 'details-dialog', 'DetailsComments.tsx'),
+  detailsDialogPath,
+].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const stylesPath = path.join(projectRoot, 'frontend', 'src', 'styles.css');
 
 test('details presentation preference uses the redesigned layout by default while retaining an explicit classic choice', async () => {
@@ -37,7 +42,7 @@ test('redesigned detail panel lets the fixed left rail determine the description
 });
 
 test('redesigned metadata tags use a lighter rounded-rectangle surface with an accent hover state', () => {
-  const dialog = fs.readFileSync(detailsDialogPath, 'utf8');
+  const dialog = detailsDialogSource;
   const styles = fs.readFileSync(stylesPath, 'utf8');
 
   assert.match(dialog, /details-metadata-tag inline-flex items-center !rounded-lg/);
@@ -46,7 +51,7 @@ test('redesigned metadata tags use a lighter rounded-rectangle surface with an a
 });
 
 test('redesigned description is size-contained so only the fixed preview and fact rows determine desktop height', () => {
-  const dialog = fs.readFileSync(detailsDialogPath, 'utf8');
+  const dialog = detailsDialogSource;
 
   assert.match(dialog, /lg:items-start/);
   assert.match(dialog, /aspect-\[16\/9\][^"]*h-auto[^"]*lg:self-start/);
@@ -56,7 +61,7 @@ test('redesigned description is size-contained so only the fixed preview and fac
 });
 
 test('redesigned comment loading uses transform shimmer rather than full-card opacity pulsing', () => {
-  const dialog = fs.readFileSync(detailsDialogPath, 'utf8');
+  const dialog = detailsDialogSource;
   const styles = fs.readFileSync(stylesPath, 'utf8');
   const commentLoadingBranch = dialog.match(/isRedesigned \? \(\s*<div className="grid gap-2" aria-label=\{text\.loadingComments\}>([\s\S]*?)\) : \(/);
 

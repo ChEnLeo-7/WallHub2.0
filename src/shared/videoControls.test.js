@@ -7,7 +7,7 @@ test('video keyboard controls seek, pause, and ignore editable controls', async 
     getLongPressPlaybackRate,
     getRestoredPlaybackRate,
     getVideoKeyboardAction,
-  } = await import('./videoControls.mjs');
+  } = await import('../../frontend/src/lib/videoControls.mjs');
   assert.equal(VIDEO_SEEK_SECONDS, 5);
   assert.deepEqual(getVideoKeyboardAction({ key: 'ArrowLeft', targetTagName: 'VIDEO' }), { type: 'seek', seconds: -5 });
   assert.deepEqual(getVideoKeyboardAction({ key: 'ArrowRight', targetTagName: 'VIDEO' }), { type: 'seek', seconds: 5 });
@@ -31,7 +31,7 @@ test('video long press uses two-times playback only while held', async () => {
     getLongPressPlaybackRate,
     getRestoredPlaybackRate,
     normalizeVideoPlaybackRate,
-  } = await import('./videoControls.mjs');
+  } = await import('../../frontend/src/lib/videoControls.mjs');
   assert.equal(getLongPressPlaybackRate(false), 1);
   assert.equal(getLongPressPlaybackRate(true), 2);
   assert.equal(getRestoredPlaybackRate(1.5), 1.5);
@@ -46,7 +46,7 @@ test('video long press uses two-times playback only while held', async () => {
 });
 
 test('video player mode defaults to native and only accepts compatibility mode', async () => {
-  const { DEFAULT_VIDEO_PLAYER_MODE, normalizeVideoPlayerMode } = await import('./videoControls.mjs');
+  const { DEFAULT_VIDEO_PLAYER_MODE, normalizeVideoPlayerMode } = await import('../../frontend/src/lib/videoControls.mjs');
   assert.equal(DEFAULT_VIDEO_PLAYER_MODE, 'native');
   assert.equal(normalizeVideoPlayerMode('compatibility'), 'compatibility');
   assert.equal(normalizeVideoPlayerMode('native'), 'native');
@@ -55,7 +55,7 @@ test('video player mode defaults to native and only accepts compatibility mode',
 });
 
 test('video time formatting handles invalid, minute, and hour durations', async () => {
-  const { formatVideoTime } = await import('./videoControls.mjs');
+  const { formatVideoTime } = await import('../../frontend/src/lib/videoControls.mjs');
   assert.equal(formatVideoTime(Number.NaN), '0:00');
   assert.equal(formatVideoTime(-1), '0:00');
   assert.equal(formatVideoTime(65.9), '1:05');

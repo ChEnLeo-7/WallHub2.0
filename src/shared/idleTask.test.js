@@ -2,9 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { scheduleIdleTask } = require('./idleTask');
 
-test('scheduleIdleTask runs through idle callback when available', () => {
+test('scheduleIdleTask runs through idle callback when available', async () => {
+  const { scheduleIdleTask } = await import('../../frontend/src/lib/idleTask.mjs');
   let callback;
   let ran = 0;
   const cancel = scheduleIdleTask(() => { ran += 1; }, {
@@ -17,7 +17,8 @@ test('scheduleIdleTask runs through idle callback when available', () => {
   cancel();
 });
 
-test('scheduleIdleTask cancellation prevents a scheduled fallback from running', () => {
+test('scheduleIdleTask cancellation prevents a scheduled fallback from running', async () => {
+  const { scheduleIdleTask } = await import('../../frontend/src/lib/idleTask.mjs');
   let callback;
   let ran = 0;
   const cancel = scheduleIdleTask(() => { ran += 1; }, {

@@ -14,7 +14,10 @@ const {
   steamKitIdleWatchdogState,
   steamKitPreSpawnWarmupTimeoutMs,
 } = require('./download');
-const { createWallhubDepotProgressReader } = require('./depotTools');
+const {
+  createWallhubDepotProgressReader,
+  isDepotGuardRequiredMessage,
+} = require('./depotTools');
 
 function createService(root, hooks = {}) {
   const configDir = path.join(root, 'account');
@@ -41,8 +44,9 @@ function createService(root, hooks = {}) {
     refreshPersistentSteamLoginForRetry: async () => false,
     setValidatedPersistentLogin() {},
     depotDotnetMissingMessage: () => 'missing dotnet',
-    isDepotNetworkFailureMessage: () => false,
+    isDepotNetworkFailureMessage: hooks.isDepotNetworkFailureMessage || (() => false),
     isDepotAuthFailureMessage: () => false,
+    isDepotGuardRequiredMessage: hooks.isDepotGuardRequiredMessage || isDepotGuardRequiredMessage,
     isDepotLoginVerifiedDespiteCanceled: () => false,
     depotCommandFor: () => ({ command: 'dotnet', argsPrefix: ['/tmp/DepotDownloader.dll'] }),
     getSteamKitMaxDownloads: () => 8,
@@ -669,6 +673,68 @@ test('SteamKit content-stage diagnostic-only child failure is not reported as re
     assert.equal(/重新登录 Steam/.test(error.message), false);
     assert.equal(error.code, 'STEAMKIT_CHILD_DIAGNOSTIC_ONLY');
     assert.match(error.message, /SteamPipe CDN|文件内容|下载/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('SteamKit error normalization prioritizes a network failure over mixed auth hints', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-download-network-auth-'));
+  try {
+    const service = createService(root, {
+      isDepotNetworkFailureMessage: (message) => /NoConnection/i.test(message),
+    });
+    const error = service.normalizeError(new Error('Login failed: NoConnection; mobile authenticator may be required'));
+
+    assert.equal(error.code, 'STEAM_NETWORK_UNREACHABLE');
+    assert.equal(error.statusCode, 504);
+    assert.equal(error.requiresSteamGuard, undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('SteamKit error normalization does not infer Guard from a vague mobile hint', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-download-vague-guard-'));
+  try {
+    const service = createService(root);
+    const error = service.normalizeError(new Error('Login failed; mobile authenticator may be required'));
+
+    assert.notEqual(error.code, 'STEAM_GUARD_REQUIRED');
+    assert.equal(error.requiresSteamGuard, undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('SteamKit error normalization keeps explicit Steam Guard challenges', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-download-explicit-guard-'));
+  try {
+    const service = createService(root);
+    const error = service.normalizeError(new Error('STEAM GUARD! Please enter your 2-factor auth code'));
+
+    assert.equal(error.code, 'STEAM_GUARD_REQUIRED');
+    assert.equal(error.requiresSteamGuard, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('SteamKit error normalization reads preserved stderr before a noisy stdout tail', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-download-stderr-network-'));
+  try {
+    const service = createService(root, {
+      isDepotNetworkFailureMessage: (message) => /NoConnection/i.test(message),
+    });
+    const processError = Object.assign(new Error('Error: InitializeSteam failed'), {
+      stderr: 'Failed to authenticate with Steam: NoConnection',
+      stdout: 'mobile authenticator may be required\n' + 'x'.repeat(2000),
+      exitCode: 1,
+    });
+    const error = service.normalizeError(processError);
+
+    assert.equal(error.code, 'STEAM_NETWORK_UNREACHABLE');
+    assert.equal(error.requiresSteamGuard, undefined);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

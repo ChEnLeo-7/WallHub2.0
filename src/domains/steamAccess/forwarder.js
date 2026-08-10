@@ -1,5 +1,6 @@
 'use strict';
 
+const tls = require('node:tls');
 const { createSteamAccessError } = require('./errors');
 const { redactUrlPathForLog } = require('../../infrastructure/http/client');
 
@@ -10,6 +11,18 @@ function collectBody(response) {
     response.on('end', () => resolve(Buffer.concat(chunks)));
     response.on('error', reject);
   });
+}
+
+function validateAuthorizedCertificate(socket, hostname) {
+  const certificate = socket && typeof socket.getPeerCertificate === 'function' ? socket.getPeerCertificate() : null;
+  if (!socket || !certificate || !Object.keys(certificate).length) {
+    return new Error('TLS peer certificate is unavailable');
+  }
+  const authorizationError = String(socket.authorizationError || '');
+  if (socket.authorized !== true && authorizationError !== 'ERR_TLS_CERT_ALTNAME_INVALID') {
+    return new Error(authorizationError || 'TLS certificate is not authorized');
+  }
+  return tls.checkServerIdentity(String(hostname || ''), certificate);
 }
 
 function createSteamAccessForwarder(options = {}) {
@@ -63,6 +76,14 @@ function createSteamAccessForwarder(options = {}) {
           try {
             networkLog(`request start host=${host} ip=${ip} sni=${sniLabel(strategy)} protocol=${protocol} path=${redactUrlPathForLog(opts.path || '/')}`);
             response = await connectionPool.request(route, Object.assign({}, opts, { body }), ip, strategy, Math.min(timeout || budget.totalTimeoutMs || 10000, budget.perIpTimeoutMs || 5000), opts.signal, protocol);
+            if (routeOptions.requireAuthorizedCertificate) {
+              const socket = response.socket;
+              const certificateError = validateAuthorizedCertificate(socket, routeOptions.certificateHostname || host);
+              if (certificateError) {
+                response.resume?.();
+                throw createSteamAccessError(`TLS certificate validation failed: ${certificateError.message}`, { stage: 'tls', host, ip });
+              }
+            }
             if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
               response.resume?.();
               throw Object.assign(createSteamAccessError(`Steam access redirect ${response.statusCode}`, { stage: 'http', host, ip, sniStrategy: strategy.type, protocol, elapsedMs: Date.now() - attemptStartedAt }), { redirectLocation: response.headers.location });
@@ -154,4 +175,4 @@ function createSteamAccessForwarder(options = {}) {
   return { request, stream };
 }
 
-module.exports = { createSteamAccessForwarder };
+module.exports = { createSteamAccessForwarder, validateAuthorizedCertificate };

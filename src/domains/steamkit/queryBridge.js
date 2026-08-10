@@ -39,8 +39,46 @@ function createSteamKitQueryBridge(options = {}) {
   let bridge = null;
   let starting = null;
   const queuedJobs = [];
+  const jobs = new Set();
   let queueRunning = false;
   let sequence = 0;
+  let generation = createGeneration();
+
+  function createGeneration() {
+    return {
+      stopped: false,
+      error: null,
+    };
+  }
+
+  function getGeneration() {
+    if (generation.stopped) generation = createGeneration();
+    return generation;
+  }
+
+  function createStartAttempt(username, requestGeneration) {
+    const attempt = {
+      username,
+      generation: requestGeneration,
+      cancelled: false,
+      error: null,
+      cancelReject: null,
+      cancelledPromise: null,
+      launch: null,
+    };
+    attempt.cancelledPromise = new Promise((resolve, reject) => {
+      attempt.cancelReject = reject;
+    });
+    attempt.cancelledPromise.catch(() => {});
+    return attempt;
+  }
+
+  function cancelStart(attempt, error) {
+    if (!attempt || attempt.cancelled) return;
+    attempt.cancelled = true;
+    attempt.error = error;
+    attempt.cancelReject(error);
+  }
 
   function rejectPending(state, error) {
     for (const pending of Array.from(state.pending.values())) {
@@ -116,11 +154,17 @@ function createSteamKitQueryBridge(options = {}) {
     }
   }
 
-  async function startBridge(username) {
+  async function startBridge(username, requestGeneration, attempt) {
     if (typeof ensureDepotDownloaderReady !== 'function' || typeof depotCommandFor !== 'function' || typeof makeDepotLoginId !== 'function') {
       throw bridgeError('SteamKit query bridge is unavailable');
     }
-    const executable = await ensureDepotDownloaderReady();
+    const executable = await Promise.race([
+      ensureDepotDownloaderReady(),
+      attempt.cancelledPromise,
+    ]);
+    if (attempt.cancelled || requestGeneration.stopped) {
+      throw attempt.error || requestGeneration.error || bridgeError('SteamKit query bridge stopped');
+    }
     if (typeof ensureDir === 'function' && configDir) ensureDir(configDir);
     const { command, argsPrefix = [] } = depotCommandFor(executable);
     const args = [
@@ -142,6 +186,7 @@ function createSteamKitQueryBridge(options = {}) {
     });
     const state = {
       username,
+      generation: requestGeneration,
       cp,
       ready: false,
       closed: false,
@@ -177,24 +222,30 @@ function createSteamKitQueryBridge(options = {}) {
     return state.readyPromise;
   }
 
-  async function ensureBridge(username) {
+  async function ensureBridge(username, requestGeneration) {
     const user = String(username || '').trim();
     if (!user) throw bridgeError('SteamKit remembered account is unavailable');
-    if (bridge && !bridge.closed && bridge.username === user) return bridge.readyPromise;
+    if (requestGeneration.stopped) throw requestGeneration.error;
+    if (bridge && !bridge.closed && bridge.username === user && bridge.generation === requestGeneration) return bridge.readyPromise;
     if (bridge && !bridge.closed) stopState(bridge, 'SteamKit account changed');
-    if (starting) return starting;
-    const launch = startBridge(user);
-    starting = launch;
+    if (starting && starting.username === user && starting.generation === requestGeneration) return starting.launch;
+    if (starting) cancelStart(starting, bridgeError('SteamKit account changed'));
+    const attempt = createStartAttempt(user, requestGeneration);
+    const launch = startBridge(user, requestGeneration, attempt);
+    attempt.launch = launch;
+    starting = attempt;
     try {
       return await launch;
     } finally {
-      if (starting === launch) starting = null;
+      if (starting === attempt) starting = null;
     }
   }
 
-  async function sendRequest(operation, payload, username, timeoutMs, signal) {
+  async function sendRequest(operation, payload, username, timeoutMs, signal, requestGeneration) {
     if (signal && signal.aborted) throw abortError();
-    const state = await ensureBridge(username);
+    if (requestGeneration.stopped) throw requestGeneration.error;
+    const state = await ensureBridge(username, requestGeneration);
+    if (requestGeneration.stopped) throw requestGeneration.error;
     if (!state || state.closed || !state.ready) throw bridgeError('SteamKit query bridge is unavailable');
     if (signal && signal.aborted) throw abortError();
     const id = `${Date.now().toString(36)}-${(++sequence).toString(36)}`;
@@ -244,6 +295,10 @@ function createSteamKitQueryBridge(options = {}) {
       while (queuedJobs.length) {
         const job = queuedJobs.shift();
         if (!job || job.cancelled) continue;
+        if (job.generation.stopped) {
+          job.reject(job.generation.error);
+          continue;
+        }
         if (job.signal && job.signal.aborted) {
           job.reject(abortError());
           continue;
@@ -253,7 +308,7 @@ function createSteamKitQueryBridge(options = {}) {
         const queueWaitMs = Date.now() - job.queuedAt;
         if (queueWaitMs >= 25) logger.log(`[SteamKit Bridge] ${job.label || 'request'} waited ${queueWaitMs}ms in queue`);
         try {
-          job.resolve(await job.work());
+          job.resolve(await job.work(job.generation));
         } catch (error) {
           job.reject(error);
         }
@@ -265,17 +320,30 @@ function createSteamKitQueryBridge(options = {}) {
   }
 
   function enqueue(work, options = {}) {
-      const signal = options.signal;
+    const signal = options.signal;
+    const requestGeneration = getGeneration();
     return new Promise((resolve, reject) => {
       if (signal && signal.aborted) {
         reject(abortError());
         return;
       }
+      let settled = false;
+      const cleanup = () => {
+        jobs.delete(job);
+        if (signal && !job.started) signal.removeEventListener('abort', job.cancelQueuedJob);
+      };
+      const settle = (handler, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        handler(value);
+      };
       const job = {
         work,
-        resolve,
-        reject,
+        resolve: value => settle(resolve, value),
+        reject: error => settle(reject, error),
         signal,
+        generation: requestGeneration,
         label: String(options.label || 'request'),
         queuedAt: Date.now(),
         cancelled: false,
@@ -288,10 +356,11 @@ function createSteamKitQueryBridge(options = {}) {
         if (index < 0) return;
         queuedJobs.splice(index, 1);
         job.cancelled = true;
-        reject(abortError());
+        job.reject(abortError());
       };
       job.cancelQueuedJob = cancelQueuedJob;
       if (signal) signal.addEventListener('abort', cancelQueuedJob, { once: true });
+      jobs.add(job);
       queuedJobs.push(job);
       scheduleQueue();
     });
@@ -299,26 +368,49 @@ function createSteamKitQueryBridge(options = {}) {
 
   function getUserFiles(listType, queryOptions = {}) {
     return enqueue(
-      () => sendRequest('user-files', {
+      requestGeneration => sendRequest('user-files', {
         appid: queryOptions.appId,
         listType,
         page: queryOptions.page,
         numperpage: queryOptions.numperpage,
         sortmethod: queryOptions.sortmethod,
-      }, queryOptions.username, queryOptions.timeoutMs, queryOptions.signal),
+      }, queryOptions.username, queryOptions.timeoutMs, queryOptions.signal, requestGeneration),
       Object.assign({}, queryOptions, { label: 'GetUserFiles' }),
     );
   }
 
+  function queryWorkshop(query, queryOptions = {}) {
+    return enqueue(
+      requestGeneration => sendRequest('workshop-query', {
+        query: query && typeof query === 'object' ? query : {},
+      }, queryOptions.username, queryOptions.timeoutMs, queryOptions.signal, requestGeneration),
+      Object.assign({}, queryOptions, { label: 'PublishedFile query' }),
+    );
+  }
+
   function warm(username) {
-    return ensureBridge(username);
+    const requestGeneration = getGeneration();
+    return ensureBridge(username, requestGeneration);
   }
 
   function shutdown(reason) {
-    if (bridge) stopState(bridge, reason || 'SteamKit query bridge stopped');
+    const stoppedGeneration = generation;
+    if (stoppedGeneration.stopped) return;
+    const error = bridgeError(reason || 'SteamKit query bridge stopped');
+    stoppedGeneration.stopped = true;
+    stoppedGeneration.error = error;
+    if (starting && starting.generation === stoppedGeneration) cancelStart(starting, error);
+    if (bridge && bridge.generation === stoppedGeneration) stopState(bridge, reason || 'SteamKit query bridge stopped', error);
+    for (const job of Array.from(jobs)) {
+      if (job.generation !== stoppedGeneration) continue;
+      job.cancelled = true;
+      const index = queuedJobs.indexOf(job);
+      if (index >= 0) queuedJobs.splice(index, 1);
+      job.reject(error);
+    }
   }
 
-  return { getUserFiles, warm, shutdown };
+  return { getUserFiles, queryWorkshop, warm, shutdown };
 }
 
 module.exports = {

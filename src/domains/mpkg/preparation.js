@@ -1,12 +1,6 @@
 'use strict';
 
-function normalizeId(value) {
-  return String(value || '').replace(/[^\d]/g, '');
-}
-
-function normalizeTextureProfile(value) {
-  return String(value || '').trim().toLowerCase() === 'compact' ? 'compact' : 'fast';
-}
+const { normalizeMpkgId, normalizeMpkgTextureProfile } = require('./normalizers');
 
 function normalizePreparationStage(value) {
   return String(value || '').trim().toLowerCase() === 'converting' ? 'converting' : 'downloading';
@@ -51,14 +45,14 @@ function createMpkgPreparationService(options = {}) {
 
   function start(id, title, textureProfile = 'fast') {
     cleanup();
-    const jobId = normalizeId(id);
+    const jobId = normalizeMpkgId(id);
     if (!jobId) {
       const error = new Error('Invalid id');
       error.statusCode = 400;
       throw error;
     }
 
-    const profile = normalizeTextureProfile(textureProfile);
+    const profile = normalizeMpkgTextureProfile(textureProfile);
     const key = jobKey(jobId, profile);
     const existing = jobs.get(key);
     if (existing && existing.status !== 'error') return existing;
@@ -127,8 +121,8 @@ function createMpkgPreparationService(options = {}) {
 
   function get(id, textureProfile = 'fast') {
     cleanup();
-    const jobId = normalizeId(id);
-    return jobId ? jobs.get(jobKey(jobId, normalizeTextureProfile(textureProfile))) || null : null;
+    const jobId = normalizeMpkgId(id);
+    return jobId ? jobs.get(jobKey(jobId, normalizeMpkgTextureProfile(textureProfile))) || null : null;
   }
 
   function toPublic(job) {

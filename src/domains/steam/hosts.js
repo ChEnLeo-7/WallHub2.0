@@ -1,5 +1,7 @@
 'use strict';
 
+const { isSteamCdnHost, isSteamEnhancedHost } = require('../../infrastructure/steam/networkPolicy');
+
 function normalizeHost(hostname) {
   return String(hostname || '').toLowerCase();
 }
@@ -71,11 +73,7 @@ function isSteamBroadcastResource(hostname, pathname = '/') {
 
 function isSteamAccessGatewayHost(hostname) {
   const h = normalizeHost(hostname);
-  if (!isSteamHost(h)) return false;
-  return !(h === 'steamcontent.com' || h.endsWith('.steamcontent.com') ||
-    h === 'steamserver.net' || h.endsWith('.steamserver.net') ||
-    h === 'lancache.steamcontent.com' ||
-    (isSteamStaticCdnHost(h) && !isSteamBroadcastMediaCdnHost(h)));
+  return isSteamEnhancedHost(h) && !isSteamCdnHost(h);
 }
 
 function isSteamAccessStaticBypassHost(hostname) {

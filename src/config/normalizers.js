@@ -171,6 +171,7 @@ function normalizeSteamAccessHostsUrl(value) {
   const protocol = String(parsed.protocol || '').toLowerCase();
   if (protocol !== 'http:' && protocol !== 'https:') throw new Error('Hosts URL must use http:// or https://');
   if (!parsed.hostname) throw new Error('Hosts URL is missing host');
+  if (parsed.username || parsed.password) throw new Error('Hosts URL must not include credentials');
   return parsed.toString();
 }
 

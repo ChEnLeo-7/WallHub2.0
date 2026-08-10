@@ -21,7 +21,10 @@ function createCacheSettingsStore(options = {}) {
 
   function load(loadOptions = {}) {
     try {
-      if (!settingsFile || !fs.existsSync(settingsFile)) return state;
+      if (!settingsFile) return state;
+      const backup = `${settingsFile}.bak`;
+      if (!fs.existsSync(settingsFile) && fs.existsSync(backup)) fs.renameSync(backup, settingsFile);
+      if (!fs.existsSync(settingsFile)) return state;
       const parsed = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       state = normalizeLoadedCacheSettings(parsed, {
         logger,
@@ -47,13 +50,31 @@ function createCacheSettingsStore(options = {}) {
 
   function save(nextState) {
     if (nextState) state = nextState;
+    const temporary = `${settingsFile}.${process.pid}.tmp`;
+    const backup = `${settingsFile}.bak`;
     try {
       pruneLegacySteamCdnSettings(state);
       pruneRemovedSteamAccessSettings(state);
-      fs.writeFileSync(settingsFile, JSON.stringify(state, null, 2));
+      fs.writeFileSync(temporary, JSON.stringify(state, null, 2));
+      if (fs.existsSync(settingsFile)) {
+        fs.rmSync(backup, { force: true });
+        fs.copyFileSync(settingsFile, backup);
+        fs.rmSync(settingsFile, { force: true });
+      }
+      try {
+        fs.renameSync(temporary, settingsFile);
+      } catch (error) {
+        if (fs.existsSync(backup)) fs.copyFileSync(backup, settingsFile);
+        throw error;
+      }
+      try { fs.rmSync(backup, { force: true }); } catch {}
       logger.log('[Settings] Saved Steam API settings');
       return true;
     } catch (e) {
+      try { fs.rmSync(temporary, { force: true }); } catch {}
+      try {
+        if (!fs.existsSync(settingsFile) && fs.existsSync(backup)) fs.renameSync(backup, settingsFile);
+      } catch {}
       logger.warn('[Settings] Failed to save settings:', e.message);
       return false;
     }
@@ -69,6 +90,7 @@ function createCacheSettingsStore(options = {}) {
     const get = (name, fallback) => (typeof getters[name] === 'function' ? getters[name]() : fallback);
     return Object.assign({
       steamApiKey: state.steamApiKey || '',
+      steamDataSource: state.steamDataSource || DEFAULT_CACHE_SETTINGS.steamDataSource,
       wallhubLogLevel: state.wallhubLogLevel || DEFAULT_CACHE_SETTINGS.wallhubLogLevel,
       wallhubAutoUpdateEnabled: !!state.wallhubAutoUpdateEnabled,
       mpkgTextureProfile: state.mpkgTextureProfile || DEFAULT_CACHE_SETTINGS.mpkgTextureProfile,

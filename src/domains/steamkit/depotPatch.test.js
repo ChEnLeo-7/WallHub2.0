@@ -280,6 +280,14 @@ test('patchDepotDownloaderForJsonProgress tolerates reordered Steam3Session usin
     assert.match(steam3Session, /connectCts\.CancelAfter\(TimeSpan\.FromSeconds\(2\)\)/);
     assert.match(steam3Session, /WALLHUB_STEAM3_API_BROKER_REQUIRED:/);
     assert.match(steam3Session, /WALLHUB_STEAM3_API_BROKER_DISABLED:/);
+    assert.match(steam3Session, /WallHubShouldResolveDepotHost\(host\) && WallHubSteamCdnDirectMode\(\)/);
+    assert.match(steam3Session, /UseProxy = !string\.Equals\(Environment\.GetEnvironmentVariable\("WALLHUB_STEAM_CDN_ROUTE_STRATEGY"\)/);
+    assert.match(steam3Session, /WALLHUB_STEAM3_CONNECT_START:/);
+    assert.match(steam3Session, /WALLHUB_STEAM3_HTTP_FALLBACK_START:/);
+    assert.match(steam3Session, /WallHubApiBootstrapClient = new HttpClient\(new SocketsHttpHandler[\s\S]*UseProxy = false/);
+    assert.doesNotMatch(steam3Session, /EndsWith\("\.steamserver\.net"/);
+    assert.match(steam3Session, /EndsWith\("\.eccdnx\.com"/);
+    assert.match(steam3Session, /EndsWith\("\.pphimalayanrt\.com"/);
     assert.doesNotMatch(steam3Session, /WallHubSteamWebApiBrokerHandler\(directHandler/);
     assert.doesNotMatch(steam3Session, /return new HttpClient\(directHandler/);
     assert.match(steam3Session, /WallHubSteamWebApiBrokerHandler\(WallHubCreateApiSocketsHandler\(\), brokerUrl, brokerToken\)/);
@@ -292,17 +300,30 @@ test('patchDepotDownloaderForJsonProgress tolerates reordered Steam3Session usin
     assert.match(program, /wallHubUserFilesSort = GetParameter\(args, "-wallhub-user-files-sort", "lastupdated"\)/);
     assert.match(program, /WALLHUB_STEAM_USER_FILES:/);
     assert.match(program, /WallHubGetUserFilesJsonAsync\(wallHubUserFilesAppId/);
+    assert.match(program, /wallHubCmLogin = HasParameter\(args, "-wallhub-cm-login"\)/);
+    assert.match(program, /wallHubPasswordStdin = HasParameter\(args, "-wallhub-password-stdin"\)/);
+    assert.match(program, /WALLHUB_STEAM_CM_LOGIN:/);
+    assert.match(program, /ContentDownloader\.WallHubGetSteamSessionJson\(\)/);
+    assert.match(program, /LoginTokens\.Remove\(username\)/);
+    assert.match(program, /password = Console\.In\.ReadLine\(\)/);
+    assert.match(program, /if \(wallHubPasswordStdin\)[\s\S]*password = Console\.In\.ReadLine\(\)[\s\S]*if \(password == null\)/);
+    assert.doesNotMatch(program, /LoginTokens\.Remove\(username\);\s*AccountSettingsStore\.Save\(\);/);
     assert.match(program, /wallHubQueryBridge = HasParameter\(args, "-wallhub-query-bridge"\)/);
     assert.match(program, /WallHubRunQueryBridgeAsync\(\)/);
     assert.match(program, /WALLHUB_STEAM_QUERY_BRIDGE_READY/);
     assert.match(program, /WALLHUB_STEAM_QUERY_BRIDGE:/);
-    assert.doesNotMatch(program, /wallhub-query-files|WALLHUB_STEAM_QUERY_FILES|QueryFilesJsonAsync/);
+    assert.match(program, /operation == "workshop-query"/);
+    assert.match(program, /WallHubQueryWorkshopJsonAsync/);
     assert.match(program, /using System\.Text\.Json;/);
+    assert.match(steam3Session, /WallHubGetSteamSessionJson/);
+    assert.match(steam3Session, /steamid = steamUser\.SteamID\.ConvertToUInt64\(\)\.ToString\(\)/);
     assert.match(steam3Session, /WallHubGetUserFilesJsonAsync/);
     assert.match(steam3Session, /CPublishedFile_GetUserFiles_Request/);
     assert.match(steam3Session, /supportedSortMethods = new\[\] \{ "subscriptiondate", "alpha", "lastupdated", "creationorder" \}/);
     assert.match(steam3Session, /sortmethod = safeSortMethod/);
-    assert.doesNotMatch(steam3Session, /QueryFiles|WallHubQuery/);
+    assert.match(steam3Session, /CPublishedFile_QueryFiles_Request/);
+    assert.match(steam3Session, /steamPublishedFile\.QueryFiles\(queryRequest\)/);
+    assert.match(steam3Session, /CPublishedFile_GetUserFiles_Request/);
     assert.match(steam3Session, /var response = await steamPublishedFile\.GetUserFiles\(request\);/);
     assert.match(steam3Session, /publishedfiledetails = details/);
     const accountStore = fs.readFileSync(path.join(dir, 'AccountSettingsStore.cs'), 'utf8');
@@ -342,6 +363,31 @@ test('patchDepotDownloaderForJsonProgress upgrades stale Steam3 WebAPI direct-ha
     assert.doesNotMatch(upgraded, /return new HttpClient\(directHandler/);
     assert.match(upgraded, /WallHubSteamWebApiBrokerHandler\(WallHubCreateApiSocketsHandler\(\), brokerUrl, brokerToken\)/);
     assert.match(upgraded, /WallHubGetSteamWebSessionJsonAsync/);
+
+    assert.match(upgraded, /WallHubShouldResolveDepotHost/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('patchDepotDownloaderForJsonProgress upgrades a stale Steam3 network patch without CDN resolver support', () => {
+  const dir = writeFixtureProject();
+  try {
+    depotPatch.patchDepotDownloaderForJsonProgress(dir, { includeStream: false });
+    const steam3Path = path.join(dir, 'Steam3Session.cs');
+    const current = fs.readFileSync(steam3Path, 'utf8');
+    const stale = current
+      .replace('if (WallHubShouldResolveDepotHost(host) && WallHubSteamCdnDirectMode())', 'if (WallHubShouldResolveApiHost(host))')
+      .replace('if (WallHubShouldResolveDepotHost(host)) throw new HttpRequestException', 'if (WallHubShouldResolveApiHost(host)) throw new HttpRequestException')
+      .replace(/\n        private static bool WallHubShouldResolveDepotHost\(string host\)[\s\S]*?\n        private static async Task<List<IPAddress>> WallHubResolveDepotHostAsync/, '\n        private static async Task<List<IPAddress>> WallHubResolveDepotHostAsync');
+    assert.doesNotMatch(stale, /WallHubShouldResolveDepotHost/);
+    fs.writeFileSync(steam3Path, stale, 'utf8');
+
+    depotPatch.patchDepotDownloaderForJsonProgress(dir, { includeStream: false });
+    const upgraded = fs.readFileSync(steam3Path, 'utf8');
+
+    assert.match(upgraded, /if \(WallHubShouldResolveDepotHost\(host\) && WallHubSteamCdnDirectMode\(\)\)/);
+    assert.match(upgraded, /EndsWith\("\.eccdnx\.com"/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -374,7 +420,18 @@ test('patchDepotDownloaderForJsonProgress emits a cancellable reusable stream wo
     const stream = fs.readFileSync(path.join(dir, 'WallHubDepotStream.cs'), 'utf8');
     const chunkProgress = fs.readFileSync(path.join(dir, 'WallHubDepotChunkProgress.cs'), 'utf8');
 
+    assert.ok(
+      stream.indexOf('var readTask = ReadWorkerControlLineAsync();') < stream.indexOf('["type"] = "ready"'),
+      'worker must begin reading control input before announcing readiness'
+    );
+    assert.match(stream, /Task\.Run\(\(\) => Console\.In\.ReadLine\(\)\)/);
+    assert.doesNotMatch(stream, /Console\.In\.ReadLineAsync\(\)/);
     assert.match(stream, /Task\.WhenAny\(readTask, activeRangeTask\)/);
+    assert.match(stream, /WALLHUB_DEPOT_CONTROL_RECEIVED:\{type\}:\{requestId\}/);
+    assert.match(stream, /WALLHUB_DEPOT_CDN_RANGE_STAGE:\{activeRangeId\}:task-complete/);
+    assert.match(stream, /RunWorkerRangeAsync\(steam3, cdnPool, config, plan, controlOut, requestId/);
+    assert.match(stream, /WALLHUB_DEPOT_CDN_RANGE_STAGE:\{id\}:started:\{start\}-\{end\}/);
+    assert.match(stream, /WALLHUB_DEPOT_CDN_RANGE_STAGE:\{id\}:file-complete/);
     assert.match(stream, /string\.Equals\(type, "cancel", StringComparison\.OrdinalIgnoreCase\)/);
     assert.match(stream, /activeRangeCts\.Cancel\(\)/);
     assert.match(stream, /\["cancelled"\] = true/);
@@ -386,13 +443,35 @@ test('patchDepotDownloaderForJsonProgress emits a cancellable reusable stream wo
     assert.match(stream, /DownloadChunkAsync\([^\r\n]+CancellationToken cancellationToken\)/);
     assert.match(stream, /rangeCts\.Cancel\(\);[\s\S]*Task\.WhenAll\(remainingTasks\)/);
     assert.match(stream, /output\.WriteAsync\(read\.Buffer\.AsMemory\(offset, count\), rangeToken\)/);
-    assert.match(stream, /cdnToken, null, cancellationToken\)/);
+    assert.match(stream, /var maxAttempts = WallHubChunkMaxAttempts\(\)/);
+    assert.match(stream, /attemptCts\.CancelAfter\(TimeSpan\.FromSeconds\(WallHubChunkAttemptTimeoutSeconds\(\)\)\)/);
+    assert.match(stream, /authTokenCallbackPromise\.Task\.WaitAsync\(attemptToken\)/);
+    assert.match(stream, /RequestCDNAuthToken\(plan\.AppId, plan\.DepotId, connection\)\.WaitAsync\(attemptToken\)/);
+    assert.match(stream, /DownloadDepotChunkAsync\(steam3\.steamClient, plan\.DepotId, chunk, connection/);
+    assert.match(stream, /WALLHUB_DEPOT_CDN_CHUNK_RETRY:/);
+    assert.match(stream, /WALLHUB_DEPOT_CDN_CHUNK_STAGE:\{attempt\}\/\{maxAttempts\}:connection/);
+    assert.match(stream, /WALLHUB_DEPOT_CDN_CHUNK_STAGE:\{attempt\}\/\{maxAttempts\}:auth-wait/);
+    assert.match(stream, /WALLHUB_DEPOT_CDN_CHUNK_STAGE:\{attempt\}\/\{maxAttempts\}:auth-ready/);
+    assert.match(stream, /WALLHUB_DEPOT_CDN_CHUNK_STAGE:\{attempt\}\/\{maxAttempts\}:http-start/);
+    assert.match(stream, /WALLHUB_DEPOT_CDN_CHUNK_STAGE:\{attempt\}\/\{maxAttempts\}:http-done/);
+    assert.match(stream, /timeoutHost/);
+    assert.match(stream, /authHost/);
+    assert.match(stream, /httpHost/);
+    assert.match(stream, /failedHost/);
+    assert.doesNotMatch(stream, /var host = connection/);
+    assert.match(stream, /ReturnBrokenConnection\(connection\)/);
+    assert.match(stream, /WALLHUB_DEPOT_STREAM_CHUNK_ATTEMPT_TIMEOUT_SECONDS/);
+    assert.match(stream, /WALLHUB_DEPOT_STREAM_CHUNK_MAX_ATTEMPTS/);
+    assert.match(stream, /Failed to download depot chunk after \{maxAttempts\} CDN attempt\(s\)/);
     assert.doesNotMatch(stream, /CancellationTokenSource cts/);
 
     assert.match(chunkProgress, /CancellationToken cancellationToken = default/);
     assert.match(chunkProgress, /CancellationTokenSource\.CreateLinkedTokenSource\(cancellationToken\)/);
     assert.match(chunkProgress, /SendAsync\(request, HttpCompletionOption\.ResponseHeadersRead, requestCts\.Token\)/);
     assert.match(chunkProgress, /ReadAsync\(buffer\.AsMemory\(0, buffer\.Length\), cancellationToken\)/);
+    assert.match(chunkProgress, /WALLHUB_DEPOT_CDN_HTTP_STAGE:client-ready/);
+    assert.match(chunkProgress, /WALLHUB_DEPOT_CDN_HTTP_STAGE:headers:/);
+    assert.match(chunkProgress, /WALLHUB_DEPOT_CDN_HTTP_STAGE:body-first:/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

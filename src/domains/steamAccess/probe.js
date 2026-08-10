@@ -53,7 +53,7 @@ function applicationProbeOk(hostname, statusCode, headers, body) {
   }
   const text = String(body || '').toLowerCase();
   if (host.includes('steamcommunity') || host.includes('steampowered')) {
-    return text.includes('steam') || text.includes('workshop') || text.includes('<html');
+    return (text.includes('steamcommunity') || text.includes('steam community')) && text.includes('workshop');
   }
   return true;
 }

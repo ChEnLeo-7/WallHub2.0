@@ -155,7 +155,29 @@ function createSteamKitPersonalWorkshopService(options = {}) {
     return parseSteamKitUserFilesOutput(`${result && result.out || ''}\n${result && result.err || ''}`);
   }
 
-  return { getUserFiles };
+  async function queryWorkshop(query, queryOptions = {}) {
+    const username = String(queryOptions.username || '').trim();
+    if (!username) throw personalWorkshopError('SteamKit remembered account is unavailable', 'STEAM_CM_LOGIN_REQUIRED');
+    if (!canUsePersistentBridge('queryWorkshop')) {
+      throw personalWorkshopError('Steam CM Workshop query bridge is unavailable', 'STEAM_CM_QUERY_UNAVAILABLE');
+    }
+    const timeoutMs = Math.max(15000, normalizePositiveInt(queryOptions.timeoutMs || process.env.WALLHUB_STEAMKIT_USER_FILES_TIMEOUT_MS, 45000, 120000));
+    const bridgeOptions = { username, timeoutMs };
+    if (queryOptions.signal) bridgeOptions.signal = queryOptions.signal;
+    if (queryOptions.priority) bridgeOptions.priority = queryOptions.priority;
+    try {
+      const response = await queryBridge.queryWorkshop(query, bridgeOptions);
+      return parseSteamKitUserFilesOutput(outputFromBridge(WALLHUB_STEAM_USER_FILES_MARKER, response));
+    } catch (error) {
+      if (error && error.code === 'ABORT_ERR') throw error;
+      const wrapped = personalWorkshopError(`Steam CM Workshop query failed: ${error && error.message ? error.message : 'unknown error'}`, 'STEAM_CM_QUERY_FAILED');
+      wrapped.statusCode = 502;
+      wrapped.cause = error;
+      throw wrapped;
+    }
+  }
+
+  return { getUserFiles, queryWorkshop };
 }
 
 module.exports = {

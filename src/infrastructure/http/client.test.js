@@ -48,3 +48,49 @@ test('GET forwards private Steam route controls to gateway without leaking them 
   assert.deepEqual(captured.routeOptions, routeOptions);
   assert.equal(Object.prototype.hasOwnProperty.call(captured.headers, 'steamAccessRouteOptions'), false);
 });
+
+test('GET forwards the private SteamAccess bypass flag without leaking it as an HTTP header', async () => {
+  let captured = null;
+  const client = createHttpClient({
+    getProxyCandidates: () => [null],
+    shouldUseGateway: opts => { captured = opts; return true; },
+    requestByGateway: async () => Buffer.from('gateway'),
+  });
+
+  await client.get('https://steamcommunity.com/', { wallhubDisableSteamAccessGateway: true });
+
+  assert.equal(captured.disableSteamAccessGateway, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(captured.headers, 'wallhubDisableSteamAccessGateway'), false);
+});
+
+test('gateway redirects preserve request policy controls', async () => {
+  const requests = [];
+  const controller = new AbortController();
+  const routeOptions = { requireApplicationProbe: true };
+  const client = createHttpClient({
+    getProxyCandidates: () => [null],
+    shouldUseGateway: () => true,
+    requestByGateway: async (opts) => {
+      requests.push(opts);
+      if (requests.length === 1) {
+        throw Object.assign(new Error('redirect'), { redirectLocation: '/redirected' });
+      }
+      return Buffer.from('ok');
+    },
+  });
+
+  const body = await client.get('https://steamcommunity.com/start', {
+    signal: controller.signal,
+    steamAccessRouteOptions: routeOptions,
+    wallhubDisableCurlProxy: true,
+    wallhubDisableSteamAccessGateway: true,
+  });
+
+  assert.equal(body.toString('utf8'), 'ok');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].path, '/redirected');
+  assert.equal(requests[1].signal, controller.signal);
+  assert.equal(requests[1].disableCurlProxy, true);
+  assert.equal(requests[1].disableSteamAccessGateway, true);
+  assert.deepEqual(requests[1].routeOptions, routeOptions);
+});

@@ -117,8 +117,12 @@ function isDepotAuthFailureMessage(message) {
   return /two[- ]?factor|2fa|steam guard|authenticator|authentication code|mobile|password|credentials|incorrect|invalid login|invalidpassword|logon denied|login failed|unable to login|accountlogondenied|invalidloginauthcode/i.test(String(message || ''));
 }
 
+function isDepotGuardRequiredMessage(message) {
+  return /steam guard!|this account is protected by steam guard|accountlogondenied|accountlogindeniedneedtwofactor|invalidloginauthcode|twofactorcodemismatch|please enter (?:(?:your|the) )?(?:2[- ]?factor|two[- ]?factor|authentication) (?:auth )?code|auth code sent to (?:your )?email|steam (?:mobile app|guard).*?(?:confirm|approval|approve)|(?:confirm|approval|approve).*?steam (?:mobile app|guard)/i.test(String(message || ''));
+}
+
 function isDepotNetworkFailureMessage(message) {
-  return /timed? out|timeout|请求超时|curl:\s*\((5|6|7|28|35|52|56)\)|could not resolve|failed to connect|unable to connect|connection\s+(timed out|refused|reset)|proxy connect|no route to host|network.*unreachable|host.*unreachable|name or service not known|temporary failure|steam.*unreachable/i.test(String(message || ''));
+  return /timed? out|timeout|请求超时|curl:\s*\((5|6|7|28|35|52|56)\)|could not resolve|failed to connect|unable to connect|connectfailed|no\s*connection|not connected|disconnected from steam|connection\s+(timed out|refused|reset|failed|closed|aborted)|failed to establish (?:a )?connection|unable to establish (?:a )?connection|serviceunavailable|socketexception|httprequestexception|proxy connect|no route to host|network.*unreachable|host.*unreachable|name or service not known|temporary failure|steam.*unreachable|(?:the operation|a task) was cancel(?:ed|led)/i.test(String(message || ''));
 }
 
 function isDepotLoginVerifiedDespiteCanceled(message) {
@@ -146,6 +150,7 @@ module.exports = {
   cleanProcessLineForStage,
   stripWallhubDiagnosticOutput,
   isDepotAuthFailureMessage,
+  isDepotGuardRequiredMessage,
   isDepotNetworkFailureMessage,
   isDepotLoginVerifiedDespiteCanceled,
 };

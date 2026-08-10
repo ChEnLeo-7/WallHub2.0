@@ -20,6 +20,10 @@ function baseDeps(overrides = {}) {
       handleDebug: async () => {},
       handleServerRuntime: async () => {},
       handleServerRuntimeDiagnostics: async () => {},
+      handleServerOnboardingStatus: async () => {},
+      handleServerOnboardingNetworkCheck: async () => {},
+      handleServerOnboardingAccountCheck: async () => {},
+      handleServerOnboardingComplete: async () => {},
       handleServerUpdateStatus: async () => {},
       handleServerUpdateCheck: async () => {},
       handleServerUpdateDownload: async () => {},
@@ -140,6 +144,58 @@ test('router dispatches client click event reports before static fallback', asyn
   assert.deepEqual(called, ['client-event']);
 });
 
+test('router dispatches proxy routes before API groups and static fallback', async () => {
+  const { called, deps } = baseDeps({
+    isWallhubProxyVirtualSteamPath: () => true,
+    handleWallhubVirtualSteamProxy: async () => { called.push('proxy'); return true; },
+    handleDebug: async () => { called.push('debug'); },
+  });
+  const router = createAppRouter(deps);
+
+  await router({ method: 'GET', url: '/api/debug' }, {});
+
+  assert.deepEqual(called, ['proxy']);
+});
+
+test('router preserves static fallback for unmatched routes and methods', async () => {
+  const { called, deps } = baseDeps();
+  const router = createAppRouter(deps);
+
+  await router({ method: 'POST', url: '/api/server/runtime' }, {});
+
+  assert.deepEqual(called, ['static']);
+});
+
+test('router preserves handler error status and Steam metadata', async () => {
+  const failure = Object.assign(new Error('Steam Guard required'), {
+    statusCode: 401,
+    code: 'STEAM_GUARD_REQUIRED',
+    requiresSteamLogin: true,
+    requiresSteamGuard: true,
+  });
+  const { called, deps } = baseDeps({
+    handleQuery: async () => { throw failure; },
+  });
+  const router = createAppRouter(deps);
+  const originalConsoleError = console.error;
+  console.error = () => {};
+
+  try {
+    const res = {};
+    await router({ method: 'POST', url: '/api/steam/query' }, res);
+    assert.equal(res.statusCode, 401);
+    assert.deepEqual(res.body, {
+      error: 'Steam Guard required',
+      code: 'STEAM_GUARD_REQUIRED',
+      requiresSteamLogin: true,
+      requiresSteamGuard: true,
+    });
+    assert.deepEqual(called, []);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
 test('router keeps detailed runtime diagnostics out of the lightweight runtime route', async () => {
   const { called, deps } = baseDeps({
     handleServerRuntime: async () => { called.push('runtime'); },
@@ -151,6 +207,23 @@ test('router keeps detailed runtime diagnostics out of the lightweight runtime r
   await router({ method: 'GET', url: '/api/server/runtime/diagnostics' }, {});
 
   assert.deepEqual(called, ['runtime', 'diagnostics']);
+});
+
+test('router dispatches startup onboarding status and actions by method', async () => {
+  const { called, deps } = baseDeps({
+    handleServerOnboardingStatus: async () => { called.push('status'); },
+    handleServerOnboardingNetworkCheck: async () => { called.push('network'); },
+    handleServerOnboardingAccountCheck: async () => { called.push('account'); },
+    handleServerOnboardingComplete: async () => { called.push('complete'); },
+  });
+  const router = createAppRouter(deps);
+
+  await router({ method: 'GET', url: '/api/server/onboarding' }, {});
+  await router({ method: 'POST', url: '/api/server/onboarding/network-check' }, {});
+  await router({ method: 'POST', url: '/api/server/onboarding/account-check' }, {});
+  await router({ method: 'POST', url: '/api/server/onboarding/complete' }, {});
+
+  assert.deepEqual(called, ['status', 'network', 'account', 'complete']);
 });
 
 test('router dispatches update status and actions by method', async () => {

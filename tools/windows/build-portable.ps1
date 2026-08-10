@@ -227,7 +227,7 @@ function Copy-ApplicationSources {
     Get-ChildItem -LiteralPath (Join-Path $StageDir "src") -Filter "*.test.js" -Recurse -File | Remove-Item -Force
     $mpkgDir = Join-Path $StageDir "tools\mpkg"
     New-Item -ItemType Directory -Path $mpkgDir -Force | Out-Null
-    foreach ($file in @("mobile_mpkg.py", "wallpaper_engine_toolkit.py", "requirements.txt")) {
+    foreach ($file in @("mobile_mpkg.py", "requirements.txt")) {
         Copy-Item -LiteralPath (Join-Path $RepoRoot "tools\mpkg\$file") -Destination $mpkgDir
     }
     $updateDir = Join-Path $StageDir "tools\update"

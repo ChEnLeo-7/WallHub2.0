@@ -26,6 +26,7 @@ function createServerLifecycle(options = {}) {
       if (typeof process.send === 'function') process.send(msg);
     },
     canSendProcessMessage = () => typeof process.send === 'function',
+    scheduleTimeout = setTimeout,
   } = options;
 
   function isDockerLikeEnv() {
@@ -65,19 +66,19 @@ function createServerLifecycle(options = {}) {
       try {
         if (proc.connected) proc.send({ type: 'wallhub:stop', reason: reason || 'supervisor' });
       } catch {}
-      setTimeout(() => {
+      scheduleTimeout(() => {
         if (!proc.killed && proc.exitCode === null && proc.signalCode === null) {
           try { proc.kill('SIGTERM'); } catch {}
         }
       }, 1200);
       if (platform === 'win32') {
-        setTimeout(() => {
+        scheduleTimeout(() => {
           if (!proc.killed && proc.exitCode === null && proc.signalCode === null) {
             try { execFileSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' }); } catch {}
           }
         }, 4500);
       } else {
-        setTimeout(() => {
+        scheduleTimeout(() => {
           if (!proc.killed && proc.exitCode === null && proc.signalCode === null) {
             try { proc.kill('SIGKILL'); } catch {}
           }
@@ -105,13 +106,13 @@ function createServerLifecycle(options = {}) {
           requestedAction = 'restart';
           supervisorLog(`restart requested by worker pid=${child.pid}`);
           const target = child;
-          setTimeout(() => killChildProcess(target, 'restart'), 800);
+          scheduleTimeout(() => killChildProcess(target, 'restart'), 800);
         } else if (type === 'wallhub:shutdown') {
           requestedAction = 'shutdown';
           stopping = true;
           supervisorLog(`shutdown requested by worker pid=${child.pid}`);
           const target = child;
-          setTimeout(() => killChildProcess(target, 'shutdown'), 800);
+          scheduleTimeout(() => killChildProcess(target, 'shutdown'), 800);
         }
       });
       child.on('exit', (code, signal) => {
@@ -120,7 +121,7 @@ function createServerLifecycle(options = {}) {
         child = null;
         requestedAction = '';
         if (action === 'restart') {
-          restartTimer = setTimeout(() => spawnWorker('restart'), 600);
+          restartTimer = scheduleTimeout(() => spawnWorker('restart'), 600);
           return;
         }
         if (action === 'shutdown' || stopping) {
@@ -128,7 +129,7 @@ function createServerLifecycle(options = {}) {
           exit(0);
           return;
         }
-        restartTimer = setTimeout(() => spawnWorker('unexpected exit'), 1200);
+        restartTimer = scheduleTimeout(() => spawnWorker('unexpected exit'), 1200);
       });
     };
 
@@ -163,11 +164,11 @@ function createServerLifecycle(options = {}) {
       return { mode: 'supervisor' };
     }
     if (isDockerLikeEnv()) {
-      setTimeout(() => exit(0), 800);
+      scheduleTimeout(() => exit(0), 800);
       return { mode: 'exit' };
     }
     logger.warn('[Restart] Running without supervisor; exiting for external restart.');
-    setTimeout(() => exit(0), 800);
+    scheduleTimeout(() => exit(0), 800);
     return { mode: 'exit' };
   }
 
@@ -178,7 +179,7 @@ function createServerLifecycle(options = {}) {
       sendProcessMessage({ type: 'wallhub:shutdown' });
       return { mode: 'supervisor' };
     }
-    setTimeout(() => exit(0), 800);
+    scheduleTimeout(() => exit(0), 800);
     return { mode: 'exit' };
   }
 
@@ -198,7 +199,7 @@ function createServerLifecycle(options = {}) {
     } catch {
       finish();
     }
-    setTimeout(finish, 1800).unref();
+    scheduleTimeout(finish, 1800).unref();
   }
 
   function installProcessExitHook() {

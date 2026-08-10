@@ -10,8 +10,8 @@ import {
   normalizeFilters,
   type Filters,
 } from '@/lib/normalizers';
-import { DEFAULT_DETAILS_PRESENTATION, normalizeDetailsPresentation } from '../../../src/shared/detailsPresentation.mjs';
-import { DEFAULT_VIDEO_PLAYER_MODE, normalizeVideoPlayerMode } from '../../../src/shared/videoControls.mjs';
+import { DEFAULT_DETAILS_PRESENTATION, normalizeDetailsPresentation } from '@/lib/detailsPresentation.mjs';
+import { DEFAULT_VIDEO_PLAYER_MODE, normalizeVideoPlayerMode } from '@/lib/videoControls.mjs';
 
 export const PREFS_KEY = 'wallhub-react-prefs-v1';
 export const SEARCH_SESSION_KEY = 'wallhub-search-session-v1';

@@ -16,12 +16,17 @@ function makeReq(url, options = {}) {
 
 function makeHandler(options = {}) {
   const calls = [];
+  const systemCalls = [];
   const routeCalls = [];
   const handler = createInternalSteamResolverHandler({
     token: 'secret-token',
     resolveHost: async (host) => {
       calls.push(host);
       return { ips: ['203.0.113.10'], protocol: 'doh', endpoints: ['https://dns.alidns.com/resolve'], source: 'resolver' };
+    },
+    resolveSystemHost: async (host) => {
+      systemCalls.push(host);
+      return { ips: ['192.0.2.10'] };
     },
     chooseRoute: async (host, port, routeOptions) => {
       routeCalls.push({ host, port, routeOptions });
@@ -34,7 +39,7 @@ function makeHandler(options = {}) {
     logger: { warn() {}, log() {} },
     ...options,
   });
-  return { handler, calls, routeCalls };
+  return { handler, calls, systemCalls, routeCalls };
 }
 
 test('isLoopbackAddress accepts IPv4, IPv6 and IPv4-mapped loopback', () => {
@@ -46,9 +51,11 @@ test('isLoopbackAddress accepts IPv4, IPv6 and IPv4-mapped loopback', () => {
 test('steamHostAllowedForDepotResolver only allows Steam WebAPI hosts', () => {
   assert.equal(steamHostAllowedForDepotResolver('api.steampowered.com'), true);
   assert.equal(steamHostAllowedForDepotResolver('community.steam-api.com'), true);
+  assert.equal(steamHostAllowedForDepotResolver('dl.steam.clngaa.com'), true);
+  assert.equal(steamHostAllowedForDepotResolver('xz.pphimalayanrt.com'), true);
+  assert.equal(steamHostAllowedForDepotResolver('cache1-hkg1.steamcontent.com'), true);
   assert.equal(steamHostAllowedForDepotResolver('cm1-sto1.cm.steampowered.com'), false);
   assert.equal(steamHostAllowedForDepotResolver('cm1-hkg1.steamserver.net'), false);
-  assert.equal(steamHostAllowedForDepotResolver('cache1-hkg1.steamcontent.com'), false);
   assert.equal(steamHostAllowedForDepotResolver('example.com'), false);
 });
 
@@ -100,6 +107,27 @@ test('internal resolver returns WallHub resolver result for allowed host', async
   assert.deepEqual(res.body.ips, ['203.0.113.10']);
   assert.equal(res.body.protocol, 'doh');
   assert.deepEqual(res.body.endpoints, ['https://dns.alidns.com/resolve']);
+});
+
+test('disabled internal resolver uses system DNS without SteamAccess resolution or probes', async () => {
+  const logs = [];
+  const { handler, calls, systemCalls, routeCalls } = makeHandler({
+    enabled: () => false,
+    logger: { warn() {}, log(message) { logs.push(message); } },
+  });
+  const res = {};
+
+  await handler(makeReq('/api/internal/steam/resolve?host=api.steampowered.com&port=443&route=1', {
+    headers: { 'x-wallhub-resolver-token': 'secret-token' },
+  }), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.ips, ['192.0.2.10']);
+  assert.equal(res.body.source, 'system');
+  assert.deepEqual(systemCalls, ['api.steampowered.com']);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(routeCalls, []);
+  assert.equal(logs.some(line => String(line).includes('internal depot resolver start')), false);
 });
 
 test('internal resolver route mode returns prewarmed application-probed SteamAccess route without probing inline', async () => {
@@ -225,6 +253,34 @@ test('internal Steam WebAPI broker forwards through SteamAccess with application
   assert.equal(calls[0].opts.headers.connection, undefined);
   assert.equal(calls[0].opts.headers['x-wallhub-target-host'], undefined);
   assert.equal(calls[0].body, 'key=value');
+});
+
+test('disabled internal Steam WebAPI broker uses the normal request path without Gateway route options', async () => {
+  const gatewayCalls = [];
+  const directCalls = [];
+  const handler = createInternalSteamWebApiBrokerHandler({
+    token: 'secret-token',
+    enabled: () => false,
+    requestSteam: async (opts) => { gatewayCalls.push(opts); return Buffer.alloc(0); },
+    requestDirect: async (opts, body, timeout) => {
+      directCalls.push({ opts, body: body && body.toString('utf8'), timeout });
+      return Buffer.from('{"response":{"direct":true}}');
+    },
+    jsonRes: (res, code, body) => { res.statusCode = code; res.body = body; },
+    logger: { warn() {}, log() {} },
+  });
+  const res = makeBrokerRes();
+
+  await handler(makeBodyReq('/api/internal/steam/webapi?host=api.steampowered.com&path=%2Ftest', {
+    headers: { 'x-wallhub-resolver-token': 'secret-token' },
+  }), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(gatewayCalls, []);
+  assert.equal(directCalls.length, 1);
+  assert.equal(directCalls[0].opts.disableSteamAccessGateway, true);
+  assert.equal(directCalls[0].opts.routeOptions, undefined);
+  assert.equal(res.body.toString('utf8'), '{"response":{"direct":true}}');
 });
 
 test('internal Steam WebAPI broker rejects non-Steam targets before forwarding', async () => {

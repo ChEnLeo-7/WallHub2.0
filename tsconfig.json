@@ -20,6 +20,6 @@
       "@/*": ["frontend/src/*"]
     }
   },
-  "include": ["frontend/src", "vite.config.ts"],
+  "include": ["frontend/src", "vite.config.ts", "vitest.config.ts"],
   "references": []
 }

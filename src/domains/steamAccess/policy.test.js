@@ -107,3 +107,17 @@ test('policy lets account-sensitive requests disable connection reuse per reques
   const policy = policyFactory.forHost('steamcommunity.com', { connectionReuse: false });
   assert.equal(policy.connectionReuseEnabled, false);
 });
+
+test('policy can force an onboarding probe without persisting enhancement', () => {
+  const policyFactory = createSteamAccessPolicyFactory({
+    enabled: () => false,
+    directWebApi: () => false,
+    isGatewayHost: () => false,
+  });
+
+  assert.equal(policyFactory.shouldUse({
+    protocol: 'https:',
+    hostname: 'steamcommunity.com',
+    routeOptions: { forceEnhance: true },
+  }, null), true);
+});
