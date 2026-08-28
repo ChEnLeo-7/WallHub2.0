@@ -1,11 +1,6 @@
 export const VIDEO_SEEK_SECONDS = 5;
-export const DEFAULT_VIDEO_PLAYER_MODE = 'native';
 export const VIDEO_PLAYBACK_RATE_MIN = 0.5;
 export const VIDEO_PLAYBACK_RATE_MAX = 3;
-
-export function normalizeVideoPlayerMode(value) {
-  return value === 'compatibility' ? 'compatibility' : DEFAULT_VIDEO_PLAYER_MODE;
-}
 
 export function formatVideoTime(value) {
   const totalSeconds = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
@@ -51,6 +46,10 @@ export function getVideoKeyboardAction({
 
 export function getLongPressPlaybackRate(isHolding) {
   return isHolding ? 2 : 1;
+}
+
+export function getKeyboardLongPressPlaybackRate(currentRate) {
+  return normalizeVideoPlaybackRate(getRestoredPlaybackRate(currentRate) + 1);
 }
 
 export function getRestoredPlaybackRate(previousRate) {

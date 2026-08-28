@@ -1,10 +1,11 @@
 'use strict';
 
-const { itemMatchesExactPhrase } = require('../filters');
 const { detailMapFromList, mapWorkshopItem, validDetailForId } = require('./itemMapping');
+const { collectArrayLikeParams } = require('../filters');
 const { isAbortError } = require('./querySources');
 const {
   STEAM_WORKSHOP_ACCESSIBLE_ITEMS,
+  accessibleWorkshopPages,
   accessibleWorkshopTotal,
   pageBeyondAccessibleWorkshopTotal,
 } = require('./sourceSelection');
@@ -42,117 +43,73 @@ async function detailsForSource(sourceData, context, totalBudgetMs) {
   return details;
 }
 
-function appendUniqueItems(target, seen, items, targetCount) {
-  for (const item of items) {
-    const id = String(item && item.publishedfileid || '');
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    target.push(item);
-    if (target.length >= targetCount) break;
-  }
-}
-
-async function findExactPhraseFallbackItems(context) {
-  const { coordinator, criteria, logger, params, runOptions, sources } = context;
-  const probeParams = Object.assign({}, params, { page: 1, search_text: '' });
-  const sourceData = await sources.scrapeIds(probeParams, runOptions);
-  if (!sourceData.ids || !sourceData.ids.length) return [];
-  let details = [];
-  try {
-    details = await sources.getShortDetails(sourceData.ids, { totalBudgetMs: 5000, signal: runOptions.signal });
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    logger.warn('[ExactPhrase] fallback details failed:', error.message);
-  }
-  const detailMap = detailMapFromList(details);
-  return criteria.applyPostFilters(sourceData.ids
-    .filter(id => validDetailForId(detailMap[id], id))
-    .map(id => mapWorkshopItem(id, detailMap[id], (sourceData.hints && sourceData.hints[id]) || {})))
-    .filter(item => itemMatchesExactPhrase(item, criteria.exactPhraseText))
-    .slice(0, criteria.numperpage);
+function strictSourceName(configuredSource) {
+  if (configuredSource === 'cm') return 'steam-cm';
+  if (configuredSource === 'webapi') return 'steam-webapi';
+  return '';
 }
 
 async function runSimplePublicQuery(context) {
   const { coordinator, criteria, logger, params, runOptions, sourceSelection, sources } = context;
-  const { applyPostFilters, exactPhraseText, genreOr, numperpage, page } = criteria;
-  const matched = [];
-  const seen = new Set();
-  let total = 0;
-  let scanned = 0;
-  const maxScanPages = Math.max(page, page + 8);
-
-  for (let scanPage = page; scanPage <= maxScanPages && matched.length < numperpage; scanPage += 1) {
-    const scanParams = scanPage === page ? params : Object.assign({}, params, { page: scanPage });
-    const sourceData = await sources.queryBySteamApiOrCommunity(
+  let sourceData = await sources.queryBySteamApiOrCommunity(
+    sourceSelection.querySteamApiKey,
+    params,
+    'simple',
+    runOptions
+  );
+  coordinator.noteSourceData(sourceData);
+  let ratingFallback = '';
+  const excludedRatings = new Set(collectArrayLikeParams(params, 'excludedtags'));
+  if (!(sourceData.ids || []).length && excludedRatings.has('Everyone') && excludedRatings.has('Questionable')) {
+    const relaxedParams = withoutExcludedTag(params, 'Questionable');
+    sourceData = await sources.queryBySteamApiOrCommunity(
       sourceSelection.querySteamApiKey,
-      scanParams,
-      genreOr,
-      scanPage === page ? 'simple' : 'simple page ' + scanPage,
+      relaxedParams,
+      'mature rating fallback',
       runOptions
     );
     coordinator.noteSourceData(sourceData);
-    const { ids, totalCount, hints } = sourceData;
-    if (!ids.length) break;
-    scanned += 1;
-    if (totalCount > 0) total = totalCount;
-    const details = await detailsForSource(sourceData, context, 7000);
-    const detailMap = detailMapFromList(details);
-    appendUniqueItems(matched, seen, applyPostFilters(ids
-      .filter(id => validDetailForId(detailMap[id], id))
-      .map(id => mapWorkshopItem(id, detailMap[id], (hints && hints[id]) || {}))), numperpage);
-    if (ids.length < numperpage) break;
+    ratingFallback = 'allow-questionable';
   }
-
-  let items = matched;
-  if (exactPhraseText && !items.length && sourceSelection.configuredSource === 'community') {
-    items = await findExactPhraseFallbackItems(context);
-  }
-  const resultTotal = exactPhraseText && items.length
-    ? items.length
-    : (total > 0
-      ? accessibleWorkshopTotal(total, params)
-      : (items.length >= numperpage || pageBeyondAccessibleWorkshopTotal(page, numperpage, params) ? STEAM_WORKSHOP_ACCESSIBLE_ITEMS : items.length));
-  logger.log(`[Query] Returning ${items.length} items, total=${resultTotal}, scanned=${scanned}`);
-  return coordinator.withWarnings({ response: { publishedfiledetails: items, total: resultTotal, total_count: items.length } });
+  const details = await detailsForSource(sourceData, context, 7000);
+  const detailMap = detailMapFromList(details);
+  const items = criteria.applyWallpaperPostFilters((sourceData.ids || [])
+    .filter(id => validDetailForId(detailMap[id], id))
+    .map(id => mapWorkshopItem(id, detailMap[id], (sourceData.hints && sourceData.hints[id]) || {})))
+    .slice(0, criteria.numperpage);
+  const upstreamTotal = parseInt(sourceData.totalCount, 10) || 0;
+  const preserveUpstreamTotal = sourceSelection.configuredSource === 'cm' || sourceSelection.configuredSource === 'webapi';
+  const total = upstreamTotal > 0
+    ? (preserveUpstreamTotal ? upstreamTotal : accessibleWorkshopTotal(upstreamTotal, params))
+    : (items.length >= criteria.numperpage || pageBeyondAccessibleWorkshopTotal(criteria.page, criteria.numperpage, params)
+      ? STEAM_WORKSHOP_ACCESSIBLE_ITEMS
+      : items.length);
+  const totalPages = accessibleWorkshopPages(total, criteria.numperpage);
+  logger.log(`[Query] Returning ${items.length} items, total=${total}`);
+  return coordinator.withWarnings({
+    response: { publishedfiledetails: items, total, total_count: items.length, totalPages },
+    totalPages,
+    source: strictSourceName(sourceSelection.configuredSource),
+    diagnostics: sourceData.strategy || sourceData.upstreamRequests || ratingFallback ? {
+      ...(sourceData.strategy ? { strategy: sourceData.strategy } : {}),
+      upstreamRequests: (sourceData.upstreamRequests || 1) + (ratingFallback ? 1 : 0),
+      ...(ratingFallback ? { ratingFallback } : {}),
+    } : undefined,
+  });
 }
 
-async function runLocalOrPublicQuery(context) {
-  const { coordinator, criteria, logger, params, runOptions, sourceSelection, sources } = context;
-  const { applyPostFilters, genreOr, numperpage, page } = criteria;
-  const matched = [];
-  const seen = new Set();
-  let total = 50000;
-  let scanned = 0;
-  const maxScanPages = Math.max(page, page + 8);
-
-  for (let scanPage = page; scanPage <= maxScanPages && matched.length < numperpage; scanPage += 1) {
-    const scanParams = Object.assign({}, params, { page: scanPage });
-    const sourceData = Object.assign({ hints: {} }, await sources.queryBySteamApiOrCommunity(
-      sourceSelection.querySteamApiKey,
-      scanParams,
-      genreOr,
-      scanPage === page ? 'genre-or' : `genre-or page ${scanPage}`,
-      runOptions
-    ));
-    coordinator.noteSourceData(sourceData);
-    if (!sourceData.ids.length) break;
-    scanned += 1;
-    if (sourceData.totalCount > 0) total = sourceData.totalCount;
-    const details = await detailsForSource(sourceData, context, 2500);
-    const detailMap = detailMapFromList(details);
-    appendUniqueItems(matched, seen, applyPostFilters(sourceData.ids
-      .filter(id => validDetailForId(detailMap[id], id))
-      .map(id => mapWorkshopItem(id, detailMap[id], {}))), numperpage);
-    if (sourceData.ids.length < numperpage) break;
+function withoutExcludedTag(params, removedTag) {
+  const next = {};
+  const exclusions = collectArrayLikeParams(params, 'excludedtags').filter(tag => tag !== removedTag);
+  for (const [key, value] of Object.entries(params || {})) {
+    if (!/^excludedtags(?:\[\d+\])?$/.test(key)) next[key] = value;
   }
-
-  total = accessibleWorkshopTotal(total, params);
-  logger.log(`[Query] ${sourceSelection.querySteamApiKey ? 'SteamAPI' : 'Community'} genre OR(${genreOr.length}) returning ${matched.length}, total=${total}, scanned=${scanned}`);
-  return coordinator.withWarnings({ response: { publishedfiledetails: matched, total, total_count: matched.length } });
+  exclusions.forEach((tag, index) => { next[`excludedtags[${index}]`] = tag; });
+  return next;
 }
 
 function runPublicQuery(context) {
-  return context.criteria.hasLocalOr ? runLocalOrPublicQuery(context) : runSimplePublicQuery(context);
+  return runSimplePublicQuery(context);
 }
 
 module.exports = { runPublicQuery };

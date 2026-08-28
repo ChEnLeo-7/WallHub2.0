@@ -58,8 +58,6 @@ export function SettingsDialogContent(props: SettingsDialogContentProps) {
     setHomePageSize,
     prefetchNextPage,
     setPrefetchNextPage,
-    videoPlayerMode,
-    setVideoPlayerMode,
     onSave,
     onClearDepotStreamCache,
     onLogin,
@@ -139,12 +137,7 @@ export function SettingsDialogContent(props: SettingsDialogContentProps) {
                       setSettings={setSettings}
                       mpkgCompactAvailable={mpkgCompactAvailable}
                       mpkgCompactUnavailableReason={mpkgCompactUnavailableReason}
-                      depotStreamCacheSelectValue={dialogState.depotStreamCacheSelectValue}
-                      depotStreamCacheCustomInput={dialogState.depotStreamCacheCustomInput}
-                      setDepotStreamCacheCustomMode={dialogState.setDepotStreamCacheCustomMode}
-                      setDepotStreamCacheCustomInput={dialogState.setDepotStreamCacheCustomInput}
                       onSave={onSave}
-                      onClearDepotStreamCache={onClearDepotStreamCache}
                     />
                   ) : tab === 'steam' ? (
                     <SteamSettingsPanel
@@ -167,9 +160,12 @@ export function SettingsDialogContent(props: SettingsDialogContentProps) {
                       settingsHostsLoaded={settingsHostsLoaded}
                       prefetchNextPage={prefetchNextPage}
                       setPrefetchNextPage={setPrefetchNextPage}
-                      videoPlayerMode={videoPlayerMode}
-                      setVideoPlayerMode={setVideoPlayerMode}
                       steamAccess={steamAccess}
+                      depotStreamCacheSelectValue={dialogState.depotStreamCacheSelectValue}
+                      depotStreamCacheCustomInput={dialogState.depotStreamCacheCustomInput}
+                      setDepotStreamCacheCustomMode={dialogState.setDepotStreamCacheCustomMode}
+                      setDepotStreamCacheCustomInput={dialogState.setDepotStreamCacheCustomInput}
+                      onClearDepotStreamCache={onClearDepotStreamCache}
                     />
                   ) : (
                     <AppearanceSettingsPanel

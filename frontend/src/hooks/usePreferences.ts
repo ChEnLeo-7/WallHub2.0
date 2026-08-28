@@ -11,13 +11,11 @@ import {
   type Filters,
 } from '@/lib/normalizers';
 import { DEFAULT_DETAILS_PRESENTATION, normalizeDetailsPresentation } from '@/lib/detailsPresentation.mjs';
-import { DEFAULT_VIDEO_PLAYER_MODE, normalizeVideoPlayerMode } from '@/lib/videoControls.mjs';
+import { DEFAULT_WORKSHOP_GENRES } from '@/lib/workshopFilterCatalog';
 
 export const PREFS_KEY = 'wallhub-react-prefs-v1';
 export const SEARCH_SESSION_KEY = 'wallhub-search-session-v1';
 export const SEARCH_SESSION_TTL_MS = 60 * 60 * 1000;
-
-export type VideoPlayerMode = 'native' | 'compatibility';
 
 const DEFAULT_GENRES = [
   { id: 'Abstract' },
@@ -56,6 +54,7 @@ const DEFAULT_TEXT = {
 
 export type AppPrefs = {
   filters: Filters;
+  workshopFilterSemanticsVersion: number;
   exactPhrase: boolean;
   homeFilterMultiSelect: boolean;
   view: 'grid' | 'list';
@@ -66,7 +65,6 @@ export type AppPrefs = {
   desktopColumns: number;
   homePageSize: number;
   prefetchNextPage: boolean;
-  videoPlayerMode: VideoPlayerMode;
   language: 'zh' | 'en';
   fixedPanelHeight: boolean;
   detailsPresentation: 'classic' | 'redesigned';
@@ -76,11 +74,35 @@ export type AppPrefs = {
 
 function defaultHomeFilters() {
   return normalizeFilters(
-    { search: '', sort: 'trend', days: '30', types: [], rating: 'Everyone', ratings: ['Everyone'], genres: DEFAULT_GENRES.map((g) => g.id) },
+    {
+      search: '',
+      sort: 'trend',
+      days: '30',
+      types: [],
+      rating: 'Everyone',
+      ratings: ['Everyone'],
+      genres: DEFAULT_WORKSHOP_GENRES,
+      officialTags: [],
+      excludedOfficialTags: [],
+      categories: ['Wallpaper'],
+      resolutions: [],
+      mobileCompatibleOnly: false,
+    },
     true,
     DEFAULT_GENRES,
     DEFAULT_TEXT,
   );
+}
+
+function migrateWorkshopFilters(value: unknown, semanticsVersion: unknown) {
+  const filters = value && typeof value === 'object' ? { ...(value as Partial<Filters>) } : {};
+  if (Number(semanticsVersion) >= 3 || !Array.isArray(filters.genres)) return filters;
+  const legacyDefaultGenres = DEFAULT_GENRES.map((genre) => genre.id).filter((genre) => genre !== 'Unspecified');
+  const savedGenres = Array.from(new Set(filters.genres));
+  if (savedGenres.length === legacyDefaultGenres.length && legacyDefaultGenres.every((genre) => savedGenres.includes(genre))) {
+    filters.genres = [...savedGenres, 'Unspecified'];
+  }
+  return filters;
 }
 
 export function shouldRestoreSearchPrefs() {
@@ -103,6 +125,7 @@ export function markSearchSessionActive() {
 export function readPrefs(): AppPrefs {
   const defaults = {
     filters: defaultHomeFilters(),
+    workshopFilterSemanticsVersion: 3,
     exactPhrase: false,
     homeFilterMultiSelect: false,
     view: 'grid' as const,
@@ -113,7 +136,6 @@ export function readPrefs(): AppPrefs {
     desktopColumns: 0,
     homePageSize: 30,
     prefetchNextPage: false,
-    videoPlayerMode: DEFAULT_VIDEO_PLAYER_MODE as VideoPlayerMode,
     language: 'zh' as const,
     fixedPanelHeight: false,
     detailsPresentation: DEFAULT_DETAILS_PRESENTATION,
@@ -124,8 +146,10 @@ export function readPrefs(): AppPrefs {
     const parsed = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
     const parsedAction = normalizeHomeCardDefaultAction(parsed.homeCardDefaultAction);
     const restoreSearch = shouldRestoreSearchPrefs();
+    const restoredFilters = migrateWorkshopFilters(parsed.filters, parsed.workshopFilterSemanticsVersion);
     return {
-      filters: restoreSearch ? normalizeFilters(parsed.filters, true, DEFAULT_GENRES, DEFAULT_TEXT) : defaults.filters,
+      filters: restoreSearch ? normalizeFilters(restoredFilters, true, DEFAULT_GENRES, DEFAULT_TEXT) : defaults.filters,
+      workshopFilterSemanticsVersion: defaults.workshopFilterSemanticsVersion,
       exactPhrase: restoreSearch ? !!(parsed.exactPhrase ?? parsed.filters?.exactPhrase) : defaults.exactPhrase,
       homeFilterMultiSelect: !!parsed.homeFilterMultiSelect,
       view: parsed.view === 'list' ? 'list' : 'grid',
@@ -136,7 +160,6 @@ export function readPrefs(): AppPrefs {
       desktopColumns: normalizeDesktopColumns(parsed.desktopColumns),
       homePageSize: normalizeHomePageSize(parsed.homePageSize),
       prefetchNextPage: !!parsed.prefetchNextPage,
-      videoPlayerMode: normalizeVideoPlayerMode(parsed.videoPlayerMode) as VideoPlayerMode,
       language: normalizeLanguage(parsed.language),
       fixedPanelHeight: !!parsed.fixedPanelHeight,
       detailsPresentation: normalizeDetailsPresentation(parsed.detailsPresentation),

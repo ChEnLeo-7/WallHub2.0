@@ -164,6 +164,7 @@ function assembleSteamKitServices(scope) {
         startupDownloaderMode: scope.startupDownloaderMode,
         ensureSteamConfigDir: scope.ensureSteamConfigDir,
         reconcileCachedSteamLogin: scope.reconcileCachedSteamLogin,
+        warmupSteamKitQueryBridge: scope.warmupSteamKitQueryBridge,
         VIDEO_CACHE_SETTINGS: scope.state.videoCacheSettings,
         getVideoCacheSettings: () => scope.state.videoCacheSettings,
         makeSteamKitJsonProgressRequiredError: scope.makeSteamKitJsonProgressRequiredError,
@@ -203,6 +204,7 @@ function assembleSteamKitServices(scope) {
         effectiveDownloaderMode: scope.effectiveDownloaderMode,
         configDir: scope.DEPOT_CONFIG_DIR,
         logger: console,
+        debugLogger: scope.debugLogger,
       });
       scope.state.steamKitLoginService = loginService;
     }
@@ -215,10 +217,26 @@ function assembleSteamKitServices(scope) {
         depotCommandFor: scope.depotCommandFor,
         buildDepotDotnetEnv: scope.buildDepotDotnetEnv,
         buildSteamAuthEnv: scope.buildSteamAuthEnv,
+        validateRememberedSession: async username => {
+          if (!scope.STEAM_CREDENTIALS.pendingPersistentUsername) return false;
+          try {
+            await scope.getSteamKitLoginService().verifyRememberedSession(username);
+          } catch (error) {
+            if (error && (error.code === 'STEAM_NETWORK_UNREACHABLE' || error.code === 'STEAM_LOGIN_TIMEOUT')) throw error;
+            const loginError = new Error('Steam 登录已失效，请重新登录后再使用 Steam CM WebSocket。');
+            loginError.code = 'STEAM_CM_LOGIN_REQUIRED';
+            loginError.statusCode = 401;
+            loginError.requiresSteamLogin = true;
+            loginError.cause = error;
+            throw loginError;
+          }
+          return true;
+        },
+        onRememberedSessionValidated: username => scope.setValidatedPersistentLogin(username, 'steamkit'),
         makeDepotLoginId: scope.makeDepotLoginId,
         ensureDir: scope.ensureDir,
         configDir: scope.DEPOT_CONFIG_DIR,
-        logger: console,
+        logger: scope.debugLogger,
       });
     }
     return queryBridge;
@@ -235,7 +253,7 @@ function assembleSteamKitServices(scope) {
         ensureDir: scope.ensureDir,
         configDir: scope.DEPOT_CONFIG_DIR,
         queryBridge: scope.getSteamKitQueryBridge(),
-        logger: console,
+        logger: scope.debugLogger,
       });
     }
     return personalWorkshopService;
@@ -293,7 +311,7 @@ function assembleSteamKitServices(scope) {
       return '';
     }
     try {
-      console.log(`[SteamKit Web] Preparing Steam community cookie from cached login: ${username}`);
+      scope.debugLogger.log(`[SteamKit Web] Preparing Steam community cookie from cached login: ${username}`);
       return await scope.getSteamKitLoginService().getWebSessionCookie(username);
     } catch (error) {
       const normalized = scope.normalizeDepotError(error);

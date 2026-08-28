@@ -60,6 +60,7 @@ type AppDialogsProps = {
   onUpdateFilter: Parameters<typeof GenreSheet>[0]['setFilters'];
   onAuthor: (creator?: string) => void;
   onSearchTags: (tags: string[]) => void;
+  onLoginSuccess: () => void;
   toast: (message: string, type?: AppToast['type'], timeoutMs?: number) => number;
   toasts: AppToast[];
 };
@@ -89,6 +90,7 @@ export function AppDialogs({
   onUpdateFilter,
   onAuthor,
   onSearchTags,
+  onLoginSuccess,
   toast,
   toasts,
 }: AppDialogsProps) {
@@ -107,6 +109,7 @@ export function AppDialogs({
         fixedPanelHeight={preferences.fixedPanelHeight}
         filters={preferences.filters}
         setFilters={onUpdateFilter}
+        steamDataSource={settings.settingsForm.steamDataSource}
       />
       {loadedDialogs.settings ? <React.Suspense fallback={null}><SettingsDialog
         open={settings.settingsOpen}
@@ -147,8 +150,6 @@ export function AppDialogs({
         }}
         prefetchNextPage={preferences.prefetchNextPage}
         setPrefetchNextPage={preferences.setPrefetchNextPage}
-        videoPlayerMode={preferences.videoPlayerMode}
-        setVideoPlayerMode={preferences.setVideoPlayerMode}
         onSave={settingsControls.saveSettingsForm}
         onClearDepotStreamCache={settingsControls.clearDepotCache}
         onLogin={() => steamController.setLoginOpen(true)}
@@ -274,12 +275,12 @@ export function AppDialogs({
           await steamController.refreshSteamStatus();
           steamController.resetLoginPrompt();
           steamController.setLoginOpen(false);
+          onLoginSuccess();
           toast(text.loginSuccess, 'ok');
         }}
       /></React.Suspense> : null}
       {loadedDialogs.video ? <React.Suspense fallback={null}><VideoDialog
         video={videoController.video}
-        playerMode={preferences.videoPlayerMode}
         onOpenChange={(open) => !open && videoController.closeVideo()}
       /></React.Suspense> : null}
       <ToastStack items={toasts} />

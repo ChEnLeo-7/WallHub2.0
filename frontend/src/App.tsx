@@ -15,6 +15,7 @@ import { encodeDetailTagSearch } from '@/lib/detailTagSearch.mjs';
 import { normalizeRatings, primaryRating } from '@/lib/normalizers';
 import { isRuntimeSetupActive } from '@/lib/workshop';
 import { HomePage } from '@/components/app/HomePage';
+import { isSteamAccountRecoveryBlockingWorkshop } from '@/components/app/AppPageStates';
 import {
   AppDialogs,
   type AppToast,
@@ -97,6 +98,10 @@ export default function App({ workshopQueryEnabled = true }: { workshopQueryEnab
     onLoginTask: onQueueLoginTask,
   });
   const runtimeSetupBusy = isRuntimeSetupActive(runtime?.runtimeSetup?.status);
+  const restoringSteamAccount = isSteamAccountRecoveryBlockingWorkshop(
+    !!steamController.steam?.pendingValidation,
+    settings.settingsForm.steamDataSource,
+  );
   const updateBusy = ['checking', 'downloading', 'installing'].includes(String(runtime?.update?.status || ''));
   const onWorkshopWarning = React.useCallback((message: string) => toast(message, 'warn'), [toast]);
   const workshopQuery = useWorkshopQuery({
@@ -109,6 +114,7 @@ export default function App({ workshopQueryEnabled = true }: { workshopQueryEnab
     prefetchNextPage: preferences.prefetchNextPage,
     steamAccessEnhance: settings.settingsForm.wallhubSteamAccessEnhance,
     steamDataSource: settings.settingsForm.steamDataSource,
+    language: preferences.language,
     refreshToken: filterRefreshToken,
     setPage,
     onWarning: onWorkshopWarning,
@@ -140,6 +146,11 @@ export default function App({ workshopQueryEnabled = true }: { workshopQueryEnab
     }
   }, [fetchRuntime, preferences.setFilters]);
   const refreshWorkshopForSettings = React.useCallback(() => setFilterRefreshToken((value) => value + 1), [setFilterRefreshToken]);
+  const refreshWorkshopAfterLogin = React.useCallback(() => {
+    workshopQuery.clearCache();
+    workshopQuery.markForceRefresh();
+    setFilterRefreshToken((value) => value + 1);
+  }, [setFilterRefreshToken, workshopQuery.clearCache, workshopQuery.markForceRefresh]);
   const settingsControls = useSettingsControls({
     settingsForm: settings.settingsForm,
     setSettingsForm: settings.setSettingsForm,
@@ -199,6 +210,7 @@ export default function App({ workshopQueryEnabled = true }: { workshopQueryEnab
     setFilters: preferences.setFilters,
     homeFilterMultiSelect: preferences.homeFilterMultiSelect,
     nsfw,
+    steamDataSource: settings.settingsForm.steamDataSource,
     setPage,
     setFilterRefreshToken,
     cancelNextPagePrefetch: workshopQuery.cancelNextPagePrefetch,
@@ -244,6 +256,13 @@ export default function App({ workshopQueryEnabled = true }: { workshopQueryEnab
     refreshRuntime();
     steamController.refreshSteamStatus();
   }, [refreshRuntime, steamController.refreshSteamStatus]);
+  React.useEffect(() => {
+    if (!pageVisible || !steamController.steam?.pendingValidation) return;
+    steamController.refreshSteamStatus();
+    if (!workshopQuery.loading) return;
+    const timer = window.setInterval(steamController.refreshSteamStatus, 1000);
+    return () => window.clearInterval(timer);
+  }, [pageVisible, steamController.refreshSteamStatus, steamController.steam?.pendingValidation, workshopQuery.loading]);
   React.useEffect(() => {
     if (!pageVisible || (!settings.settingsOpen && !runtimeSetupBusy && !updateBusy)) return;
     const intervalMs = runtimeSetupBusy || updateBusy || queueController.activeTasks ? 1000 : 15000;
@@ -335,11 +354,13 @@ export default function App({ workshopQueryEnabled = true }: { workshopQueryEnab
           onUpdateFilter={homeCoordinator.updateFilter}
           onOpenGenres={() => setGenreOpen(true)}
           steamLoggedIn={!!steamController.steam?.loggedIn}
+          restoringSteamAccount={restoringSteamAccount}
           onLoginRequired={() => steamController.requestLogin({ requiresSteamLogin: true })}
           onOpenItem={detailsController.setSelected}
           onDefaultAction={onHomeCardDefaultAction}
           onOpenContextMenu={openWallpaperContextMenu}
           detailsDialogOpen={!!detailsController.selected}
+          steamDataSource={settings.settingsForm.steamDataSource}
         />
         <AppDialogs
           loadedDialogs={loadedDialogs}
@@ -366,6 +387,7 @@ export default function App({ workshopQueryEnabled = true }: { workshopQueryEnab
           onUpdateFilter={homeCoordinator.updateFilter}
           onAuthor={authorNavigation.openAuthor}
           onSearchTags={searchByDetailTags}
+          onLoginSuccess={refreshWorkshopAfterLogin}
           toast={toast}
           toasts={toasts}
         />

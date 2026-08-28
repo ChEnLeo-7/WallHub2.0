@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { WallpaperCardMedia } from './WallpaperCardMedia';
 
 const mediaProps = {
@@ -8,6 +8,7 @@ const mediaProps = {
   type: 'Scene',
   typeLabel: 'Scene',
   noCoverLabel: 'No cover',
+  coverNetworkErrorLabel: 'Cover unavailable due to a network error',
   view: 'grid' as const,
   layoutAnimationEnabled: false,
   preserveAspectLayout: false as const,
@@ -15,6 +16,10 @@ const mediaProps = {
 };
 
 describe('WallpaperCardMedia cover reveal', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   test('keeps the full cover transparent until it loads and then fades it in', () => {
     render(<WallpaperCardMedia {...mediaProps} previewUrl="https://full/cover.jpg" />);
     const image = screen.getByRole('img', { name: 'Full cover' });
@@ -61,9 +66,58 @@ describe('WallpaperCardMedia cover reveal', () => {
     expect(image).not.toHaveClass('transition-[opacity,transform]');
   });
 
-  test('shows the no-cover state when the full cover fails', () => {
+  test('retries a failed cover after one and three seconds before showing a network problem', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-13T00:00:00Z'));
+    render(<WallpaperCardMedia {...mediaProps} previewUrl="https://full/cover.jpg" />);
+    const original = screen.getByRole('img', { name: 'Full cover' });
+    fireEvent.error(original);
+
+    expect(screen.queryByText('Cover unavailable due to a network error')).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1000));
+    const firstRetry = screen.getByRole('img', { name: 'Full cover' });
+    expect(firstRetry).toHaveAttribute('src', expect.stringContaining('wallhub_cover_retry=1-'));
+    fireEvent.error(firstRetry);
+
+    act(() => vi.advanceTimersByTime(2999));
+    expect(screen.getByRole('img', { name: 'Full cover' })).toBe(firstRetry);
+    act(() => vi.advanceTimersByTime(1));
+    const secondRetry = screen.getByRole('img', { name: 'Full cover' });
+    expect(secondRetry).toHaveAttribute('src', expect.stringContaining('wallhub_cover_retry=2-'));
+    fireEvent.error(secondRetry);
+
+    expect(screen.getByText('Cover unavailable due to a network error')).toBeInTheDocument();
+    expect(screen.queryByText('No cover')).not.toBeInTheDocument();
+  });
+
+  test('stops retrying when a replacement request loads successfully', () => {
+    vi.useFakeTimers();
     render(<WallpaperCardMedia {...mediaProps} previewUrl="https://full/cover.jpg" />);
     fireEvent.error(screen.getByRole('img', { name: 'Full cover' }));
+    act(() => vi.advanceTimersByTime(1000));
+    fireEvent.load(screen.getByRole('img', { name: 'Full cover' }));
+    act(() => vi.advanceTimersByTime(10000));
+
+    expect(screen.getByRole('img', { name: 'Full cover' })).toHaveClass('opacity-100');
+    expect(screen.queryByText('Cover unavailable due to a network error')).not.toBeInTheDocument();
+  });
+
+  test('cancels a pending retry when details provide a different cover URL', () => {
+    vi.useFakeTimers();
+    const { rerender } = render(
+      <WallpaperCardMedia {...mediaProps} previewUrl="https://full/old.jpg" />,
+    );
+    fireEvent.error(screen.getByRole('img', { name: 'Full cover' }));
+
+    rerender(<WallpaperCardMedia {...mediaProps} previewUrl="https://full/new.jpg" />);
+    act(() => vi.advanceTimersByTime(5000));
+
+    expect(screen.getByRole('img', { name: 'Full cover' })).toHaveAttribute('src', 'https://full/new.jpg');
+    expect(screen.queryByText('Cover unavailable due to a network error')).not.toBeInTheDocument();
+  });
+
+  test('keeps the no-cover state when no cover URL exists', () => {
+    render(<WallpaperCardMedia {...mediaProps} />);
 
     expect(screen.getByText('No cover')).toBeInTheDocument();
   });

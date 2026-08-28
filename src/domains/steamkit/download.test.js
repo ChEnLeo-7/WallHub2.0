@@ -720,6 +720,20 @@ test('SteamKit error normalization keeps explicit Steam Guard challenges', () =>
   }
 });
 
+test('SteamKit error normalization distinguishes login rate limits from invalid credentials', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-download-login-rate-limit-'));
+  try {
+    const service = createService(root);
+    const limited = service.normalizeError(new Error('Failed to authenticate with Steam: RateLimitExceeded'));
+
+    assert.equal(limited.code, 'STEAM_LOGIN_RATE_LIMITED');
+    assert.equal(limited.statusCode, 429);
+    assert.match(limited.message, /限制了登录尝试/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('SteamKit error normalization reads preserved stderr before a noisy stdout tail', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wallhub-download-stderr-network-'));
   try {

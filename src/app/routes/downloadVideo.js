@@ -15,6 +15,10 @@ function createDownloadVideoRoutes(deps) {
     proxyRemoteVideoStream,
     handleDepotVideoStream,
     handleDepotVideoRelease,
+    handleDepotVideoFeedback,
+    handleDepotVideoFullCacheStart,
+    handleDepotVideoFullCacheStatus,
+    handleDepotVideoFullCacheCancel,
   } = deps;
 
   return async function handleDownloadVideoRoutes(req, res, pn) {
@@ -101,6 +105,34 @@ function createDownloadVideoRoutes(deps) {
       const token = queryFromRequest(req).get('token');
       if (!token) return jsonRes(res, 400, { error: 'Missing token' }), true;
       await handleDepotVideoRelease(req, res, token);
+      return true;
+    }
+
+    if (pn === '/api/video/depot/feedback' && methodIs(req, 'POST')) {
+      const token = queryFromRequest(req).get('token');
+      if (!token) return jsonRes(res, 400, { error: 'Missing token' }), true;
+      await handleDepotVideoFeedback(req, res, token);
+      return true;
+    }
+
+    if (pn === '/api/video/depot/cache' && methodIs(req, 'GET')) {
+      const token = queryFromRequest(req).get('token');
+      if (!token) return jsonRes(res, 400, { error: 'Missing token' }), true;
+      await handleDepotVideoFullCacheStatus(req, res, token);
+      return true;
+    }
+
+    if (pn === '/api/video/depot/cache' && methodIs(req, 'POST')) {
+      const token = queryFromRequest(req).get('token');
+      if (!token) return jsonRes(res, 400, { error: 'Missing token' }), true;
+      await handleDepotVideoFullCacheStart(req, res, token);
+      return true;
+    }
+
+    if (pn === '/api/video/depot/cache/cancel' && methodIs(req, 'POST')) {
+      const token = queryFromRequest(req).get('token');
+      if (!token) return jsonRes(res, 400, { error: 'Missing token' }), true;
+      await handleDepotVideoFullCacheCancel(req, res, token);
       return true;
     }
 

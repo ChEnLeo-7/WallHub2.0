@@ -10,7 +10,7 @@ const enTextSource = fs.readFileSync(path.resolve(__dirname, '../../frontend/src
 
 test('download proxy settings identify HTTP(S)/SOCKS5 proxy behavior in both languages', () => {
   assert.match(zhTextSource, /steamCdnRoute: 'HTTP\(S\)\/SOCKS5 代理'/);
-  assert.ok(zhTextSource.includes("steamKitDepotStreamingDesc: '实验性：对 depot/chunk 视频项目尝试按需读取 Steam 分块并在线播放；连接设置跟随 HTTP(S)/SOCKS5 代理，并发跟随 SteamKit 单项目下载并发。'"));
+  assert.ok(zhTextSource.includes("steamKitDepotStreamingDesc: '实验性：对 depot/chunk 视频项目按需读取 Steam 分块并在线播放；连接设置跟随 HTTP(S)/SOCKS5 代理，严格使用 SteamKit 单项目下载并发。'"));
   assert.match(enTextSource, /steamCdnRoute: 'HTTP\(S\)\/SOCKS5 proxy'/);
-  assert.ok(enTextSource.includes("steamKitDepotStreamingDesc: 'Experimental: try on-demand Steam depot/chunk streaming for video playback. It follows the HTTP(S)/SOCKS5 proxy setting and SteamKit per-item concurrency settings.'"));
+  assert.ok(enTextSource.includes("steamKitDepotStreamingDesc: 'Experimental: stream Steam depot/chunk video data on demand. It follows the HTTP(S)/SOCKS5 proxy setting and strictly uses the SteamKit per-item concurrency setting.'"));
 });

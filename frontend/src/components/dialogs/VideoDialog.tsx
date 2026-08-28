@@ -15,7 +15,6 @@ export function VideoDialog(props: VideoDialogProps) {
   const controller = useVideoDialogController(props);
   const {
     checking,
-    compatibilityMode,
     fallbackFullscreen,
     fittedVideoSize,
     fullscreenActive,
@@ -29,7 +28,7 @@ export function VideoDialog(props: VideoDialogProps) {
       onOpenChange={handleDialogOpenChange}
       fixedHeight={false}
       bare
-      lightweight={compatibilityMode}
+      lightweight
       title={video?.title || text.videoPlayer}
       fitContent={!!readySrc}
       className={cn(

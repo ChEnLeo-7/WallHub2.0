@@ -53,6 +53,10 @@ function baseDeps(overrides = {}) {
       proxyRemoteVideoStream: () => {},
       handleDepotVideoStream: async () => {},
       handleDepotVideoRelease: async () => {},
+      handleDepotVideoFeedback: async () => {},
+      handleDepotVideoFullCacheStart: async () => {},
+      handleDepotVideoFullCacheStatus: async () => {},
+      handleDepotVideoFullCacheCancel: async () => {},
       listCachedItems: async () => [],
       handleCachedVideoStream: () => {},
       handleCachedItemDelete: () => {},
@@ -207,6 +211,39 @@ test('router keeps detailed runtime diagnostics out of the lightweight runtime r
   await router({ method: 'GET', url: '/api/server/runtime/diagnostics' }, {});
 
   assert.deepEqual(called, ['runtime', 'diagnostics']);
+});
+
+test('router dispatches bounded depot playback feedback by token', async () => {
+  const { called, deps } = baseDeps({
+    handleDepotVideoFeedback: async (_req, _res, token) => { called.push(`feedback:${token}`); },
+  });
+  const router = createAppRouter(deps);
+
+  await router({ method: 'POST', url: '/api/video/depot/feedback?token=stream-token' }, {});
+  assert.deepEqual(called, ['feedback:stream-token']);
+
+  const missing = {};
+  await router({ method: 'POST', url: '/api/video/depot/feedback' }, missing);
+  assert.equal(missing.statusCode, 400);
+  assert.deepEqual(missing.body, { error: 'Missing token' });
+});
+
+test('router dispatches depot full-cache lifecycle by token', async () => {
+  const { called, deps } = baseDeps({
+    handleDepotVideoFullCacheStart: async () => { called.push('start'); },
+    handleDepotVideoFullCacheStatus: async () => { called.push('status'); },
+    handleDepotVideoFullCacheCancel: async () => { called.push('cancel'); },
+  });
+  const router = createAppRouter(deps);
+
+  await router({ method: 'POST', url: '/api/video/depot/cache?token=stream-token' }, {});
+  await router({ method: 'GET', url: '/api/video/depot/cache?token=stream-token' }, {});
+  await router({ method: 'POST', url: '/api/video/depot/cache/cancel?token=stream-token' }, {});
+  assert.deepEqual(called, ['start', 'status', 'cancel']);
+
+  const missing = {};
+  await router({ method: 'GET', url: '/api/video/depot/cache' }, missing);
+  assert.equal(missing.statusCode, 400);
 });
 
 test('router dispatches startup onboarding status and actions by method', async () => {

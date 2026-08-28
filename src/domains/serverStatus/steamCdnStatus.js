@@ -37,6 +37,23 @@ function extractSteamContentHosts(text) {
   return hosts;
 }
 
+function extractWallhubCdnHost(text) {
+  const match = String(text || '').match(/WALLHUB_DEPOT_CDN_HOST:(\{[^\r\n]+\})/);
+  if (!match) return null;
+  try {
+    const data = JSON.parse(match[1]);
+    const host = normalizeSteamCdnHost(data.host || data.vhost);
+    if (!host) return null;
+    return {
+      host,
+      vhost: normalizeSteamCdnHost(data.vhost),
+      port: Math.max(0, parseInt(String(data.port || '0'), 10) || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function createSteamCdnStatusStore(options = {}) {
   const limit = Math.max(1, parseInt(String(options.limit || '8'), 10) || 8);
   const getStrategy = typeof options.getStrategy === 'function' ? options.getStrategy : () => '';
@@ -93,9 +110,13 @@ function createSteamCdnStatusStore(options = {}) {
   }
 
   function updateFromText(text, meta = {}) {
+    let latest = null;
+    const explicit = extractWallhubCdnHost(text);
+    if (explicit) return update(Object.assign({}, meta, explicit));
     for (const host of extractSteamContentHosts(text)) {
-      update(Object.assign({}, meta, host));
+      latest = update(Object.assign({}, meta, host)) || latest;
     }
+    return latest;
   }
 
   return {
@@ -110,5 +131,6 @@ module.exports = {
   normalizeSteamCdnHost,
   isSteamControlHost,
   extractSteamContentHosts,
+  extractWallhubCdnHost,
   createSteamCdnStatusStore,
 };

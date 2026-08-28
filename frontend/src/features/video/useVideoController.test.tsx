@@ -66,4 +66,5 @@ describe('useVideoController CDN toast', () => {
     expect(toast).toHaveBeenCalledTimes(1);
     expect(toast).toHaveBeenCalledWith('Current CDN node: late.cdn.example', 'info', 2400);
   });
+
 });

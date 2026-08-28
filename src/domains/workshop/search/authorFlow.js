@@ -8,7 +8,7 @@ const AUTHOR_SOURCE_PAGE_SIZE = 30;
 
 async function runAuthorQuery(context) {
   const { coordinator, criteria, logger, params, runOptions, sources } = context;
-  const { applyPostFilters, genreOr, numperpage, page } = criteria;
+  const { applyPostFilters, numperpage, page } = criteria;
   const startIndex = (page - 1) * numperpage;
   const sourceOffset = startIndex % AUTHOR_SOURCE_PAGE_SIZE;
   const endIndex = sourceOffset + numperpage;
@@ -20,10 +20,10 @@ async function runAuthorQuery(context) {
   let sourcePageLimit = Infinity;
 
   while (sourcePage <= sourcePageLimit && matched.length < endIndex) {
-    const sourceData = await sources.scrapeGenreOrIds(Object.assign({}, sourceParams, {
+    const sourceData = await sources.scrapeIds(Object.assign({}, sourceParams, {
       page: sourcePage,
       numperpage: AUTHOR_SOURCE_PAGE_SIZE,
-    }), genreOr, runOptions);
+    }), runOptions);
     const ids = sourceData.ids || [];
     if (sourceData.totalCount > 0) {
       total = sourceData.totalCount;

@@ -4,10 +4,11 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { useVideoDialogController, type VideoDialogController } from './useVideoDialogController';
 
-function ControllerHarness({ onController }: { onController: (controller: VideoDialogController) => void }) {
+function ControllerHarness({ onController }: {
+  onController: (controller: VideoDialogController) => void;
+}) {
   const controller = useVideoDialogController({
     video: { title: 'Ready video', src: '/ready.mp4', status: 'ready' },
-    playerMode: 'compatibility',
     onOpenChange: () => {},
   });
   onController(controller);
@@ -58,7 +59,7 @@ describe('useVideoDialogController', () => {
     expect(controller!.displayedVideoTime).toBe(45);
   });
 
-  test('commits arrow seek on release and uses two-times rate only while held', () => {
+  test('commits arrow seek on release and adds one to the current rate only while held', () => {
     vi.useFakeTimers();
     let controller: VideoDialogController | null = null;
     render(<ControllerHarness onController={(value) => { controller = value; }} />);
@@ -76,12 +77,14 @@ describe('useVideoDialogController', () => {
 
     fireEvent.keyDown(window, { key: 'ArrowRight' });
     act(() => vi.advanceTimersByTime(350));
-    expect(video.playbackRate).toBe(2);
+    expect(video.playbackRate).toBe(2.5);
+    expect(controller!.longPressPlaybackRate).toBe(2.5);
     expect(controller!.keyboardLongPressActive).toBe(true);
     fireEvent.keyUp(window, { key: 'ArrowRight' });
     expect(video.currentTime).toBe(15);
     expect(video.playbackRate).toBe(1.5);
     expect(controller!.keyboardLongPressActive).toBe(false);
+    expect(controller!.longPressPlaybackRate).toBe(0);
   });
 
   test('restores the selected rate after pointer long press', () => {
@@ -107,4 +110,5 @@ describe('useVideoDialogController', () => {
     expect(controller!.longPressActive).toBe(false);
     expect(screen.getByLabelText('Seek')).toBeInTheDocument();
   });
+
 });

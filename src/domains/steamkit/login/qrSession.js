@@ -1,6 +1,7 @@
 'use strict';
 
 function createQrSession(options) {
+  const debugLogger = options.debugLogger || options.logger;
   async function startQrSession() {
     if (options.effectiveDownloaderMode() !== 'steamkit') {
       const error = new Error('扫码登录仅支持 SteamKit / DepotDownloader 模式。');
@@ -56,7 +57,7 @@ function createQrSession(options) {
       options.refreshQrImage(session).catch(error => options.logger.warn('[SteamKit QR] QR image refresh failed:', error.message));
     };
 
-    options.logger.log('[SteamKit QR] Starting DepotDownloader QR login session');
+    debugLogger.log('[SteamKit QR] Starting DepotDownloader QR login session');
     const timeout = Math.max(60000, parseInt(process.env.WALLHUB_STEAMKIT_QR_TIMEOUT || '300000', 10) || 300000);
     const proc = options.runProcess(command, args, timeout, {
       cwd: options.configDir,

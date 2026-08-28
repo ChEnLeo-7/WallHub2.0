@@ -4,6 +4,7 @@ import type { WorkshopItem } from '@/lib/api';
 import { TEXT } from '@/lib/text';
 import {
   defaultHomeFilters,
+  normalizeResolutionSelection,
   normalizeRatings,
   primaryRating,
   type Filters,
@@ -21,6 +22,7 @@ type UseHomeCoordinatorOptions = {
   setFilters: React.Dispatch<React.SetStateAction<Filters>>;
   homeFilterMultiSelect: boolean;
   nsfw: boolean;
+  steamDataSource: 'community' | 'webapi' | 'cm';
   setPage: React.Dispatch<React.SetStateAction<number>>;
   setFilterRefreshToken: React.Dispatch<React.SetStateAction<number>>;
   cancelNextPagePrefetch: () => void;
@@ -35,6 +37,7 @@ export function useHomeCoordinator({
   setFilters,
   homeFilterMultiSelect,
   nsfw,
+  steamDataSource,
   setPage,
   setFilterRefreshToken,
   cancelNextPagePrefetch,
@@ -53,6 +56,33 @@ export function useHomeCoordinator({
         : { ...current, rating, ratings };
     });
   }, [homeFilterMultiSelect, nsfw, setFilters]);
+
+  React.useEffect(() => {
+    const resolutions = normalizeResolutionSelection(filters.resolutions, steamDataSource);
+    if (resolutions.length === filters.resolutions.length) return;
+    cancelNextPagePrefetch();
+    setPage(1);
+    setFilters((current) => {
+      const normalized = normalizeResolutionSelection(current.resolutions, steamDataSource);
+      return normalized.length === current.resolutions.length
+        ? current
+        : { ...current, resolutions: normalized };
+    });
+  }, [cancelNextPagePrefetch, filters.resolutions, setFilters, setPage, steamDataSource]);
+
+  React.useEffect(() => {
+    if (steamDataSource !== 'community' || !filters.mobileCompatibleOnly) return;
+    cancelNextPagePrefetch();
+    setPage(1);
+    setFilters((current) => current.mobileCompatibleOnly ? { ...current, mobileCompatibleOnly: false } : current);
+  }, [cancelNextPagePrefetch, filters.mobileCompatibleOnly, setFilters, setPage, steamDataSource]);
+
+  React.useEffect(() => {
+    if (steamDataSource === 'community' || !['90', '180'].includes(filters.days)) return;
+    cancelNextPagePrefetch();
+    setPage(1);
+    setFilters((current) => ['90', '180'].includes(current.days) ? { ...current, days: '30' } : current);
+  }, [cancelNextPagePrefetch, filters.days, setFilters, setPage, steamDataSource]);
 
   const updateFilter = React.useCallback((patch: Partial<Filters>) => {
     cancelNextPagePrefetch();

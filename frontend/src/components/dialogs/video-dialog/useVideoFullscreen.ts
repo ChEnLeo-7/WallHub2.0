@@ -9,21 +9,13 @@ type WebkitFullscreenElement = HTMLElement & {
   webkitRequestFullscreen?: () => void | Promise<void>;
 };
 
-type WebkitFullscreenVideo = HTMLVideoElement & {
-  webkitDisplayingFullscreen?: boolean;
-  webkitEnterFullscreen?: () => void;
-  webkitExitFullscreen?: () => void;
-};
-
 type VideoFullscreenOptions = {
-  playerMode: string;
   playerShellRef: React.RefObject<HTMLDivElement>;
   readySrc: string;
   showControls: () => void;
-  videoRef: React.RefObject<HTMLVideoElement>;
 };
 
-export function useVideoFullscreen({ playerMode, playerShellRef, readySrc, showControls, videoRef }: VideoFullscreenOptions) {
+export function useVideoFullscreen({ playerShellRef, readySrc, showControls }: VideoFullscreenOptions) {
   const [systemFullscreen, setSystemFullscreen] = React.useState(false);
   const [fallbackFullscreen, setFallbackFullscreen] = React.useState(false);
   const fullscreenActive = systemFullscreen || fallbackFullscreen;
@@ -31,34 +23,27 @@ export function useVideoFullscreen({ playerMode, playerShellRef, readySrc, showC
   React.useEffect(() => {
     setFallbackFullscreen(false);
     setSystemFullscreen(false);
-  }, [playerMode, readySrc]);
+  }, [readySrc]);
 
   const updateFullscreenState = React.useCallback(() => {
     const doc = document as WebkitFullscreenDocument;
     const shell = playerShellRef.current;
     const fullscreenElement = document.fullscreenElement || doc.webkitFullscreenElement || null;
-    const videoElement = videoRef.current as WebkitFullscreenVideo | null;
     setSystemFullscreen(!!(
-      (shell && fullscreenElement && (fullscreenElement === shell || shell.contains(fullscreenElement)))
-      || videoElement?.webkitDisplayingFullscreen
+      shell && fullscreenElement && (fullscreenElement === shell || shell.contains(fullscreenElement))
     ));
     showControls();
-  }, [playerShellRef, showControls, videoRef]);
+  }, [playerShellRef, showControls]);
 
   React.useEffect(() => {
     if (!readySrc) return;
-    const videoElement = videoRef.current;
     document.addEventListener('fullscreenchange', updateFullscreenState);
     document.addEventListener('webkitfullscreenchange', updateFullscreenState);
-    videoElement?.addEventListener('webkitbeginfullscreen', updateFullscreenState);
-    videoElement?.addEventListener('webkitendfullscreen', updateFullscreenState);
     return () => {
       document.removeEventListener('fullscreenchange', updateFullscreenState);
       document.removeEventListener('webkitfullscreenchange', updateFullscreenState);
-      videoElement?.removeEventListener('webkitbeginfullscreen', updateFullscreenState);
-      videoElement?.removeEventListener('webkitendfullscreen', updateFullscreenState);
     };
-  }, [readySrc, updateFullscreenState, videoRef]);
+  }, [readySrc, updateFullscreenState]);
 
   const leaveFullscreen = React.useCallback(async () => {
     if (fallbackFullscreen) {
@@ -67,13 +52,6 @@ export function useVideoFullscreen({ playerMode, playerShellRef, readySrc, showC
       showControls();
       return;
     }
-    const videoElement = videoRef.current as WebkitFullscreenVideo | null;
-    if (videoElement?.webkitDisplayingFullscreen && videoElement.webkitExitFullscreen) {
-      try {
-        videoElement.webkitExitFullscreen();
-        return;
-      } catch {}
-    }
     const doc = document as WebkitFullscreenDocument;
     try {
       if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
@@ -81,11 +59,10 @@ export function useVideoFullscreen({ playerMode, playerShellRef, readySrc, showC
     } catch {
       setSystemFullscreen(false);
     }
-  }, [fallbackFullscreen, showControls, videoRef]);
+  }, [fallbackFullscreen, showControls]);
   const enterFullscreen = React.useCallback(async () => {
     const shell = playerShellRef.current as WebkitFullscreenElement | null;
-    const videoElement = videoRef.current as WebkitFullscreenVideo | null;
-    if (!shell || !videoElement) return;
+    if (!shell) return;
     showControls();
     if (shell.requestFullscreen) {
       try {
@@ -101,15 +78,8 @@ export function useVideoFullscreen({ playerMode, playerShellRef, readySrc, showC
         return;
       } catch {}
     }
-    if (videoElement.webkitEnterFullscreen) {
-      try {
-        videoElement.webkitEnterFullscreen();
-        setSystemFullscreen(true);
-        return;
-      } catch {}
-    }
     setFallbackFullscreen(true);
-  }, [playerShellRef, showControls, videoRef]);
+  }, [playerShellRef, showControls]);
   const toggleFullscreen = React.useCallback(() => {
     if (fullscreenActive) void leaveFullscreen();
     else void enterFullscreen();

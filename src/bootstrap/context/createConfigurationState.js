@@ -67,8 +67,8 @@ function createConfigurationState({ rootRequire: require, projectRoot }) {
     DEPOT_STREAM_DOWNLOADER_DIR: depotStreamDownloaderDir,
     DEPOT_JSON_PROGRESS_DIR: depotDownloaderDir,
     DEPOT_JSON_PROGRESS_SOURCE_ZIP: process.env.WALLHUB_DEPOT_SOURCE_ZIP || 'https://github.com/SteamRE/DepotDownloader/archive/refs/heads/master.zip',
-    DEPOT_JSON_PROGRESS_PATCH_VERSION: 'wallhub-network-v66-cm-login-errors',
-    DEPOT_STREAM_PATCH_VERSION: 'wallhub-network-v66-cm-login-errors',
+    DEPOT_JSON_PROGRESS_PATCH_VERSION: 'wallhub-network-v72-official-query-semantics',
+    DEPOT_STREAM_PATCH_VERSION: 'wallhub-network-v77-official-query-semantics',
     DEPOT_CONFIG_DIR: steamKitConfigDir,
     DEPOT_HOME_DIR: process.env.WALLHUB_DEPOT_HOME_DIR || path.join(steamKitConfigDir, 'home'),
     DEPOT_DOTNET_CLI_HOME_DIR: process.env.WALLHUB_DEPOT_DOTNET_CLI_HOME || path.join(steamKitConfigDir, 'dotnet-home'),
@@ -85,6 +85,9 @@ function createConfigurationState({ rootRequire: require, projectRoot }) {
     DEPOT_STREAM_TAIL_BYTES: RUNTIME_TUNING.DEPOT_STREAM.tailBytes,
     DEPOT_STREAM_INITIAL_BUFFER_BYTES: RUNTIME_TUNING.DEPOT_STREAM.initialBufferBytes,
     DEPOT_STREAM_AHEAD_BYTES: RUNTIME_TUNING.DEPOT_STREAM.aheadBytes,
+    DEPOT_STREAM_CHUNK_BUFFER_BYTES: RUNTIME_TUNING.DEPOT_STREAM.chunkBufferBytes,
+    DEPOT_STREAM_READ_THROUGH: RUNTIME_TUNING.DEPOT_STREAM.readThrough,
+    DEPOT_STREAM_READ_WINDOW_BYTES: RUNTIME_TUNING.DEPOT_STREAM.readWindowBytes,
     DEPOT_STREAM_WORKER_IDLE_MS: RUNTIME_TUNING.DEPOT_STREAM.workerIdleMs,
     DEPOT_STREAM_CACHE_CLEANUP_HIGH_WATERMARK: RUNTIME_TUNING.DEPOT_STREAM.cleanupHighWatermark,
     DEPOT_STREAM_CACHE_CLEANUP_TARGET: RUNTIME_TUNING.DEPOT_STREAM.cleanupTarget,
@@ -179,16 +182,26 @@ function createConfigurationState({ rootRequire: require, projectRoot }) {
     }
     return snapshot;
   };
-  scope.mpkgDebugEnabled = () => {
+  scope.debugLogEnabled = () => {
     const configured = String(state.videoCacheSettings.wallhubLogLevel || process.env.WALLHUB_LOG_LEVEL || '').trim().toLowerCase();
-    return scope.DEBUG_ENABLED || configured === 'debug' || /^(?:1|true|yes|on|debug)$/i.test(String(process.env.WALLHUB_MPKG_DEBUG || '').trim());
+    return scope.DEBUG_ENABLED || configured === 'debug';
   };
+  scope.debugLogger = {
+    log: (...args) => { if (scope.debugLogEnabled()) console.log(...args); },
+    info: (...args) => console.info(...args),
+    warn: (...args) => console.warn(...args),
+    error: (...args) => console.error(...args),
+    traceLog: (...args) => {
+      if (/^(?:1|true|yes|on)$/i.test(String(process.env.DEPOTDOWNLOADER_DEBUG || '').trim())) console.log(...args);
+    },
+  };
+  scope.mpkgDebugEnabled = () => scope.debugLogEnabled() || /^(?:1|true|yes|on|debug)$/i.test(String(process.env.WALLHUB_MPKG_DEBUG || '').trim());
   scope.getMaxConcurrentDownloads = () => scope.getRuntimeSettings().getMaxConcurrentDownloads();
   scope.getDepotStreamCacheMaxMb = () => scope.getRuntimeSettings().getDepotStreamCacheMaxMb();
   scope.getDepotStreamCacheMaxBytes = () => scope.getRuntimeSettings().getDepotStreamCacheMaxBytes();
   scope.getSteamContentCellId = () => scope.getRuntimeSettings().getSteamContentCellId();
   scope.getSteamKitMaxDownloads = () => scope.getRuntimeSettings().getSteamKitMaxDownloads();
-  scope.getSteamKitStreamMaxDownloads = () => scope.getRuntimeSettings().getSteamKitStreamMaxDownloads();
+  scope.getSteamKitStreamMaxDownloads = scope.getSteamKitMaxDownloads;
   scope.applySteamHttpProxyEnv = (baseEnv = process.env) => scope.getRuntimeSettings().applySteamHttpProxyEnv(baseEnv);
   scope.buildDepotResolverEnv = (baseEnv = process.env) => scope.getRuntimeSettings().buildDepotResolverEnv(baseEnv);
   scope.buildSteamAuthEnv = (baseEnv = process.env) => scope.buildDepotResolverEnv(scope.applySteamHttpProxyEnv(baseEnv));

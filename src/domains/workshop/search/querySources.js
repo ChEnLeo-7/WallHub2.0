@@ -1,10 +1,7 @@
 'use strict';
 
-const { collectArrayLikeParams } = require('../filters');
 const { buildSteamCmQueryInput, queryWorkshopBySteamApi, scrapeWorkshopIds } = require('../query');
 const { sourceParamsForScrape } = require('./sourceSelection');
-
-const GENRE_FANOUT_LIMIT = 3;
 
 function isAbortError(error) {
   return !!(error && error.code === 'ABORT_ERR');
@@ -33,44 +30,8 @@ function createWorkshopQuerySources(options = {}) {
     });
   }
 
-  function paramsWithRequiredTag(params, tag) {
-    const next = Object.assign({}, params);
-    for (const key of Object.keys(next)) {
-      if (/^genre_or(?:\[\d+\])?$/.test(key)) delete next[key];
-    }
-    const requiredTags = collectArrayLikeParams(next, 'requiredtags');
-    if (!requiredTags.some(value => value.toLowerCase() === String(tag).toLowerCase())) {
-      next[`requiredtags[${requiredTags.length}]`] = tag;
-    }
-    return next;
-  }
-
-  async function scrapeGenreOrIds(params, genreOr, runOptions = {}) {
-    const genreList = Array.from(new Set((genreOr || []).filter(Boolean)));
-    if (genreList.length <= 1 || genreList.length > GENRE_FANOUT_LIMIT) {
-      return Object.assign({ detailMap: {} }, await scrapeIds(params, runOptions));
-    }
-
-    const results = await Promise.all(genreList.map(genre => scrapeIds(paramsWithRequiredTag(params, genre), runOptions)));
-    const ids = [];
-    const hints = {};
-    const seen = new Set();
-    let totalCount = 0;
-    for (const result of results) {
-      if (result.totalCount > 0) totalCount += result.totalCount;
-      Object.assign(hints, result.hints || {});
-      for (const id of result.ids || []) {
-        if (seen.has(id)) continue;
-        seen.add(id);
-        ids.push(id);
-      }
-    }
-    logger.log(`[Query] Genre OR scrape fanout(${genreList.length}) merged ${ids.length} IDs from current page`);
-    return { ids, totalCount, hints, detailMap: {} };
-  }
-
-  async function queryBySteamApi(apiKey, params, genreOr, runOptions = {}) {
-    return queryWorkshopBySteamApi(apiKey, params, genreOr, {
+  async function queryBySteamApi(apiKey, params, runOptions = {}) {
+    return queryWorkshopBySteamApi(apiKey, params, undefined, {
       get,
       logger,
       signal: runOptions.signal,
@@ -91,51 +52,39 @@ function createWorkshopQuerySources(options = {}) {
     return wrapped;
   }
 
-  async function queryBySteamCm(params, genreOr, runOptions = {}) {
+  async function queryBySteamCm(params, runOptions = {}) {
     if (!querySteamKitWorkshop) {
       const error = new Error('Steam CM 创意工坊查询桥不可用');
       error.code = 'STEAM_CM_QUERY_UNAVAILABLE';
       error.statusCode = 503;
       throw error;
     }
-    const genres = Array.from(new Set((genreOr || []).map(value => String(value || '').trim()).filter(Boolean)));
-    const variants = genres.length > 1 && genres.length <= GENRE_FANOUT_LIMIT ? genres : [genres.length === 1 ? genres[0] : ''];
-    const results = await Promise.all(variants.map(async genre => {
-      const response = await querySteamKitWorkshop(buildSteamCmQueryInput(params, genre), {
-        signal: runOptions.signal,
-        timeoutMs: runOptions.timeoutMs,
-      });
-      const details = Array.isArray(response && response.details) ? response.details : [];
-      const ids = Array.isArray(response && response.ids) ? response.ids.map(String) : [];
-      const detailMap = {};
-      details.forEach(detail => {
-        if (detail && detail.publishedfileid) detailMap[String(detail.publishedfileid)] = detail;
-      });
-      return { ids, detailMap, totalCount: parseInt(response && response.totalCount, 10) || 0 };
-    }));
-    const ids = [];
+    const response = await querySteamKitWorkshop(buildSteamCmQueryInput(params), {
+      signal: runOptions.signal,
+      timeoutMs: runOptions.timeoutMs,
+    });
+    const details = Array.isArray(response && response.details) ? response.details : [];
+    const ids = Array.isArray(response && response.ids) ? response.ids.map(String) : [];
     const detailMap = {};
-    const seen = new Set();
-    let totalCount = 0;
-    for (const result of results) {
-      totalCount += result.totalCount;
-      Object.assign(detailMap, result.detailMap);
-      for (const id of result.ids) {
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        ids.push(id);
-      }
-    }
-    return { ids, detailMap, totalCount, hints: {} };
+    details.forEach(detail => {
+      if (detail && detail.publishedfileid) detailMap[String(detail.publishedfileid)] = detail;
+    });
+    return {
+      ids,
+      detailMap,
+      totalCount: parseInt(response && response.totalCount, 10) || 0,
+      hints: {},
+      upstreamRequests: 1,
+    };
   }
 
-  async function queryBySteamApiOrCommunity(apiKey, params, genreOr, label, runOptions = {}) {
-    if (runOptions.steamDataSource === 'cm') return queryBySteamCm(params, genreOr, runOptions);
+  async function queryBySteamApiOrCommunity(apiKey, params, label, runOptions = {}) {
+    if (runOptions.steamDataSource === 'cm') return queryBySteamCm(params, runOptions);
     if (runOptions.steamDataSource !== 'webapi') {
-      return Object.assign({ detailMap: {}, hints: {} }, await scrapeGenreOrIds(sourceParamsForScrape(params), genreOr, runOptions));
+      return Object.assign({ detailMap: {}, hints: {}, upstreamRequests: 1 }, await scrapeIds(sourceParamsForScrape(params), runOptions));
     }
     try {
-      return Object.assign({ hints: {} }, await queryBySteamApi(apiKey, params, genreOr, runOptions));
+      return Object.assign({ hints: {} }, await queryBySteamApi(apiKey, params, runOptions));
     } catch (error) {
       if (isAbortError(error)) throw error;
       logger.warn(`[Query] SteamAPI ${label || 'query'} failed: ${error.message}`);
@@ -147,7 +96,7 @@ function createWorkshopQuerySources(options = {}) {
     return getFileDetailsSafe(ids, Object.assign({ safe: false, ignoreCooldown: true }, optionsForRun));
   }
 
-  return { getShortDetails, queryBySteamApiOrCommunity, scrapeGenreOrIds, scrapeIds };
+  return { getShortDetails, queryBySteamApiOrCommunity, scrapeIds };
 }
 
 module.exports = { createWorkshopQuerySources, isAbortError };

@@ -2,6 +2,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const { createDepotStreamRangeTaskCoordination } = require('./rangeTaskCoordination');
+const { createDepotStreamRangePrefetch } = require('./rangePrefetch');
 
 function createDepotStreamRangeTasks(options) {
   const {
@@ -20,6 +22,7 @@ function createDepotStreamRangeTasks(options) {
     getCacheFile,
     getCacheDir,
     selectCoverage,
+    commitCacheRange,
     planBlocks,
     clampRange,
     getWorker,
@@ -28,6 +31,7 @@ function createDepotStreamRangeTasks(options) {
     requestWorkerRange,
     cancelWorkerJob,
     cancelWorkerPrefetch,
+    cancelBlockingWorkerPrefetch,
     promoteWorkerJob,
     setWorkerJobSchedule,
     createAbortError,
@@ -35,121 +39,36 @@ function createDepotStreamRangeTasks(options) {
     shouldStopWorkerForRangeError,
     ensureDir,
     scheduleTempCleanup,
-    maybeScheduleCacheCleanupAfterWrite,
-    sleep,
+    reserveCacheWrite,
+    waitForCacheWrite,
+    releaseCacheWrite,
+    getMaxDownloads,
+    recordNetworkSample,
+    recordMetric,
+    logger = console,
   } = options;
 
-  function rangePromiseKey(entry, start, end) {
-    return `${getCacheDir(entry)}|${start}-${end}`;
-  }
-
-  function rangeTaskReusable(task) {
-    return !!task && !task.cancelled && !task.settled && !(task.job && task.job.cancelled);
-  }
-
-  function findInFlightRange(entry, start, end) {
-    const prefix = `${getCacheDir(entry)}|`;
-    for (const [key, task] of rangePromises) {
-      if (!key.startsWith(prefix) || !rangeTaskReusable(task)) continue;
-      if (task.start <= start && task.end >= end) return task;
-    }
-    return null;
-  }
-
-  function cancelRangeTask(task, reason = 'Depot stream request cancelled') {
-    if (!task || task.settled || task.cancelled) return false;
-    task.cancelled = true;
-    if (task.worker && task.job) cancelWorkerJob(task.worker, task.job, reason);
-    return true;
-  }
-
-  function promoteRangeTask(task, schedule = {}) {
-    if (!task || task.settled || schedule.priority === 'prefetch') return;
-    const wasPrefetch = task.priority === 'prefetch';
-    task.priority = 'foreground';
-    const previousEpoch = Number(task.epoch || 0);
-    const promotedEpoch = Number(schedule.epoch || 0);
-    const promotedBlockIndex = Number.isFinite(schedule.blockIndex) ? schedule.blockIndex : Number.MAX_SAFE_INTEGER;
-    if (wasPrefetch || promotedEpoch > previousEpoch) {
-      task.epoch = promotedEpoch;
-      task.blockIndex = promotedBlockIndex;
-    } else if (promotedEpoch === previousEpoch) {
-      task.blockIndex = Math.min(task.blockIndex ?? Number.MAX_SAFE_INTEGER, promotedBlockIndex);
-    }
-    if (task.worker && task.job) promoteWorkerJob(task.worker, task.job, task);
-  }
-
-  function normalizeWaiter(waiter) {
-    if (typeof waiter === 'string') {
-      return { priority: waiter, epoch: 0, blockIndex: Number.MAX_SAFE_INTEGER };
-    }
-    return {
-      priority: waiter && waiter.priority === 'prefetch' ? 'prefetch' : 'foreground',
-      epoch: Number(waiter && waiter.epoch || 0),
-      blockIndex: Number.isFinite(waiter && waiter.blockIndex) ? waiter.blockIndex : Number.MAX_SAFE_INTEGER,
-    };
-  }
-
-  function waiterSchedule(waiters, priority) {
-    const candidates = waiters.filter(waiter => waiter.priority === priority);
-    if (candidates.length === 0) return null;
-    const epoch = Math.max(...candidates.map(waiter => waiter.epoch));
-    const blockIndex = Math.min(...candidates.filter(waiter => waiter.epoch === epoch).map(waiter => waiter.blockIndex));
-    return { priority, epoch, blockIndex };
-  }
-
-  function reconcileRangeTaskWaiters(task) {
-    if (!task || task.settled) return;
-    if (task.waiters.size === 0) {
-      cancelRangeTask(task);
-      return;
-    }
-    const waiters = Array.from(task.waiters.values(), normalizeWaiter);
-    const schedule = waiterSchedule(waiters, 'foreground') || waiterSchedule(waiters, 'prefetch');
-    task.priority = schedule.priority;
-    task.epoch = schedule.epoch;
-    task.blockIndex = schedule.blockIndex;
-    if (schedule.priority === 'prefetch' && task.demandKey &&
-        schedule.epoch !== (demandEpochs.get(task.demandKey) || 0)) {
-      cancelRangeTask(task, 'Stale shared prefetch demand');
-      return;
-    }
-    if (task.worker && task.job) setWorkerJobSchedule(task.worker, task.job, schedule);
-  }
-
-  function waitForRangeTask(task, signal, schedule = {}) {
-    if (!task) return Promise.reject(new Error('Depot stream range task unavailable'));
-    if (!rangeTaskReusable(task)) {
-      return Promise.reject(createAbortError('Depot stream range task is no longer reusable'));
-    }
-    if (signal && signal.aborted) {
-      reconcileRangeTaskWaiters(task);
-      return Promise.reject(createAbortError());
-    }
-    const waiter = Symbol('depot-stream-waiter');
-    task.waiters.set(waiter, {
-      priority: schedule.priority === 'prefetch' ? 'prefetch' : 'foreground',
-      epoch: Number(schedule.epoch || 0),
-      blockIndex: Number.isFinite(schedule.blockIndex) ? schedule.blockIndex : Number.MAX_SAFE_INTEGER,
-    });
-    promoteRangeTask(task, schedule);
-    reconcileRangeTaskWaiters(task);
-    return new Promise((resolve, reject) => {
-      let done = false;
-      const finish = (err, value) => {
-        if (done) return;
-        done = true;
-        if (signal) signal.removeEventListener('abort', onAbort);
-        task.waiters.delete(waiter);
-        reconcileRangeTaskWaiters(task);
-        if (err) reject(err);
-        else resolve(value);
-      };
-      const onAbort = () => finish(createAbortError());
-      if (signal) signal.addEventListener('abort', onAbort, { once: true });
-      task.promise.then(value => finish(null, value), finish);
-    });
-  }
+  const coordination = createDepotStreamRangeTaskCoordination({
+    rangePromises,
+    demandEpochs,
+    getCacheDir,
+    cancelWorkerJob,
+    promoteWorkerJob,
+    setWorkerJobSchedule,
+    createAbortError,
+  });
+  const {
+    rangePromiseKey,
+    rangeTaskReusable,
+    findInFlightRange,
+    cancelRangeTask,
+    notifyRangeTaskProgress,
+    waitForRangeTaskProgress,
+    normalizeWaiter,
+    promoteRangeTask,
+    reconcileRangeTaskWaiters,
+    waitForRangeTask,
+  } = coordination;
 
   function prefetchTaskIsCurrent(entry, task) {
     if (!task || task.priority !== 'prefetch') return true;
@@ -176,9 +95,46 @@ function createDepotStreamRangeTasks(options) {
       job: null,
       cancelled: false,
       settled: false,
+      committed: false,
+      downloadedUntil: start,
+      servedUntil: start,
+      progressWaiters: new Set(),
+      activeReaders: 0,
+      readerWaiters: new Set(),
+      error: null,
       promise: null,
     };
+    task.waitForProgress = (absoluteCursor, signal) => waitForRangeTaskProgress(task, absoluteCursor, signal);
+    task.beginRead = () => { task.activeReaders++; };
+    task.endRead = () => {
+      task.activeReaders = Math.max(0, task.activeReaders - 1);
+      if (task.activeReaders > 0) return;
+      const waiters = Array.from(task.readerWaiters);
+      task.readerWaiters.clear();
+      for (const waiter of waiters) waiter();
+    };
+    task.waitForReaders = () => task.activeReaders === 0
+      ? Promise.resolve()
+      : new Promise(resolve => task.readerWaiters.add(resolve));
+    recordMetric?.(entry, 'range_queued', {
+      start,
+      end,
+      priority: task.priority,
+      epoch: task.epoch,
+    });
     task.promise = (async () => {
+      const expected = end - start + 1;
+      const reservation = schedule.priority === 'prefetch' || !waitForCacheWrite
+        ? await reserveCacheWrite(expected, resolvedCacheTmpPath)
+        : await waitForCacheWrite(expected, resolvedCacheTmpPath, schedule.signal);
+      if (!reservation) {
+        const error = schedule.priority === 'prefetch'
+          ? createAbortError('Depot stream cache quota reached')
+          : new Error('Depot stream cache quota reached');
+        error.code = 'DEPOT_STREAM_CACHE_QUOTA';
+        throw error;
+      }
+      task.cacheReservation = reservation;
       ensureDir(path.dirname(cachePath));
       try { if (fs.existsSync(cacheTmpPath)) fs.rmSync(cacheTmpPath, { force: true }); } catch {}
       const worker = await getWorker(entry, depotLogin);
@@ -189,7 +145,33 @@ function createDepotStreamRangeTasks(options) {
         task.cancelled = true;
         throw createAbortError('Stale depot stream prefetch cancelled');
       }
-      const workerPromise = requestWorkerRange(worker, start, end, cacheTmpPath, task);
+      let lastSampleAt = 0;
+      let lastSampleBytes = 0;
+      const onProgress = (bytes, at) => {
+        const downloadedBytes = Math.max(0, Math.min(expected, Number(bytes) || 0));
+        if (downloadedBytes <= task.downloadedUntil - start) return;
+        task.downloadedUntil = start + downloadedBytes;
+        if (!task.firstReadableAt) {
+          task.firstReadableAt = at;
+          recordMetric?.(entry, 'range_first_readable', {
+            start,
+            end,
+            bytes: downloadedBytes,
+            elapsedMs: task.job && task.job.dispatchedAt ? at - task.job.dispatchedAt : 0,
+          });
+        }
+        if (recordNetworkSample) {
+          const sampleStartedAt = lastSampleAt || task.job && task.job.dispatchedAt || at - 1;
+          recordNetworkSample(entry, downloadedBytes - lastSampleBytes, Math.max(1, at - sampleStartedAt));
+        }
+        lastSampleAt = at;
+        lastSampleBytes = downloadedBytes;
+        notifyRangeTaskProgress(task);
+      };
+      const workerPromise = requestWorkerRange(worker, start, end, cacheTmpPath, Object.assign({}, task, {
+        onProgress,
+        playbackSessionId: entry.depotPlaybackSessionId || '',
+      }));
       task.job = workerPromise.job;
       if (task.cancelled) cancelWorkerJob(worker, task.job);
       try {
@@ -199,16 +181,39 @@ function createDepotStreamRangeTasks(options) {
         throw err;
       }
       if (task.cancelled) throw createAbortError();
-      const expected = end - start + 1;
       const stat = fs.statSync(cacheTmpPath);
       if (stat.size !== expected) throw new Error(`Depot stream range incomplete ${start}-${end}: ${stat.size}/${expected}`);
+      onProgress(expected, Date.now());
+      await task.waitForReaders();
       if (fs.existsSync(cachePath)) fs.rmSync(cachePath, { force: true });
       fs.renameSync(cacheTmpPath, cachePath);
-      maybeScheduleCacheCleanupAfterWrite(expected);
-      if (!schedule.silent) console.log(`[Depot Stream] cached ${entry.publishedFileId || entry.id} ${start}-${end}`);
+      task.committed = true;
+      task.committedAt = Date.now();
+      if (commitCacheRange) commitCacheRange(entry, start, end, cachePath);
+      releaseCacheWrite(reservation, expected);
+      task.cacheReservation = null;
+      if (recordNetworkSample && task.job && task.job.dispatchedAt && !lastSampleAt) {
+        recordNetworkSample(entry, expected, Math.max(1, Date.now() - task.job.dispatchedAt));
+      }
+      recordMetric?.(entry, 'range_committed', {
+        start,
+        end,
+        bytes: expected,
+        elapsedMs: task.job && task.job.dispatchedAt ? Date.now() - task.job.dispatchedAt : 0,
+      });
+      if (!schedule.silent) logger.traceLog?.(`[Depot Stream] cached ${entry.publishedFileId || entry.id} ${start}-${end}`);
       return cachePath;
-    })().finally(() => {
+    })().catch(err => {
+      task.error = err;
+      if (isAbortError(err)) {
+        entry.depotCancelledWasteBytes = Number(entry.depotCancelledWasteBytes || 0) +
+          Math.max(0, task.downloadedUntil - task.start);
+      }
+      throw err;
+    }).finally(() => {
       task.settled = true;
+      notifyRangeTaskProgress(task);
+      if (task.cacheReservation) releaseCacheWrite(task.cacheReservation);
       activeTempFiles.delete(resolvedCacheTmpPath);
       scheduleTempCleanup(resolvedCacheTmpPath, task.worker);
       if (rangePromises.get(cachePromiseKey) === task) rangePromises.delete(cachePromiseKey);
@@ -216,6 +221,87 @@ function createDepotStreamRangeTasks(options) {
     task.promise.catch(() => {});
     rangePromises.set(cachePromiseKey, task);
     return task;
+  }
+
+  function acquireRangeTask(entry, start, end, depotLogin, schedule = {}) {
+    const cachePromiseKey = rangePromiseKey(entry, start, end);
+    let task = rangePromises.get(cachePromiseKey) || findInFlightRange(entry, start, end);
+    if (!rangeTaskReusable(task)) task = null;
+    if (!task) task = createRangeTask(entry, start, end, depotLogin, schedule);
+    const waiter = Symbol('depot-stream-consumer');
+    task.waiters.set(waiter, normalizeWaiter(schedule));
+    promoteRangeTask(task, schedule);
+    reconcileRangeTaskWaiters(task);
+    let released = false;
+    return {
+      task,
+      retain() {
+        if (released || task.settled) return;
+        const retention = Symbol('depot-stream-retention');
+        task.waiters.set(retention, {
+          priority: 'prefetch',
+          epoch: Number(schedule.epoch || 0),
+          blockIndex: Number.isFinite(schedule.blockIndex) ? schedule.blockIndex : Number.MAX_SAFE_INTEGER,
+        });
+        task.promise.finally(() => task.waiters.delete(retention)).catch(() => {});
+      },
+      release() {
+        if (released) return;
+        released = true;
+        task.waiters.delete(waiter);
+        reconcileRangeTaskWaiters(task);
+      },
+    };
+  }
+
+  async function prepareStreamingBlock(entry, block, depotLogin, schedule = {}) {
+    const coverage = selectCoverage(entry, block.start, block.end);
+    const pieces = [];
+    const acquisitions = [];
+    for (const segment of coverage.segments) {
+      const start = Math.max(block.responseStart, segment.start);
+      const end = Math.min(block.responseEnd, segment.end);
+      if (start > end) continue;
+      pieces.push({
+        type: 'cache',
+        start,
+        end,
+        segment: Object.assign({}, segment, {
+          start,
+          end,
+          offset: segment.offset + start - segment.start,
+        }),
+      });
+    }
+    for (const gap of coverage.gaps) {
+      const acquired = acquireRangeTask(entry, gap.start, gap.end, depotLogin, schedule);
+      acquisitions.push(acquired);
+      const start = Math.max(block.responseStart, gap.start);
+      const end = Math.min(block.responseEnd, gap.end);
+      if (start <= end) pieces.push({ type: 'task', start, end, task: acquired.task });
+    }
+    pieces.sort((a, b) => a.start - b.start);
+    try {
+      const first = pieces[0];
+      if (first && first.type === 'task') {
+        await waitForRangeTaskProgress(first.task, first.start, schedule.signal);
+      }
+    } catch (err) {
+      for (const acquisition of acquisitions) acquisition.release();
+      throw err;
+    }
+    let released = false;
+    return {
+      pieces,
+      retain() {
+        for (const acquisition of acquisitions) acquisition.retain();
+      },
+      release() {
+        if (released) return;
+        released = true;
+        for (const acquisition of acquisitions) acquisition.release();
+      },
+    };
   }
 
   async function ensureRangeCached(entry, start, end, depotLogin, schedule = {}) {
@@ -249,92 +335,29 @@ function createDepotStreamRangeTasks(options) {
     return responseCoverage.segments;
   }
 
-  function prefetchRange(entry, start, end, depotLogin, reason = 'prefetch', generation = getGeneration(), epoch = 0) {
-    const demandKey = getCacheDir(entry);
-    if (isServerStopping() || generation !== getGeneration() ||
-        epoch !== (demandEpochs.get(demandKey) || 0)) {
-      return Promise.resolve('');
-    }
-    const coverage = selectCoverage(entry, start, end);
-    if (coverage.complete) return Promise.resolve(coverage.segments[0] && coverage.segments[0].file || '');
-    console.log(`[Depot Stream] ${reason} ${entry.publishedFileId || entry.id} ${start}-${end}`);
-    const blocks = planBlocks(entry.size, start, end);
-    const promise = Promise.all(blocks.map((block, blockIndex) => prepareBlock(entry, block, depotLogin, {
-      silent: true,
-      priority: 'prefetch',
-      epoch,
-      blockIndex,
-    })))
-      .then(() => getCacheFile(entry, start, end))
-      .catch(err => {
-        if (!isAbortError(err)) {
-          console.warn(`[Depot Stream] ${reason} failed ${entry.publishedFileId || entry.id} ${start}-${end}: ${err.message}`);
-        }
-        throw err;
-      });
-    promise.catch(() => {});
-    return promise;
-  }
-
-  function scheduleInitialPrefetch(entry, depotLogin) {
-    const total = parseInt(String(entry && entry.size || '0'), 10);
-    if (!Number.isFinite(total) || total <= 0) return [];
-    const generation = getGeneration();
-    const epoch = demandEpochs.get(getCacheDir(entry)) || 0;
-    const tasks = [];
-    const firstRange = clampRange(total, 0, Math.min(firstRangeBytes, maxRangeBytes));
-    const nextInitialStart = firstRange ? firstRange.end + 1 : 0;
-    const nextInitialBytes = Math.min(initialBufferBytes, maxRangeBytes);
-    const initialRange = nextInitialBytes > 0 && nextInitialStart < total
-      ? clampRange(total, nextInitialStart, nextInitialBytes)
-      : null;
-    const tailStart = Math.max(0, total - Math.min(tailBytes, maxRangeBytes));
-    const tailRange = clampRange(total, tailStart, Math.min(tailBytes, maxRangeBytes));
-    let chain = Promise.resolve();
-    if (firstRange) {
-      const firstTask = prefetchRange(entry, firstRange.start, firstRange.end, depotLogin, 'first-buffer', generation, epoch);
-      tasks.push(firstTask);
-      chain = firstTask.catch(() => {});
-    }
-    if (tailRange && tailRange.start > 0) {
-      const tailTask = chain.then(() => sleep(150))
-        .then(() => prefetchRange(entry, tailRange.start, tailRange.end, depotLogin, 'tail-buffer', generation, epoch))
-        .catch(() => {});
-      tasks.push(tailTask);
-      chain = tailTask;
-    }
-    if (initialRange) {
-      const initialTask = chain
-        .then(() => prefetchRange(entry, initialRange.start, initialRange.end, depotLogin, 'initial-buffer', generation, epoch))
-        .catch(() => {});
-      tasks.push(initialTask);
-    }
-    return tasks;
-  }
-
-  function scheduleAheadPrefetch(entry, currentStart, currentEnd, depotLogin, epoch = 0) {
-    const total = parseInt(String(entry && entry.size || '0'), 10);
-    if (!Number.isFinite(total) || total <= 0 || aheadBytes <= 0) return;
-    const generation = getGeneration();
-    const aheadStart = Math.min(total - 1, Math.max(0, currentEnd + 1));
-    const aheadRange = clampRange(total, aheadStart, Math.min(aheadBytes, maxRangeBytes));
-    if (aheadRange) {
-      incrementAheadScheduleCount();
-      prefetchRange(entry, aheadRange.start, aheadRange.end, depotLogin, 'ahead-buffer', generation, epoch).catch(() => {});
-    }
-  }
-
-  function nextDemandEpoch(entry) {
-    const key = getCacheDir(entry);
-    const epoch = (demandEpochs.get(key) || 0) + 1;
-    demandEpochs.set(key, epoch);
-    return epoch;
-  }
-
-  function cancelEntryPrefetch(entry, depotLogin) {
-    const worker = workers.get(getWorkerKey(entry, depotLogin));
-    if (worker && !worker.closed) cancelWorkerPrefetch(worker);
-  }
+  const prefetch = createDepotStreamRangePrefetch({
+    maxRangeBytes,
+    firstRangeBytes,
+    tailBytes,
+    initialBufferBytes,
+    aheadBytes,
+    workers,
+    demandEpochs,
+    getGeneration,
+    incrementAheadScheduleCount,
+    isServerStopping,
+    getCacheFile,
+    getCacheDir,
+    selectCoverage,
+    planBlocks,
+    clampRange,
+    prepareBlock,
+    getWorkerKey,
+    cancelWorkerPrefetch,
+    cancelBlockingWorkerPrefetch,
+    isAbortError,
+    logger,
+  });
 
   return {
     rangePromiseKey,
@@ -345,14 +368,20 @@ function createDepotStreamRangeTasks(options) {
     reconcileRangeTaskWaiters,
     waitForRangeTask,
     prefetchTaskIsCurrent,
+    prefetchBlocks: prefetch.prefetchBlocks,
+    initialPrefetchPlan: prefetch.initialPrefetchPlan,
     createRangeTask,
+    acquireRangeTask,
+    waitForRangeTaskProgress,
+    prepareStreamingBlock,
     ensureRangeCached,
     prepareBlock,
-    prefetchRange,
-    scheduleInitialPrefetch,
-    scheduleAheadPrefetch,
-    nextDemandEpoch,
-    cancelEntryPrefetch,
+    prefetchRange: prefetch.prefetchRange,
+    scheduleInitialPrefetch: prefetch.scheduleInitialPrefetch,
+    scheduleAheadPrefetch: prefetch.scheduleAheadPrefetch,
+    nextDemandEpoch: prefetch.nextDemandEpoch,
+    cancelEntryPrefetch: prefetch.cancelEntryPrefetch,
+    cancelEntryBlockingPrefetch: prefetch.cancelEntryBlockingPrefetch,
   };
 }
 

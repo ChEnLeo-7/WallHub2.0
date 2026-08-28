@@ -4,7 +4,7 @@ const REMOTE_TOKEN_TTL_MS = 20 * 60 * 1000;
 const DEPOT_TOKEN_TTL_MS = 45 * 60 * 1000;
 
 function createVideoTokenRegistry(deps = {}) {
-  const { releaseDepotEntry } = deps;
+  const { disposeDepotEntry = () => {}, releaseDepotEntry } = deps;
   const remoteStreams = new Map();
   const depotStreams = new Map();
 
@@ -54,6 +54,7 @@ function createVideoTokenRegistry(deps = {}) {
     const entry = depotStreams.get(key);
     if (!entry) return { released: false, stopped: false };
     depotStreams.delete(key);
+    disposeDepotEntry(entry, reason);
     const result = releaseDepotEntryIfUnreferenced(entry, reason);
     return { released: true, stopped: !!result.stopped };
   }

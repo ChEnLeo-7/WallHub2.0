@@ -2,6 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { STEAM_RESOLUTION_TAG_LIST } = require('./filters');
+const {
+  CONTENT_RATING_TAG_LIST,
+  WORKSHOP_CATEGORY_TAG_LIST,
+  WORKSHOP_GENRE_TAG_LIST,
+  WORKSHOP_TYPE_TAG_LIST,
+} = require('./filterCatalog');
 const { createWorkshopSearchService } = require('./search');
 
 function createNormalService(overrides = {}) {
@@ -222,7 +229,7 @@ test('signed-out anonymous browsing does not send a personal Web API key', async
   assert.deepEqual(result.response.publishedfiledetails.map(item => item.title), ['Item 101']);
 });
 
-test('Community public queries preserve one HTML page without blocking on details or post-filters', async () => {
+test('Community public queries preserve one HTML page with official exclusion complements', async () => {
   const requests = [];
   let detailRequests = 0;
   const service = createNormalService({
@@ -256,7 +263,13 @@ test('Community public queries preserve one HTML page without blocking on detail
   assert.equal(requests.length, 1);
   const requested = new URL(requests[0]);
   assert.equal(requested.searchParams.get('p'), '2');
-  assert.deepEqual(requested.searchParams.getAll('requiredtags[]'), ['Video', 'Scene', 'Everyone', 'Anime']);
+  assert.deepEqual(requested.searchParams.getAll('requiredtags[]'), ['Wallpaper']);
+  assert.deepEqual(requested.searchParams.getAll('excludedtags[]'), [
+    ...WORKSHOP_TYPE_TAG_LIST.filter(tag => !['Video', 'Scene'].includes(tag)),
+    ...CONTENT_RATING_TAG_LIST.filter(tag => tag !== 'Everyone'),
+    ...WORKSHOP_GENRE_TAG_LIST.filter(tag => tag !== 'Anime'),
+    ...WORKSHOP_CATEGORY_TAG_LIST.filter(tag => tag !== 'Wallpaper'),
+  ]);
   assert.equal(detailRequests, 0);
   assert.deepEqual(result.response.publishedfiledetails.map(item => item.publishedfileid), ['303', '101', '202']);
   assert.deepEqual(result.response.publishedfiledetails.map(item => item.title), ['HTML first', 'HTML second', 'HTML third']);
@@ -266,24 +279,17 @@ test('Community public queries preserve one HTML page without blocking on detail
   assert.equal(result.diagnostics.pageLoadMode, 'community-html-single-page');
 });
 
-test('Community multi-select OR uses bounded genre requests and filters actual details', async () => {
+test('Community multi-select sends one official complement query', async () => {
   const requests = [];
   let detailRequests = 0;
-  const details = {
-    101: { result: 1, publishedfileid: '101', title: 'Anime video', tags: [{ tag: 'Video' }, { tag: 'Everyone' }, { tag: 'Anime' }, { tag: 'Approved' }] },
-    202: { result: 1, publishedfileid: '202', title: 'Nature scene', tags: [{ tag: 'Scene' }, { tag: 'Questionable' }, { tag: 'Nature' }, { tag: 'Approved' }] },
-    303: { result: 1, publishedfileid: '303', title: 'Wrong type', tags: [{ tag: 'Web' }, { tag: 'Everyone' }, { tag: 'Anime' }, { tag: 'Approved' }] },
-  };
   const service = createNormalService({
     get: async (url) => {
       requests.push(url);
-      const genre = new URL(url).searchParams.getAll('requiredtags[]').find(tag => ['anime', 'nature'].includes(tag));
-      const ids = genre === 'anime' ? ['101', '303'] : ['202'];
-      return Buffer.from(ids.map(id => `<div class="workshopItem" data-publishedfileid="${id}"><div class="workshopItemTitle">${id}</div></div>`).join(''));
+      return Buffer.from('<div class="workshopItem" data-publishedfileid="101"><div class="workshopItemTitle">Steam AND result</div></div>');
     },
-    getFileDetailsSafe: async (ids) => {
+    getFileDetailsSafe: async () => {
       detailRequests += 1;
-      return ids.map(id => details[id]);
+      return [];
     },
   });
 
@@ -300,13 +306,138 @@ test('Community multi-select OR uses bounded genre requests and filters actual d
     'genre_or[1]': 'Nature',
   }, { steamDataSource: 'community' });
 
-  assert.equal(requests.length, 2);
-  assert.equal(detailRequests, 1);
-  assert.deepEqual(requests.map(url => new URL(url).searchParams.getAll('requiredtags[]')), [
-    ['Approved', 'anime'],
-    ['Approved', 'nature'],
+  assert.equal(requests.length, 1);
+  assert.equal(detailRequests, 0);
+  const query = new URL(requests[0]);
+  assert.deepEqual(query.searchParams.getAll('requiredtags[]'), ['Wallpaper', 'Approved']);
+  assert.deepEqual(query.searchParams.getAll('excludedtags[]'), [
+    ...WORKSHOP_TYPE_TAG_LIST.filter(tag => !['Video', 'Scene'].includes(tag)),
+    ...CONTENT_RATING_TAG_LIST.filter(tag => !['Everyone', 'Questionable'].includes(tag)),
+    ...WORKSHOP_GENRE_TAG_LIST.filter(tag => !['Anime', 'Nature'].includes(tag)),
+    ...WORKSHOP_CATEGORY_TAG_LIST.filter(tag => tag !== 'Wallpaper'),
   ]);
+  assert.deepEqual(result.response.publishedfiledetails.map(item => item.publishedfileid), ['101']);
+  assert.equal(result.diagnostics.pageLoadMode, 'community-html-single-page');
+});
+
+test('Community resolution multi-select sends one excluded-tag complement query', async () => {
+  const requests = [];
+  const service = createNormalService({
+    get: async (url) => {
+      requests.push(url);
+      return Buffer.from('<div class="workshopItem" data-publishedfileid="101"><div class="workshopItemTitle">Steam exclusion result</div></div>');
+    },
+  });
+
+  const result = await service.search({
+    appid: 431960,
+    page: 1,
+    numperpage: 30,
+    community_tag_filter: 1,
+    'requiredtags[0]': 'Everyone',
+    'requiredtags[1]': 'Video',
+    'resolution_or[0]': '2560 x 1080',
+    'resolution_or[1]': '3440 x 1440',
+  }, { steamDataSource: 'community' });
+
+  assert.equal(requests.length, 1);
+  const query = new URL(requests[0]);
+  assert.deepEqual(query.searchParams.getAll('requiredtags[]'), ['Wallpaper']);
+  assert.deepEqual(
+    query.searchParams.getAll('excludedtags[]'),
+    [
+      ...WORKSHOP_TYPE_TAG_LIST.filter(tag => tag !== 'Video'),
+      ...CONTENT_RATING_TAG_LIST.filter(tag => tag !== 'Everyone'),
+      ...STEAM_RESOLUTION_TAG_LIST.filter(tag => ![
+        'Ultrawide 2560 x 1080',
+        'Ultrawide 3440 x 1440',
+      ].includes(tag)),
+      ...WORKSHOP_CATEGORY_TAG_LIST.filter(tag => tag !== 'Wallpaper'),
+    ],
+  );
+  assert.deepEqual(result.response.publishedfiledetails.map(item => item.publishedfileid), ['101']);
+  assert.equal(result.diagnostics.pageLoadMode, 'community-html-single-page');
+});
+
+test('Community exact phrase option preserves the official single-page search semantics', async () => {
+  const requests = [];
+  let detailRequests = 0;
+  const service = createNormalService({
+    get: async (url) => {
+      requests.push(url);
+      return Buffer.from(['101', '202'].map(id => `<div class="workshopItem" data-publishedfileid="${id}"></div>`).join(''));
+    },
+    getFileDetailsSafe: async () => {
+      detailRequests += 1;
+      return [];
+    },
+  });
+
+  const result = await service.search({
+    appid: 431960,
+    page: 1,
+    numperpage: 2,
+    query_type: 0,
+    search_text: '"city rain"',
+  }, { steamDataSource: 'community' });
+
+  assert.equal(requests.length, 1);
+  assert.equal(detailRequests, 0);
+  assert.equal(new URL(requests[0]).searchParams.get('searchtext'), '"city rain"');
+  assert.equal(new URL(requests[0]).searchParams.get('browsesort'), 'toprated');
   assert.deepEqual(result.response.publishedfiledetails.map(item => item.publishedfileid), ['101', '202']);
+  assert.equal(result.diagnostics.pageLoadMode, 'community-html-single-page');
+});
+
+test('Mature-only empty results retry once with Questionable allowed', async () => {
+  const queries = [];
+  const service = createNormalService({
+    get: async () => { throw new Error('Steam Community should not be requested'); },
+    querySteamKitWorkshop: async (query) => {
+      queries.push(query);
+      if (queries.length === 1) return { ids: [], totalCount: 0, details: [] };
+      return {
+        ids: ['101'],
+        totalCount: 1,
+        details: [{ result: 1, publishedfileid: '101', title: 'Relaxed rating result', tags: [{ tag: 'Questionable' }] }],
+      };
+    },
+  });
+
+  const result = await service.search({
+    appid: 431960,
+    page: 1,
+    numperpage: 30,
+    'rating_or[0]': 'Mature',
+  }, { steamDataSource: 'cm', steamKitQueryAvailable: true });
+
+  assert.equal(queries.length, 2);
+  assert.ok(queries[0].excludedtags.includes('Everyone'));
+  assert.ok(queries[0].excludedtags.includes('Questionable'));
+  assert.ok(queries[1].excludedtags.includes('Everyone'));
+  assert.equal(queries[1].excludedtags.includes('Questionable'), false);
+  assert.deepEqual(result.diagnostics, { upstreamRequests: 2, ratingFallback: 'allow-questionable' });
+});
+
+test('unrelated empty results do not trigger rating fallback', async () => {
+  const queries = [];
+  const service = createNormalService({
+    get: async () => { throw new Error('Steam Community should not be requested'); },
+    querySteamKitWorkshop: async (query) => {
+      queries.push(query);
+      return { ids: [], totalCount: 0, details: [] };
+    },
+  });
+
+  const result = await service.search({
+    appid: 431960,
+    page: 1,
+    numperpage: 30,
+    'rating_or[0]': 'Everyone',
+  }, { steamDataSource: 'cm', steamKitQueryAvailable: true });
+
+  assert.equal(queries.length, 1);
+  assert.deepEqual(result.diagnostics, { upstreamRequests: 1 });
 });
 
 test('Community public queries preserve the official Steam SSR page limit', async () => {
@@ -351,9 +482,10 @@ test('a configured Web API key takes priority over Community browsing for signed
   );
 
   const requested = new URL(requests[0].url);
+  const input = JSON.parse(requested.searchParams.get('input_json'));
   assert.equal(requested.host, 'api.steampowered.com');
   assert.equal(requested.searchParams.get('key'), 'test-key');
-  assert.equal(requested.searchParams.get('search_text'), '极客湾');
+  assert.equal(input.search_text, '极客湾');
   assert.equal(requests[0].headers['x-webapi-key'], 'test-key');
   assert.deepEqual(result.response.publishedfiledetails.map(item => item.title), ['Web API item']);
 });
@@ -393,55 +525,62 @@ test('Steam CM source queries public Workshop search through QueryFiles', async 
   });
 
   const result = await service.search(
-    { appid: 431960, page: 1, numperpage: 1, search_text: 'video' },
+    { appid: 431960, page: 1, numperpage: 1, search_text: 'video', days: 7 },
     { steamDataSource: 'cm', steamKitQueryAvailable: true },
   );
 
   assert.equal(cmQuery.operation, 'query-files');
-  assert.equal(cmQuery.query_type, 12);
+  assert.equal(cmQuery.query_type, 3);
   assert.equal(cmQuery.search_text, 'video');
+  assert.equal(cmQuery.days, 7);
+  assert.equal(result.source, 'steam-cm');
+  assert.equal(result.fallbackUsed, undefined);
   assert.deepEqual(result.response.publishedfiledetails.map(item => item.title), ['CM item']);
 });
 
-test('Steam CM broad genre OR performs one query and applies local OR filtering', async () => {
-  const queries = [];
+test('Steam CM reports the complete upstream total while keeping the browse page limit', async () => {
+  let cmQuery;
   const service = createNormalService({
     get: async () => { throw new Error('Steam Community should not be requested'); },
     querySteamKitWorkshop: async (query) => {
-      queries.push(query);
+      cmQuery = query;
       return {
-        ids: ['101', '202', '303'],
-        totalCount: 3,
-        details: [
-          { result: 1, publishedfileid: '101', title: 'Anime', tags: [{ tag: 'Anime' }, { tag: 'Approved' }] },
-          { result: 1, publishedfileid: '202', title: 'Nature', tags: [{ tag: 'Nature' }, { tag: 'Approved' }] },
-          { result: 1, publishedfileid: '303', title: 'Other', tags: [{ tag: 'Sports' }, { tag: 'Approved' }] },
-        ],
+        ids: ['101'],
+        totalCount: 1067749,
+        details: [{ result: 1, publishedfileid: '101', title: 'CM item', tags: [{ tag: 'Video' }, { tag: 'Everyone' }] }],
       };
     },
   });
-  const genres = ['Anime', 'Nature', 'Game', 'Fantasy', 'Sci-Fi', 'Landscape', 'Music', 'Retro'];
-  const params = { appid: 431960, page: 1, numperpage: 10, 'requiredtags[0]': 'Approved' };
-  genres.forEach((genre, index) => { params[`genre_or[${index}]`] = genre; });
 
-  const result = await service.search(params, { steamDataSource: 'cm', steamKitQueryAvailable: true });
+  const result = await service.search({
+    appid: 431960,
+    query_type: 1,
+    days: 30,
+    page: 1,
+    numperpage: 50,
+    'requiredtags[0]': 'Video',
+    'requiredtags[1]': 'Everyone',
+  }, { steamDataSource: 'cm', steamKitQueryAvailable: true });
 
-  assert.equal(queries.length, 1);
-  assert.deepEqual(queries[0].requiredtags, ['Approved']);
-  assert.deepEqual(result.response.publishedfiledetails.map(item => item.publishedfileid), ['101', '202']);
+  assert.equal(cmQuery.days, 30);
+  assert.equal(Object.hasOwn(cmQuery, 'include_recent_votes_only'), false);
+  assert.equal(result.response.total, 1067749);
+  assert.equal(result.response.totalPages, 1000);
+  assert.equal(result.totalPages, 1000);
 });
 
-test('Steam CM small genre OR fans out with one genre per request and merges results', async () => {
+test('Steam CM legacy multi-select parameters become one complement query', async () => {
   const queries = [];
   const service = createNormalService({
     get: async () => { throw new Error('Steam Community should not be requested'); },
     querySteamKitWorkshop: async (query) => {
       queries.push(query);
-      const genre = query.requiredtags.find(tag => tag !== 'Approved');
       return {
-        ids: [genre === 'anime' ? '101' : '202'],
+        ids: ['101'],
         totalCount: 1,
-        details: [{ result: 1, publishedfileid: genre === 'anime' ? '101' : '202', title: genre, tags: [{ tag: genre }, { tag: 'Approved' }] }],
+        details: [
+          { result: 1, publishedfileid: '101', title: 'Match all', tags: [{ tag: 'Scene' }, { tag: 'Anime' }, { tag: 'Nature' }, { tag: 'Approved' }] },
+        ],
       };
     },
   });
@@ -455,9 +594,162 @@ test('Steam CM small genre OR fans out with one genre per request and merges res
     'genre_or[1]': 'Nature',
   }, { steamDataSource: 'cm', steamKitQueryAvailable: true });
 
-  assert.equal(queries.length, 2);
-  assert.deepEqual(queries.map(query => query.requiredtags), [['Approved', 'anime'], ['Approved', 'nature']]);
-  assert.deepEqual(result.response.publishedfiledetails.map(item => item.publishedfileid), ['101', '202']);
+  assert.equal(queries.length, 1);
+  assert.deepEqual(queries[0].requiredtags, ['Wallpaper', 'Approved']);
+  assert.deepEqual(queries[0].excludedtags, [
+    ...WORKSHOP_GENRE_TAG_LIST.filter(tag => !['Anime', 'Nature'].includes(tag)),
+    ...WORKSHOP_CATEGORY_TAG_LIST.filter(tag => tag !== 'Wallpaper'),
+  ]);
+  assert.deepEqual(result.response.publishedfiledetails.map(item => item.publishedfileid), ['101']);
+});
+
+test('Steam CM sends one Wallpaper Engine-style resolution exclusion query', async () => {
+  const queries = [];
+  let activeQueries = 0;
+  let maximumActiveQueries = 0;
+  const service = createNormalService({
+    get: async () => { throw new Error('Steam Community should not be requested'); },
+    querySteamKitWorkshop: async (query) => {
+      queries.push(query);
+      activeQueries += 1;
+      maximumActiveQueries = Math.max(maximumActiveQueries, activeQueries);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      activeQueries -= 1;
+      return {
+        ids: ['101'],
+        totalCount: 1,
+        details: [
+          { result: 1, publishedfileid: '101', title: 'Expected', tags: [{ tag: 'Everyone' }, { tag: 'Video' }, { tag: 'Ultrawide 3440 x 1440' }] },
+        ],
+      };
+    },
+  });
+
+  const result = await service.search({
+    appid: 431960,
+    page: 1,
+    numperpage: 10,
+    'requiredtags[0]': 'Everyone',
+    'requiredtags[1]': 'Video',
+    'resolution_or[0]': 'Ultrawide',
+    'resolution_or[1]': '2560 x 1080',
+    'resolution_or[2]': '3440 x 1440',
+  }, { steamDataSource: 'cm', steamKitQueryAvailable: true });
+
+  assert.equal(queries.length, 1);
+  assert.equal(maximumActiveQueries, 1);
+  assert.equal(queries[0].match_all_tags, true);
+  assert.equal(queries[0].numperpage, 10);
+  assert.deepEqual(queries[0].requiredtags, ['Wallpaper']);
+  assert.deepEqual(queries[0].excludedtags, [
+    ...WORKSHOP_TYPE_TAG_LIST.filter(tag => tag !== 'Video'),
+    ...CONTENT_RATING_TAG_LIST.filter(tag => tag !== 'Everyone'),
+    ...STEAM_RESOLUTION_TAG_LIST.filter(tag => ![
+      'Ultrawide Standard Definition',
+      'Ultrawide 2560 x 1080',
+      'Ultrawide 3440 x 1440',
+    ].includes(tag)),
+    ...WORKSHOP_CATEGORY_TAG_LIST.filter(tag => tag !== 'Wallpaper'),
+  ]);
+  assert.deepEqual(result.response.publishedfiledetails.map(item => item.publishedfileid), ['101']);
+  assert.deepEqual(result.diagnostics, { upstreamRequests: 1 });
+});
+
+test('Steam Web API sends one Wallpaper Engine-style resolution exclusion query', async () => {
+  const requests = [];
+  const service = createNormalService({
+    getSteamApiKey: () => 'test-key',
+    get: async (url) => {
+      requests.push(url);
+      return Buffer.from(JSON.stringify({ response: {
+        total: 1,
+        publishedfiledetails: [
+          { result: 1, publishedfileid: '101', title: 'Expected', tags: [{ tag: 'Everyone' }, { tag: 'Video' }, { tag: 'Ultrawide 3440 x 1440' }] },
+        ],
+      } }));
+    },
+  });
+
+  const result = await service.search({
+    appid: 431960,
+    page: 1,
+    numperpage: 10,
+    'requiredtags[0]': 'Everyone',
+    'requiredtags[1]': 'Video',
+    'resolution_or[0]': '2560 x 1080',
+    'resolution_or[1]': '3440 x 1440',
+  }, { steamDataSource: 'webapi' });
+
+  assert.equal(requests.length, 1);
+  const query = new URL(requests[0]);
+  const input = JSON.parse(query.searchParams.get('input_json'));
+  assert.equal(input.match_all_tags, true);
+  assert.equal(input.numperpage, 10);
+  assert.deepEqual(input.requiredtags, ['Wallpaper']);
+  assert.deepEqual(query.searchParams.getAll('requiredtags[]'), []);
+  assert.equal(query.searchParams.get('requiredtags[0]'), null);
+  assert.deepEqual(
+    input.excludedtags,
+    [
+      ...WORKSHOP_TYPE_TAG_LIST.filter(tag => tag !== 'Video'),
+      ...CONTENT_RATING_TAG_LIST.filter(tag => tag !== 'Everyone'),
+      ...STEAM_RESOLUTION_TAG_LIST.filter(tag => ![
+        'Ultrawide 2560 x 1080',
+        'Ultrawide 3440 x 1440',
+      ].includes(tag)),
+      ...WORKSHOP_CATEGORY_TAG_LIST.filter(tag => tag !== 'Wallpaper'),
+    ],
+  );
+  assert.deepEqual(result.response.publishedfiledetails.map(item => item.publishedfileid), ['101']);
+  assert.deepEqual(result.diagnostics, { upstreamRequests: 1 });
+});
+
+test('large resolution groups remain one request and retain typed wallpaper items', async () => {
+  const queries = [];
+  let activeQueries = 0;
+  let maximumActiveQueries = 0;
+  const service = createNormalService({
+    get: async () => { throw new Error('Steam Community should not be requested'); },
+    querySteamKitWorkshop: async (query) => {
+      queries.push(query);
+      activeQueries += 1;
+      maximumActiveQueries = Math.max(maximumActiveQueries, activeQueries);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      activeQueries -= 1;
+      const id = String(1000 + queries.indexOf(query));
+      const detail = {
+        result: 1,
+        publishedfileid: id,
+        title: `Item ${id}`,
+        tags: [...query.requiredtags, 'Video'].map(tag => ({ tag })),
+      };
+      return { ids: [id], totalCount: 1, details: [detail] };
+    },
+  });
+
+  const result = await service.search({
+    appid: 431960,
+    page: 1,
+    numperpage: 30,
+    'requiredtags[0]': 'Everyone',
+    'requiredtags[1]': 'Video',
+    'resolution_or[0]': 'Ultrawide',
+    'resolution_or[1]': '2560 x 1080',
+    'resolution_or[2]': '3440 x 1440',
+    'resolution_or[3]': '3840 x 1080',
+    'resolution_or[4]': '5120 x 1440',
+  }, { steamDataSource: 'cm', steamKitQueryAvailable: true });
+
+  assert.equal(queries.length, 1);
+  assert.equal(maximumActiveQueries, 1);
+  assert.equal(queries[0].page, 1);
+  assert.equal(queries[0].numperpage, 30);
+  assert.equal(queries[0].match_all_tags, true);
+  assert.deepEqual(queries[0].requiredtags, ['Wallpaper']);
+  assert.equal(queries[0].excludedtags.length, (WORKSHOP_TYPE_TAG_LIST.length - 1) + (CONTENT_RATING_TAG_LIST.length - 1) + STEAM_RESOLUTION_TAG_LIST.length - 5 + 1);
+  assert.equal(result.response.publishedfiledetails.length, 1);
+  assert.equal(result.response.total, 1);
+  assert.deepEqual(result.diagnostics, { upstreamRequests: 1 });
 });
 
 test('an invalid Web API key fails without Community fallback', async () => {

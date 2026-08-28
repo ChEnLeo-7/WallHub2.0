@@ -125,6 +125,26 @@ test('SteamKit child environment leaves Depot CM resolver untouched when SteamAc
   assert.equal(env.WALLHUB_DEPOT_WEBAPI_BROKER_TOKEN, undefined);
 });
 
+test('explicit SteamKit concurrency overrides inherited process configuration for every workload', () => {
+  const runtimeSettings = createSettings(
+    { steamKitMaxDownloads: 24 },
+    { DEPOTDOWNLOADER_MAX_DOWNLOADS: '8', WALLHUB_DEPOT_STREAM_MAX_DOWNLOADS: '4' },
+  );
+
+  assert.equal(runtimeSettings.getSteamKitMaxDownloads(), 24);
+  assert.equal(runtimeSettings.getSteamKitStreamMaxDownloads(), 24);
+});
+
+test('automatic SteamKit concurrency may use the common DepotDownloader environment value', () => {
+  const runtimeSettings = createSettings(
+    { steamKitMaxDownloads: 0 },
+    { DEPOTDOWNLOADER_MAX_DOWNLOADS: '16', WALLHUB_DEPOT_STREAM_MAX_DOWNLOADS: '4' },
+  );
+
+  assert.equal(runtimeSettings.getSteamKitMaxDownloads(), 16);
+  assert.equal(runtimeSettings.getSteamKitStreamMaxDownloads(), 16);
+});
+
 test('persisted SteamAccess off state cannot be overridden by an inherited enhancement variable', () => {
   const runtimeSettings = createSettings(
     { wallhubSteamAccessEnhance: false },

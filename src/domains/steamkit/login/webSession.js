@@ -3,6 +3,7 @@
 const WEB_SESSION_MARKER = 'WALLHUB_STEAM_WEB_SESSION:';
 
 function createWebSession(options) {
+  const debugLogger = options.debugLogger || options.logger;
   const webSessionCache = { username: '', cookie: '', expiresAt: 0, pending: null, pendingUsername: '' };
   const webSessionTtlMs = Math.max(60000, parseInt(process.env.WALLHUB_STEAMKIT_WEB_SESSION_TTL_MS || '600000', 10) || 600000);
 
@@ -66,7 +67,7 @@ function createWebSession(options) {
       ];
       if (process.env.DEPOTDOWNLOADER_DEBUG === '1') args.push('-debug');
       const timeout = Math.max(15000, parseInt(process.env.WALLHUB_STEAMKIT_WEB_SESSION_TIMEOUT || '60000', 10) || 60000);
-      options.logger.log(`[SteamKit Web] Generating Steam community web session for: ${user}`);
+      debugLogger.log(`[SteamKit Web] Generating Steam community web session for: ${user}`);
       const result = await options.runProcess(command, args, timeout, {
         cwd: options.configDir,
         closeStdin: true,
@@ -83,7 +84,7 @@ function createWebSession(options) {
       webSessionCache.username = user;
       webSessionCache.cookie = cookie;
       webSessionCache.expiresAt = Date.now() + webSessionTtlMs;
-      options.logger.log(`[SteamKit Web] Steam community web session ready for: ${user}`);
+      debugLogger.log(`[SteamKit Web] Steam community web session ready for: ${user}`);
       return cookie;
     })();
     const tracked = pending.finally(() => {

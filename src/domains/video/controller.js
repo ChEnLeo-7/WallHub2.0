@@ -10,6 +10,7 @@ function createVideoController(deps = {}) {
   const { jsonRes, logger = console } = deps;
   let depot;
   const registry = createVideoTokenRegistry({
+    disposeDepotEntry: (entry, reason) => depot.getDepotStreamService().cancelFullCache(entry, reason),
     releaseDepotEntry: (entry, reason) => depot.getDepotStreamService().releaseEntry(entry, reason),
   });
   depot = createVideoDepot(Object.assign({}, deps, { registry }));
@@ -84,7 +85,7 @@ function createVideoController(deps = {}) {
               status: 'ready',
               streamUrl: depotStream.streamUrl,
               source: 'depot_stream',
-              cdnHost: deps.steamCdnStatusSnapshot().currentHost || '',
+              cdnHost: depotStream.cdnHost || deps.steamCdnStatusSnapshot().currentHost || '',
             });
           }
         } else {
@@ -142,9 +143,14 @@ function createVideoController(deps = {}) {
     proxyRemoteVideoStream: remotePreparation.proxy,
     handleDepotVideoStream: depot.handleDepotVideoStream,
     handleDepotVideoRelease: depot.handleDepotVideoRelease,
+    handleDepotVideoFeedback: depot.handleDepotVideoFeedback,
+    handleDepotVideoFullCacheStart: depot.handleDepotVideoFullCacheStart,
+    handleDepotVideoFullCacheStatus: depot.handleDepotVideoFullCacheStatus,
+    handleDepotVideoFullCacheCancel: depot.handleDepotVideoFullCacheCancel,
     handleVideoPlay,
     handleVideoStream: cache.handleVideoStream,
     getDepotWorkerCount: depot.getDepotWorkerCount,
+    getDepotStreamDiagnostics: depot.getDepotStreamDiagnostics,
   };
 }
 

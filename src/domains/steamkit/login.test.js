@@ -87,6 +87,51 @@ test('SteamKit password login exposes a phone-confirmation status without exposi
   assert.deepEqual(persisted, [{ username: 'tester', backend: 'steamkit' }]);
 });
 
+test('SteamKit password login preserves an expired phone-confirmation result instead of reporting bad credentials', async () => {
+  const service = createService({
+    runProcess: async (_command, _args, _timeout, options) => {
+      options.onStderr('STEAM GUARD! Use the Steam Mobile App to confirm your sign in...');
+      throw new Error('Failed to authenticate with Steam: authentication session expired');
+    },
+    normalizeDepotError: () => Object.assign(new Error('Steam 登录认证未完成'), {
+      code: 'STEAM_LOGIN_FAILED',
+      statusCode: 401,
+    }),
+  });
+
+  const session = service.startPasswordSession('tester', 'secret');
+  await service.sessions.get(session.id).processPromise;
+  const failed = service.getPasswordSession(session.id);
+
+  assert.equal(failed.status, 'error');
+  assert.equal(failed.code, 'STEAM_PHONE_CONFIRMATION_REQUIRED');
+  assert.equal(failed.requiresPhoneConfirmation, true);
+  assert.equal(failed.needsSteamGuard, undefined);
+  assert.match(failed.error, /Steam 手机确认未完成或已过期/);
+});
+
+test('SteamKit password login preserves an explicit rate limit after a phone-confirmation prompt', async () => {
+  const service = createService({
+    runProcess: async (_command, _args, _timeout, options) => {
+      options.onStderr('STEAM GUARD! Use the Steam Mobile App to confirm your sign in...');
+      throw new Error('Failed to authenticate with Steam: RateLimitExceeded');
+    },
+    normalizeDepotError: () => Object.assign(new Error('Steam 暂时限制了登录尝试'), {
+      code: 'STEAM_LOGIN_RATE_LIMITED',
+      statusCode: 429,
+    }),
+  });
+
+  const session = service.startPasswordSession('tester', 'secret');
+  await service.sessions.get(session.id).processPromise;
+  const failed = service.getPasswordSession(session.id);
+
+  assert.equal(failed.status, 'error');
+  assert.equal(failed.code, 'STEAM_LOGIN_RATE_LIMITED');
+  assert.equal(failed.requiresPhoneConfirmation, undefined);
+  assert.match(failed.error, /限制了登录尝试/);
+});
+
 test('SteamKit password login submits a supplied Steam token on the first attempt', async () => {
   let invocation;
   const service = createService({
@@ -149,34 +194,36 @@ test('SteamKit password login keeps an explicit network error ahead of Steam Gua
 test('Steam login validation uses a dedicated CM session without requesting an app manifest', async () => {
   let invocation;
   const service = createService({
-    runProcess: async (_command, args) => {
-      invocation = args;
+    runProcess: async (_command, args, _timeout, options) => {
+      invocation = { args, options };
       return { out: '', err: '' };
     },
   });
 
   await service.verifyLogin('tester', 'secret', '');
 
-  assert.ok(invocation.includes('-wallhub-cm-login'));
-  assert.equal(invocation.includes('-app'), false);
-  assert.equal(invocation.includes('-manifest-only'), false);
+  assert.ok(invocation.args.includes('-wallhub-cm-login'));
+  assert.equal(invocation.args.includes('-app'), false);
+  assert.equal(invocation.args.includes('-manifest-only'), false);
+  assert.equal(invocation.options.env.WALLHUB_DEPOT_STEAM3_PROTOCOL, 'websocket');
 });
 
 test('Steam remembered-session validation uses the same dedicated CM command', async () => {
   let invocation;
   const service = createService({
-    runProcess: async (_command, args) => {
-      invocation = args;
+    runProcess: async (_command, args, _timeout, options) => {
+      invocation = { args, options };
       return { out: '', err: '' };
     },
   });
 
   await service.verifyRememberedSession('tester');
 
-  assert.ok(invocation.includes('-wallhub-cm-login'));
-  assert.ok(invocation.includes('-remember-password'));
-  assert.equal(invocation.includes('-wallhub-password-stdin'), false);
-  assert.equal(invocation.includes('-app'), false);
+  assert.ok(invocation.args.includes('-wallhub-cm-login'));
+  assert.ok(invocation.args.includes('-remember-password'));
+  assert.equal(invocation.args.includes('-wallhub-password-stdin'), false);
+  assert.equal(invocation.args.includes('-app'), false);
+  assert.equal(invocation.options.env.WALLHUB_DEPOT_STEAM3_PROTOCOL, 'websocket');
 });
 
 test('Steam QR login establishes a dedicated CM session without an app request', async () => {

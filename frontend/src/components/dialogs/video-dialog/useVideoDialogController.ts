@@ -4,7 +4,9 @@ import { useReducedMotion } from 'motion/react';
 import { useText } from '@/lib/text';
 import type { VideoDialogProps } from './types';
 import { useVideoAudio } from './useVideoAudio';
+import { useVideoBufferedRanges } from './useVideoBufferedRanges';
 import { useVideoControlVisibility } from './useVideoControlVisibility';
+import { useDepotPlaybackFeedback } from './useDepotPlaybackFeedback';
 import { useVideoFullscreen } from './useVideoFullscreen';
 import { useVideoInteraction } from './useVideoInteraction';
 import { useVideoKeyboard } from './useVideoKeyboard';
@@ -16,31 +18,29 @@ import { useVideoSeek } from './useVideoSeek';
 
 export { VIDEO_READY_POLL_MS } from './useVideoReadiness';
 
-export function useVideoDialogController({ video, playerMode, onOpenChange }: VideoDialogProps) {
+export function useVideoDialogController({ video, onOpenChange }: VideoDialogProps) {
   const text = useText();
   const reduceMotion = useReducedMotion();
-  const compatibilityMode = playerMode === 'compatibility';
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const playerShellRef = React.useRef<HTMLDivElement | null>(null);
   const controlsRef = React.useRef<HTMLDivElement | null>(null);
   const [videoSize, setVideoSize] = React.useState<{ width: number; height: number } | null>(null);
   const { checking, readySrc } = useVideoReadiness(video);
+  const depotFeedback = useDepotPlaybackFeedback(readySrc);
+  const buffered = useVideoBufferedRanges(readySrc);
   const seek = useVideoSeek(videoRef);
-  const playback = useVideoPlayback(videoRef);
-  const controlVisibility = useVideoControlVisibility(compatibilityMode, playback.isPlaying, seek.isSeeking);
-  const longPressRate = useVideoLongPressRate({ compatibilityMode, videoRef });
+  const playback = useVideoPlayback(videoRef, depotFeedback.reportUserPlaybackIntent);
+  const controlVisibility = useVideoControlVisibility(playback.isPlaying, seek.isSeeking);
+  const longPressRate = useVideoLongPressRate({ videoRef });
   const audio = useVideoAudio(videoRef);
   const layout = useVideoLayout(videoSize);
 
   const fullscreen = useVideoFullscreen({
-    playerMode,
     playerShellRef,
     readySrc,
     showControls: controlVisibility.showControls,
-    videoRef,
   });
   const interaction = useVideoInteraction({
-    compatibilityMode,
     desktopVideoInteraction: layout.desktopVideoInteraction,
     playbackRateMenuDismissedRef: longPressRate.playbackRateMenuDismissedRef,
     playbackRateMenuOpen: longPressRate.playbackRateMenuOpen,
@@ -73,7 +73,6 @@ export function useVideoDialogController({ video, playerMode, onOpenChange }: Vi
     controlVisibility.resetControlVisibility,
     longPressRate.resetPlaybackRate,
     playback.resetVideoPlayback,
-    playerMode,
     readySrc,
     seek.resetVideoSeek,
   ]);
@@ -85,23 +84,29 @@ export function useVideoDialogController({ video, playerMode, onOpenChange }: Vi
   const onLoadedMetadata = React.useCallback((event: React.SyntheticEvent<HTMLVideoElement>) => {
     const element = event.currentTarget;
     if (element.videoWidth && element.videoHeight) setVideoSize({ width: element.videoWidth, height: element.videoHeight });
-    if (!compatibilityMode) return;
+    depotFeedback.reportLoadedMetadata(element);
     seek.setDuration(Number.isFinite(element.duration) ? element.duration : 0);
     seek.setCurrentTime(element.currentTime || 0);
     audio.syncVideoAudio(element);
-  }, [audio.syncVideoAudio, compatibilityMode, seek.setCurrentTime, seek.setDuration]);
+    buffered.syncBufferedRanges(element);
+  }, [audio.syncVideoAudio, buffered.syncBufferedRanges, depotFeedback.reportLoadedMetadata, seek.setCurrentTime, seek.setDuration]);
 
   return {
     beginVideoSeek: seek.beginVideoSeek,
+    bandwidthLimited: depotFeedback.bandwidthLimited,
+    bufferedRanges: buffered.bufferedRanges,
+    buffering: depotFeedback.buffering,
+    cacheCompleteFile: () => videoRef.current && depotFeedback.cacheCompleteFile(videoRef.current),
+    cancelCompleteFileCache: depotFeedback.cancelCompleteFileCache,
     cancelVideoSeek: seek.cancelVideoSeek,
     checking,
     clearControlsHideTimer: controlVisibility.clearControlsHideTimer,
-    compatibilityMode,
     controlsFocusRef: controlVisibility.controlsFocusRef,
     controlsHoverRef: controlVisibility.controlsHoverRef,
     controlsRef,
     controlsVisible: controlVisibility.controlsVisible,
     desktopVideoInteraction: layout.desktopVideoInteraction,
+    decodeError: depotFeedback.decodeError,
     displayedVideoTime: seek.displayedVideoTime,
     duration: seek.duration,
     fallbackFullscreen: fullscreen.fallbackFullscreen,
@@ -109,15 +114,28 @@ export function useVideoDialogController({ video, playerMode, onOpenChange }: Vi
     finishVideoSeek: seek.finishVideoSeek,
     fittedVideoSize: layout.fittedVideoSize,
     fullscreenActive: fullscreen.fullscreenActive,
+    fullCache: depotFeedback.fullCache,
     handleDialogOpenChange,
     handleMobileVideoDoubleClick: interaction.handleMobileVideoDoubleClick,
     handlePlaybackRateMenuOpenChange: longPressRate.handlePlaybackRateMenuOpenChange,
     handleVideoClick: interaction.handleVideoClick,
     isPlaying: playback.isPlaying,
+    isDepot: depotFeedback.isDepot,
     keyboardLongPressActive: longPressRate.keyboardLongPressActive,
     longPressActive: longPressRate.longPressActive,
+    longPressPlaybackRate: longPressRate.longPressPlaybackRate,
     muted: audio.muted,
     onLoadedMetadata,
+    onDepotEnded: depotFeedback.reportEnded,
+    onDepotError: depotFeedback.reportError,
+    onDepotPause: depotFeedback.reportPaused,
+    onDepotPlay: depotFeedback.reportPlayIntent,
+    onDepotPlaying: depotFeedback.reportPlaying,
+    onDepotProgress: depotFeedback.reportProgress,
+    onDepotSeeked: depotFeedback.reportSeeked,
+    onDepotSeeking: depotFeedback.reportSeeking,
+    onDepotStalled: depotFeedback.reportStalled,
+    onDepotWaiting: depotFeedback.reportWaiting,
     onVolumeChange: audio.onVolumeChange,
     playbackRate: longPressRate.playbackRate,
     playbackStarted: playback.playbackStarted,
@@ -133,6 +151,7 @@ export function useVideoDialogController({ video, playerMode, onOpenChange }: Vi
     setVideoPlaybackRate: longPressRate.setVideoPlaybackRate,
     setVideoVolume: audio.setVideoVolume,
     showControls: controlVisibility.showControls,
+    syncBufferedRanges: buffered.syncBufferedRanges,
     startLongPress: longPressRate.startLongPress,
     text,
     toggleFullscreen: fullscreen.toggleFullscreen,

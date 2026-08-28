@@ -149,6 +149,7 @@ function WallpaperCardComponent({
         type={type}
         typeLabel={typeLabel}
         noCoverLabel={text.noCover}
+        coverNetworkErrorLabel={text.coverNetworkError}
         view={view}
         layoutAnimationEnabled={layoutAnimationEnabled}
         preserveAspectLayout={preserveAspectLayout}

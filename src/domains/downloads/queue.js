@@ -181,6 +181,7 @@ function createDownloadQueueService(deps = {}) {
         task.progressStageMode = '';
         if (task.total > 0) task.downloaded = task.total;
         try { onTaskCompleted(task); } catch (error) { logger.warn('[Queue] Failed to refresh cached-item index:', error.message); }
+        logger.log(`[Download] completed id=${task.id} output="${task.outputPath || ''}"`);
       }
     } catch (error) {
       const controlledCancellation = (
@@ -199,6 +200,7 @@ function createDownloadQueueService(deps = {}) {
         task.speed = 0;
         task.progressIndeterminate = false;
         task.progressStageMode = '';
+        logger.warn(`[Download] failed id=${task.id} code=${task.errorCode || 'DOWNLOAD_FAILED'} error=${task.errorMsg}`);
       }
     } finally {
       task._runnerActive = false;

@@ -4,6 +4,21 @@ const fs = require('fs');
 const { replaceSourceOnce } = require('./sourceEdits');
 
 function patchQueryBridgeProgram(programPath, program) {
+  if (program.includes('WallHubRunQueryBridgeAsync') && !program.includes('Console.InputEncoding = new UTF8Encoding(false);')) {
+    program = program.replace(
+      '        private static async Task<int> WallHubRunQueryBridgeAsync()\n        {',
+      '        private static async Task<int> WallHubRunQueryBridgeAsync()\n        {\n            Console.InputEncoding = new UTF8Encoding(false);\n            Console.OutputEncoding = new UTF8Encoding(false);',
+    );
+  }
+  program = program.replace(
+    '                    Console.WriteLine($"WALLHUB_STEAM_QUERY_BRIDGE:{JsonSerializer.Serialize(new { id = requestId, ok = false, error = ex.Message })}");',
+    [
+      '                    var loginRequired = ex.Message.Contains("not logged in", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("NotLoggedOn", StringComparison.OrdinalIgnoreCase);',
+      '                    var timedOut = ex is TimeoutException || ex is TaskCanceledException;',
+      '                    var errorCode = loginRequired ? "STEAM_CM_LOGIN_REQUIRED" : (timedOut ? "STEAM_CM_QUERY_TIMEOUT" : "STEAM_CM_QUERY_FAILED");',
+      '                    Console.WriteLine($"WALLHUB_STEAM_QUERY_BRIDGE:{JsonSerializer.Serialize(new { id = requestId, ok = false, error = ex.Message, code = errorCode })}");',
+    ].join('\n'),
+  );
   if (!program.includes('wallHubQueryBridge')) {
     program = replaceSourceOnce(
       program,
@@ -29,6 +44,8 @@ function patchQueryBridgeProgram(programPath, program) {
       [
         '        private static async Task<int> WallHubRunQueryBridgeAsync()',
         '        {',
+        '            Console.InputEncoding = new UTF8Encoding(false);',
+        '            Console.OutputEncoding = new UTF8Encoding(false);',
         '            Console.WriteLine("WALLHUB_STEAM_QUERY_BRIDGE_READY");',
         '            while (true)',
         '            {',
@@ -84,7 +101,10 @@ function patchQueryBridgeProgram(programPath, program) {
         '                }',
         '                catch (Exception ex)',
         '                {',
-        '                    Console.WriteLine($"WALLHUB_STEAM_QUERY_BRIDGE:{JsonSerializer.Serialize(new { id = requestId, ok = false, error = ex.Message })}");',
+      '                    var loginRequired = ex.Message.Contains("not logged in", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("NotLoggedOn", StringComparison.OrdinalIgnoreCase);',
+      '                    var timedOut = ex is TimeoutException || ex is TaskCanceledException;',
+      '                    var errorCode = loginRequired ? "STEAM_CM_LOGIN_REQUIRED" : (timedOut ? "STEAM_CM_QUERY_TIMEOUT" : "STEAM_CM_QUERY_FAILED");',
+      '                    Console.WriteLine($"WALLHUB_STEAM_QUERY_BRIDGE:{JsonSerializer.Serialize(new { id = requestId, ok = false, error = ex.Message, code = errorCode })}");',
         '                }',
         '            }',
         '        }',
@@ -159,6 +179,7 @@ function patchQueryBridgeProgram(programPath, program) {
     );
     fs.writeFileSync(programPath, program, 'utf8');
   }
+  fs.writeFileSync(programPath, program, 'utf8');
 
   return program;
 }

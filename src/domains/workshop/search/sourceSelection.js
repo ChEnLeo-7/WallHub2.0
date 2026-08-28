@@ -6,6 +6,7 @@ const { normalizeSteamId } = require('../query');
 const { collectArrayLikeParams, normalizeWorkshopIdSearch } = require('../filters');
 
 const STEAM_WORKSHOP_ACCESSIBLE_ITEMS = 50000;
+const STEAM_WORKSHOP_ACCESSIBLE_PAGES = 1000;
 
 function usesOfficialCommunityTagFilter(params = {}) {
   return ['1', 'true', 'yes', 'on'].includes(String(params.community_tag_filter || '').toLowerCase());
@@ -20,8 +21,13 @@ function accessibleWorkshopTotal(total, params = {}) {
 function pageBeyondAccessibleWorkshopTotal(page, numperpage, params = {}) {
   if (params.creator || usesOfficialCommunityTagFilter(params)) return false;
   const safePage = Math.max(1, parseInt(page, 10) || 1);
-  const safeNumperpage = Math.max(1, parseInt(numperpage, 10) || 30);
-  return safePage > Math.ceil(STEAM_WORKSHOP_ACCESSIBLE_ITEMS / safeNumperpage);
+  return safePage > STEAM_WORKSHOP_ACCESSIBLE_PAGES;
+}
+
+function accessibleWorkshopPages(total, numperpage) {
+  const value = Math.max(0, parseInt(total, 10) || 0);
+  const pageSize = Math.max(1, parseInt(numperpage, 10) || 30);
+  return value ? Math.min(STEAM_WORKSHOP_ACCESSIBLE_PAGES, Math.ceil(value / pageSize)) : 0;
 }
 
 function requiresSteamCommunitySession(params = {}) {
@@ -69,15 +75,10 @@ function steamAccountCacheKeyForRun(runOptions = {}) {
 function sourceParamsForScrape(params) {
   const next = Object.assign({}, params || {});
   for (const key of Object.keys(params || {})) {
-    if (!/^(?:requiredtags|type_or|rating_or|genre_or|resolution_or)(?:\[\d+\])?$/.test(key)) continue;
-    delete next[key];
+    if (/^requiredtags(?:\[\d+\])?$/.test(key)) delete next[key];
   }
-  const kept = collectArrayLikeParams(params, 'requiredtags').concat(collectArrayLikeParams(params, 'resolution_or'))
+  const kept = collectArrayLikeParams(params, 'requiredtags')
     .filter(tag => tag.toLowerCase() !== 'mobile');
-  for (const name of ['type_or', 'rating_or', 'genre_or']) {
-    const values = collectArrayLikeParams(params, name).filter(tag => tag.toLowerCase() !== 'mobile');
-    if (values.length === 1) kept.push(values[0]);
-  }
   const seen = new Set();
   kept.filter(tag => {
     const normalized = tag.toLowerCase();
@@ -134,7 +135,9 @@ function resolveSourceSelection(params, runOptions = {}, options = {}) {
 
 module.exports = {
   STEAM_WORKSHOP_ACCESSIBLE_ITEMS,
+  STEAM_WORKSHOP_ACCESSIBLE_PAGES,
   accessibleWorkshopTotal,
+  accessibleWorkshopPages,
   pageBeyondAccessibleWorkshopTotal,
   requiresSteamCommunitySession,
   resolveSourceSelection,

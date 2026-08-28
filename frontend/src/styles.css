@@ -488,3 +488,58 @@
     }
   }
 }
+/* The media timeline is drawn in layers so buffered ranges remain visible behind playback. */
+.wallhub-video-seek {
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.wallhub-video-seek:focus,
+.wallhub-video-seek:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.wallhub-video-seek::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+
+.wallhub-video-seek::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  appearance: none;
+  border: 2px solid rgb(255 255 255 / 90%);
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 45%);
+}
+
+.wallhub-video-seek::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+
+.wallhub-video-seek::-moz-focus-outer {
+  border: 0;
+}
+
+.wallhub-video-seek::-moz-range-progress {
+  height: 4px;
+  background: transparent;
+}
+
+.wallhub-video-seek::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgb(255 255 255 / 90%);
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 45%);
+}

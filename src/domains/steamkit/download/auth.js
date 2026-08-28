@@ -213,8 +213,17 @@ function createDownloadAuth(deps = {}) {
     if (/No username given|anonymous account|not available from this account|requires.*(license|subscription)|no subscription|license.*missing/i.test(msg)) {
       return makeLoginRequiredError();
     }
+    if (/ratelimitexceeded|rate limit|too many (?:login )?attempts|try again later/i.test(msg)) {
+      return codedError('Steam 暂时限制了登录尝试，请稍后再试；连续重试会延长限制时间。', 'STEAM_LOGIN_RATE_LIMITED', 429);
+    }
+    if (/captcha|human verification|additional verification|challenge required/i.test(msg)) {
+      return codedError('Steam 要求额外的人机验证，请先在 Steam 官方客户端或网页完成验证后再试。', 'STEAM_LOGIN_CHALLENGE_REQUIRED', 401);
+    }
     if (guardRequired(msg)) return makeGuardRequiredError();
-    if (isDepotAuthFailureMessage(msg)) return makeLoginFailedError('Steam 登录失败，请检查账号、密码或 Steam Guard 验证码。');
+    if (/invalidpassword|invalid password|incorrect password/i.test(msg)) {
+      return makeLoginFailedError('Steam 拒绝了账号或密码；若凭据无误，请检查 Steam 是否要求额外验证或暂时限制了登录。');
+    }
+    if (isDepotAuthFailureMessage(msg)) return makeLoginFailedError('Steam 登录认证未完成，请检查 Steam Guard、手机确认或账号状态后重试。');
     return error instanceof Error ? error : new Error(msg);
   }
 

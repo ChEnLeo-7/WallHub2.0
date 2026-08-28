@@ -9,6 +9,9 @@ function createDepotStreamCacheMaintenance(options) {
     cleanupHighWatermark,
     cleanupTarget,
     cleanupDebounceMs,
+    extentBytes,
+    headBytes,
+    tailBytes,
     workers,
     rangePromises,
     getCacheDir,
@@ -19,8 +22,13 @@ function createDepotStreamCacheMaintenance(options) {
     ensureDir,
     stopAllWorkers,
     cancelRangeTask,
+    removeCacheFile,
+    clearCacheIndexes,
+    logger = console,
   } = options;
   const activeTempFiles = new Set();
+  const activeCacheFiles = new Map();
+  const cacheWriteReservations = new Map();
   const tempCleanupRetries = new Map();
   const tmpStaleMs = Math.max(
     60 * 1000,
@@ -29,6 +37,63 @@ function createDepotStreamCacheMaintenance(options) {
   let cleanupTimer = null;
   let cleanupRunning = false;
   let estimatedBytes = -1;
+  let reservedBytes = 0;
+  let cacheEstimatePromise = null;
+
+  async function initializeCacheEstimate() {
+    if (estimatedBytes >= 0) return estimatedBytes;
+    if (cacheEstimatePromise) return cacheEstimatePromise;
+    const walk = async (dir) => {
+      let entries = [];
+      try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return 0; }
+      let bytes = 0;
+      for (const entry of entries) {
+        const filePath = path.join(dir, entry.name);
+        try {
+          if (entry.isDirectory()) bytes += await walk(filePath);
+          else if (entry.isFile()) bytes += (await fs.promises.stat(filePath)).size;
+        } catch {}
+      }
+      return bytes;
+    };
+    cacheEstimatePromise = walk(cacheDir).then(bytes => {
+      let activeTempBytes = 0;
+      for (const tempPath of activeTempFiles) {
+        try { activeTempBytes += fs.statSync(tempPath).size; } catch {}
+      }
+      if (estimatedBytes < 0) estimatedBytes = Math.max(0, bytes - activeTempBytes);
+      return estimatedBytes;
+    }).finally(() => {
+      cacheEstimatePromise = null;
+    });
+    return cacheEstimatePromise;
+  }
+
+  void initializeCacheEstimate();
+
+  function pinCacheFile(filePath) {
+    const resolved = path.resolve(filePath);
+    activeCacheFiles.set(resolved, (activeCacheFiles.get(resolved) || 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const readers = (activeCacheFiles.get(resolved) || 1) - 1;
+      if (readers > 0) activeCacheFiles.set(resolved, readers);
+      else activeCacheFiles.delete(resolved);
+      if (estimatedBytes + reservedBytes > getCacheMaxBytes()) scheduleCacheCleanup('cache-reader-released', 0);
+    };
+  }
+
+  function pinCacheFiles(files) {
+    const releases = Array.from(new Set(files || []), pinCacheFile);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      for (const release of releases) release();
+    };
+  }
 
   function forgetTempCleanup(tempPath) {
     const resolved = path.resolve(tempPath);
@@ -100,29 +165,57 @@ function createDepotStreamCacheMaintenance(options) {
     }
   }
 
-  function activeCacheDirs() {
-    const dirs = new Set();
-    for (const worker of workers.values()) {
-      if (!worker || worker.closed || !worker.info) continue;
-      try {
-        dirs.add(path.resolve(getCacheDir(worker.info)));
-      } catch {}
-    }
+  function activePlaybackWindows() {
+    const windows = new Map();
     for (const entry of getVideoStreams()) {
       if (!entry || entry.expiresAt <= Date.now()) continue;
       try {
-        dirs.add(path.resolve(getCacheDir(entry)));
+        const dir = path.resolve(getCacheDir(entry));
+        const total = Math.max(0, Number(entry.size || 0));
+        const feedback = entry.playbackFeedback || {};
+        const average = feedback.duration > 0 ? total / feedback.duration : 0;
+        const anchor = entry.depotPlaybackByteAnchor;
+        const cursor = Math.max(0, Math.min(total,
+          anchor && Number.isFinite(anchor.byte)
+            ? anchor.byte
+            : Number(feedback.currentTime || 0) * average));
+        const adaptiveTarget = Math.max(0, Number(entry.depotAdaptivePolicy && entry.depotAdaptivePolicy.targetBytes || 0));
+        const forwardBytes = Math.max(Number(extentBytes || 0) * 2, adaptiveTarget);
+        windows.set(dir, {
+          cursor,
+          total,
+          full: !!(entry.depotFullCacheTask && ['caching', 'complete'].includes(entry.depotFullCacheTask.status)),
+          ranges: [
+            [0, Math.min(total - 1, Math.max(0, Number(headBytes || extentBytes || 0)) - 1)],
+            [Math.max(0, total - Math.max(0, Number(tailBytes || extentBytes || 0))), Math.max(0, total - 1)],
+            [Math.max(0, cursor - Math.max(0, Number(extentBytes || 0)) * 2), Math.min(total - 1, cursor + forwardBytes - 1)],
+          ],
+        });
       } catch {}
     }
-    return dirs;
+    return windows;
   }
 
-  function cacheFileProtectedByActiveVideo(filePath, activeDirs) {
+  function parseCacheExtent(filePath) {
+    const match = /^(\d+)-(\d+)\.bin$/.exec(path.basename(filePath));
+    if (!match) return null;
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    return Number.isFinite(start) && Number.isFinite(end) && end >= start ? { start, end } : null;
+  }
+
+  function cacheFileProtection(filePath, windows) {
     const resolved = path.resolve(filePath);
-    for (const dir of activeDirs) {
-      if (resolved === dir || resolved.startsWith(dir + path.sep)) return true;
-    }
-    return false;
+    if (activeCacheFiles.has(resolved)) return { protected: true, active: true, distance: 0 };
+    const window = windows.get(path.dirname(resolved));
+    const extent = parseCacheExtent(resolved);
+    if (!window || !extent) return { protected: false, active: false, distance: Number.MAX_SAFE_INTEGER };
+    if (window.full) return { protected: true, active: true, distance: 0 };
+    const protectedRange = window.ranges.some(([start, end]) => extent.end >= start && extent.start <= end);
+    const distance = extent.end < window.cursor
+      ? window.cursor - extent.end
+      : extent.start > window.cursor ? extent.start - window.cursor : 0;
+    return { protected: protectedRange, active: true, distance };
   }
 
   function cleanupEmptyCacheDirs(root = cacheDir) {
@@ -182,6 +275,8 @@ function createDepotStreamCacheMaintenance(options) {
     try {
       walk(cacheDir);
       let remainingTempBytes = tempFiles.reduce((sum, file) => sum + file.size, 0);
+      let accountedTempBytes = tempFiles.reduce((sum, file) =>
+        sum + (activeTempFiles.has(file.path) ? 0 : file.size), 0);
       for (const tempFile of tempFiles) {
         if (!tempFile.stale) continue;
         if (activeTempFiles.has(tempFile.path)) continue;
@@ -189,42 +284,51 @@ function createDepotStreamCacheMaintenance(options) {
           removedTempFiles++;
           removedTempBytes += tempFile.size;
           remainingTempBytes -= tempFile.size;
+          accountedTempBytes -= tempFile.size;
         } else {
           scheduleTempCleanup(tempFile.path);
         }
       }
       let total = files.reduce((sum, file) => sum + file.size, remainingTempBytes);
+      let accountedTotal = files.reduce((sum, file) => sum + file.size, accountedTempBytes);
       const maxBytes = getCacheMaxBytes();
       const highWatermarkBytes = Math.floor(maxBytes * (cleanupOptions.highWatermark || cleanupHighWatermark));
-      if (!cleanupOptions.force && total <= highWatermarkBytes) {
+      if (!cleanupOptions.force && accountedTotal <= highWatermarkBytes) {
+        estimatedBytes = accountedTotal;
         return { skipped: true, bytes: total, maxBytes, removedTempFiles, removedTempBytes };
       }
-      const targetRatio = cleanupOptions.targetWatermark || (total > maxBytes ? 0.75 : cleanupTarget);
-      const targetBytes = Math.max(0, Math.floor(maxBytes * targetRatio));
-      const activeDirs = activeCacheDirs();
+      const targetRatio = cleanupOptions.targetWatermark || (accountedTotal > maxBytes ? 0.75 : cleanupTarget);
+      const targetBytes = Number.isFinite(cleanupOptions.targetBytes)
+        ? Math.max(0, Math.floor(cleanupOptions.targetBytes))
+        : Math.max(0, Math.floor(maxBytes * targetRatio));
+      const playbackWindows = activePlaybackWindows();
       files.sort((a, b) => {
-        const firstProtected = cacheFileProtectedByActiveVideo(a.path, activeDirs) ? 1 : 0;
-        const secondProtected = cacheFileProtectedByActiveVideo(b.path, activeDirs) ? 1 : 0;
-        if (firstProtected !== secondProtected) return firstProtected - secondProtected;
+        const first = cacheFileProtection(a.path, playbackWindows);
+        const second = cacheFileProtection(b.path, playbackWindows);
+        if (first.protected !== second.protected) return first.protected ? 1 : -1;
+        if (first.active !== second.active) return first.active ? -1 : 1;
+        if (first.active && first.distance !== second.distance) return second.distance - first.distance;
         return a.mtimeMs - b.mtimeMs;
       });
       for (const file of files) {
-        if (total <= targetBytes) break;
-        if (!cleanupOptions.force && cacheFileProtectedByActiveVideo(file.path, activeDirs) && total <= maxBytes) continue;
+        if (accountedTotal <= targetBytes) break;
+        if (cacheFileProtection(file.path, playbackWindows).protected) continue;
         try {
           fs.rmSync(file.path, { force: true });
+          if (removeCacheFile) removeCacheFile(file.path);
           total -= file.size;
+          accountedTotal -= file.size;
           removedFiles++;
           removedBytes += file.size;
         } catch {}
       }
       cleanupEmptyCacheDirs();
-      estimatedBytes = total;
+      estimatedBytes = accountedTotal;
       if (removedFiles > 0 || removedTempFiles > 0) {
         const tempSummary = removedTempFiles > 0
           ? `, stale temp=${removedTempFiles} (${fmtBytes(removedTempBytes) || `${removedTempBytes} B`})`
           : '';
-        console.log(`[Depot Stream] cache cleanup removed ${removedFiles} cache file(s), ${fmtBytes(removedBytes) || `${removedBytes} B`}${tempSummary}, remaining=${fmtBytes(total) || `${total} B`}`);
+        logger.log(`[Depot Stream] cache cleanup removed ${removedFiles} cache file(s), ${fmtBytes(removedBytes) || `${removedBytes} B`}${tempSummary}, remaining=${fmtBytes(total) || `${total} B`}`);
       }
       return { removedFiles, removedBytes, removedTempFiles, removedTempBytes, bytes: total, maxBytes };
     } finally {
@@ -232,19 +336,18 @@ function createDepotStreamCacheMaintenance(options) {
     }
   }
 
-  function scheduleCacheCleanup(reason = 'scheduled') {
+  function scheduleCacheCleanup(reason = 'scheduled', delayMs = cleanupDebounceMs) {
     if (cleanupTimer) return;
     cleanupTimer = setTimeout(() => {
       cleanupTimer = null;
       try { cleanupCache({ reason }); } catch (err) {
-        console.warn(`[Depot Stream] cache cleanup failed: ${err.message}`);
+        logger.warn(`[Depot Stream] cache cleanup failed: ${err.message}`);
       }
-    }, cleanupDebounceMs);
+    }, Math.max(0, delayMs));
     cleanupTimer.unref?.();
   }
 
   function maybeScheduleCacheCleanupAfterWrite(addedBytes = 0) {
-    if (cleanupTimer || cleanupRunning) return;
     const maxBytes = getCacheMaxBytes();
     if (estimatedBytes < 0) {
       // Initialize the recursive size estimate off the playback request path.
@@ -253,9 +356,66 @@ function createDepotStreamCacheMaintenance(options) {
       return;
     }
     estimatedBytes += Math.max(0, Number(addedBytes || 0));
+    if (cleanupTimer || cleanupRunning) return;
     if (estimatedBytes >= Math.floor(maxBytes * cleanupHighWatermark)) {
       scheduleCacheCleanup('high-watermark');
     }
+  }
+
+  function reserveCacheWrite(expectedBytes, tempPath, allowCleanup = true) {
+    const bytes = Math.max(0, Number(expectedBytes || 0));
+    if (bytes <= 0 || bytes > getCacheMaxBytes()) return null;
+    if (estimatedBytes < 0) cleanupCache();
+    const maxBytes = getCacheMaxBytes();
+    if (allowCleanup && estimatedBytes + reservedBytes + bytes > maxBytes) {
+      cleanupCache({
+        force: true,
+        targetBytes: maxBytes - reservedBytes - bytes,
+        reason: 'write-reservation',
+      });
+    }
+    if (estimatedBytes + reservedBytes + bytes > maxBytes) return null;
+    const reservation = { bytes, tempPath: path.resolve(tempPath) };
+    cacheWriteReservations.set(reservation, reservation);
+    reservedBytes += bytes;
+    return reservation;
+  }
+
+  async function reserveCacheWriteAsync(expectedBytes, tempPath) {
+    await initializeCacheEstimate();
+    return reserveCacheWrite(expectedBytes, tempPath);
+  }
+
+  async function waitForCacheWrite(expectedBytes, tempPath, signal, timeoutMs = 3000) {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    let allowCleanup = true;
+    while (true) {
+      if (signal && signal.aborted) return null;
+      await initializeCacheEstimate();
+      const reservation = reserveCacheWrite(expectedBytes, tempPath, allowCleanup);
+      allowCleanup = false;
+      if (reservation || Date.now() >= deadline) return reservation;
+      await new Promise(resolve => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (signal) signal.removeEventListener('abort', finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, 100);
+        timer.unref?.();
+        if (signal) signal.addEventListener('abort', finish, { once: true });
+      });
+    }
+  }
+
+  function releaseCacheWrite(reservation, committedBytes = 0) {
+    if (!reservation || !cacheWriteReservations.delete(reservation)) return false;
+    reservedBytes = Math.max(0, reservedBytes - reservation.bytes);
+    if (committedBytes > 0) maybeScheduleCacheCleanupAfterWrite(committedBytes);
+    return true;
   }
 
   function getCacheStats() {
@@ -276,7 +436,11 @@ function createDepotStreamCacheMaintenance(options) {
       }
     };
     walk(cacheDir);
-    estimatedBytes = bytes;
+    let activeTempBytes = 0;
+    for (const tempPath of activeTempFiles) {
+      try { activeTempBytes += fs.statSync(tempPath).size; } catch {}
+    }
+    estimatedBytes = Math.max(0, bytes - activeTempBytes);
     return { files, bytes };
   }
 
@@ -297,24 +461,39 @@ function createDepotStreamCacheMaintenance(options) {
     try {
       fs.rmSync(cacheDir, { recursive: true, force: true });
       ensureDir(cacheDir);
+      if (clearCacheIndexes) clearCacheIndexes();
       estimatedBytes = 0;
+      cacheWriteReservations.clear();
+      reservedBytes = 0;
     } catch (err) {
       // Some Android/proot/overlay filesystems report ENOTEMPTY after clearing all files.
       try {
         cleanupEmptyCacheDirs();
         if (!hasFilesRecursive(cacheDir)) {
           ensureDir(cacheDir);
+          if (clearCacheIndexes) clearCacheIndexes();
           estimatedBytes = 0;
-          return Object.assign({ success: true, warning: err.message }, before, { files: 0, bytes: 0, cacheDir });
+          return Object.assign({ success: true, warning: err.message }, before, {
+            files: 0,
+            bytes: 0,
+            removedBytes: before.bytes,
+            remainingBytes: 0,
+            cacheDir,
+          });
         }
       } catch {}
       throw new Error(`\u6e05\u7406\u5728\u7ebf\u64ad\u653e\u7f13\u5b58\u5931\u8d25: ${err.message}`);
     }
-    return Object.assign({ success: true }, before, { cacheDir });
+    return Object.assign({ success: true }, before, {
+      removedBytes: before.bytes,
+      remainingBytes: 0,
+      cacheDir,
+    });
   }
 
   return {
     activeTempFiles,
+    activeCacheFiles,
     tempCleanupRetries,
     tmpStaleMs,
     scheduleTempCleanup,
@@ -322,9 +501,16 @@ function createDepotStreamCacheMaintenance(options) {
     cleanupCache,
     scheduleCacheCleanup,
     maybeScheduleCacheCleanupAfterWrite,
+    reserveCacheWrite,
+    reserveCacheWriteAsync,
+    waitForCacheWrite,
+    releaseCacheWrite,
+    pinCacheFile,
+    pinCacheFiles,
     getCacheStats,
     clearCacheNow,
     getEstimatedBytes: () => estimatedBytes,
+    getReservedBytes: () => reservedBytes,
   };
 }
 

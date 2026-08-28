@@ -1,12 +1,11 @@
 import { motion } from 'motion/react';
-import { Database, Download, FolderDown, Gauge, Image as ImageIcon, Route, Trash2 } from 'lucide-react';
+import { Download, FolderDown, Gauge, Image as ImageIcon, Route } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import {
   normalizeConcurrentDownloads,
-  normalizeDepotStreamCacheMaxMb,
   normalizeSteamKitMaxDownloads,
 } from '@/lib/normalizers';
 import type { AppText } from '@/lib/text';
@@ -17,11 +16,6 @@ type DownloadSettingsPanelProps = SettingsStateProps & {
   text: AppText;
   mpkgCompactAvailable: boolean;
   mpkgCompactUnavailableReason: string;
-  depotStreamCacheSelectValue: string;
-  depotStreamCacheCustomInput: string;
-  setDepotStreamCacheCustomMode: (enabled: boolean) => void;
-  setDepotStreamCacheCustomInput: (value: string) => void;
-  onClearDepotStreamCache: () => void;
 };
 
 export function DownloadSettingsPanel({
@@ -30,12 +24,7 @@ export function DownloadSettingsPanel({
   setSettings,
   mpkgCompactAvailable,
   mpkgCompactUnavailableReason,
-  depotStreamCacheSelectValue,
-  depotStreamCacheCustomInput,
-  setDepotStreamCacheCustomMode,
-  setDepotStreamCacheCustomInput,
   onSave,
-  onClearDepotStreamCache,
 }: DownloadSettingsPanelProps) {
   return (
     <motion.div key="settings-download" layout className="space-y-6 p-5" {...panelLayoutMotion}>
@@ -73,16 +62,6 @@ export function DownloadSettingsPanel({
         <h4 className="flex flex-wrap items-center justify-between gap-2 text-sm font-semibold"><span className="inline-flex items-center gap-2"><Download className="h-4 w-4" />{text.steamKitMaxDownloads}</span><Badge className="border border-border bg-background px-3 py-1 text-foreground shadow-sm" variant="outline">{text.effectiveValue} {settings.effectiveSteamKitMaxDownloads || settings.steamKitMaxDownloads || 'Auto'}</Badge></h4>
         <p className="text-sm text-muted-foreground">{text.steamKitMaxDownloadsDesc}</p>
         <Select value={String(settings.steamKitMaxDownloads || 0)} onChange={(value) => { const next = normalizeSteamKitMaxDownloads(value); setSettings((current) => ({ ...current, steamKitMaxDownloads: next })); onSave({ steamKitMaxDownloads: next }); }} options={[{ value: '0', label: `Auto（${text.defaultMark}）` }, { value: '8', label: '8' }, { value: '12', label: '12' }, { value: '16', label: '16' }, { value: '24', label: '24' }, { value: '32', label: '32' }]} />
-      </section>
-
-      <section className="space-y-3 rounded-xl border border-border bg-card p-4">
-        <h4 className="flex flex-wrap items-center justify-between gap-2 text-sm font-semibold"><span className="inline-flex items-center gap-2"><Database className="h-4 w-4" />{text.depotStreamCacheMax}</span><Badge className="border border-border bg-background px-3 py-1 text-foreground shadow-sm" variant="outline">{text.current} {settings.depotStreamCacheMaxMb} MB</Badge></h4>
-        <p className="text-sm text-muted-foreground">{text.depotStreamCacheMaxDesc}</p>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Select className="min-w-0 flex-1" value={depotStreamCacheSelectValue} onChange={(value) => { if (value === 'custom') { setDepotStreamCacheCustomMode(true); setDepotStreamCacheCustomInput(String(settings.depotStreamCacheMaxMb || 512)); return; } const next = normalizeDepotStreamCacheMaxMb(value); setDepotStreamCacheCustomMode(false); setSettings((current) => ({ ...current, depotStreamCacheMaxMb: next })); onSave({ depotStreamCacheMaxMb: next }); }} options={[{ value: '512', label: `512 MB（${text.defaultMark}）` }, { value: '1024', label: '1 GB' }, { value: '2048', label: '2 GB' }, { value: '3072', label: '3 GB' }, { value: '4096', label: '4 GB' }, { value: '5120', label: '5 GB' }, { value: '6144', label: '6 GB' }, { value: '7168', label: '7 GB' }, { value: '8192', label: '8 GB' }, { value: 'custom', label: text.depotStreamCacheCustom }]} />
-          {depotStreamCacheSelectValue === 'custom' ? <div className="flex min-w-0 flex-1 items-center gap-2"><Input className="min-w-0 flex-1" inputMode="numeric" pattern="[0-9]*" value={depotStreamCacheCustomInput} onChange={(event) => { const raw = event.target.value.replace(/[^\d]/g, ''); setDepotStreamCacheCustomInput(raw); const next = normalizeDepotStreamCacheMaxMb(raw); setSettings((current) => ({ ...current, depotStreamCacheMaxMb: next })); onSave({ depotStreamCacheMaxMb: next }); }} placeholder={text.depotStreamCacheCustomPlaceholder} /><span className="shrink-0 text-sm font-medium text-muted-foreground">MB</span></div> : null}
-          <Button className="w-full sm:w-36" variant="outline" onClick={onClearDepotStreamCache}><Trash2 className="h-4 w-4" />{text.clearDepotStreamCache}</Button>
-        </div>
       </section>
     </motion.div>
   );

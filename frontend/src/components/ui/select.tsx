@@ -129,7 +129,7 @@ export function Select({
                   className={cn(
                     'fixed z-[220] max-h-64 overflow-y-auto border p-1 scrollbar-thin',
                     variant === 'media'
-                      ? 'wallhub-media-select-menu rounded-md border-white/20 bg-black/90 text-xs text-white shadow-[0_10px_28px_rgba(0,0,0,0.55)] backdrop-blur-md'
+                      ? 'wallhub-media-select-menu rounded-md border-white/20 bg-black/55 text-xs text-white shadow-[0_10px_28px_rgba(0,0,0,0.45)] backdrop-blur-xl'
                       : 'rounded-lg border-border bg-popover text-sm text-foreground shadow-panel',
                   )}
                   style={{ left: menuRect.left, top: menuRect.top, width: menuRect.width }}

@@ -139,7 +139,7 @@ export function useSettingsControls({
   const clearDepotCache = React.useCallback(async () => {
     try {
       const result = await clearDepotStreamCache();
-      const bytes = Number(result.bytes || 0);
+      const bytes = Number(result.removedBytes ?? result.bytes ?? 0);
       const suffix = bytes > 0 ? ` · ${formatBytesText(bytes, text)}` : '';
       toast(`${text.depotStreamCacheCleared}${suffix}`, 'ok');
       await refreshRuntime();

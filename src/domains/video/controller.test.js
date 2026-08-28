@@ -34,6 +34,13 @@ function createHarness(getWorker, overrides = {}) {
     workers: new Map(),
     getWorker,
     scheduleInitialPrefetch() {},
+    applyPlaybackFeedback(entry, payload) {
+      entry.playbackFeedback = payload;
+      return { accepted: true };
+    },
+    startFullCache: entry => ({ status: 'caching', cachedBytes: 0, totalBytes: entry.size, progress: 0, error: '' }),
+    getFullCacheStatus: entry => ({ status: 'complete', cachedBytes: entry.size, totalBytes: entry.size, progress: 1, error: '' }),
+    cancelFullCache: entry => ({ status: 'cancelled', cachedBytes: 0, totalBytes: entry.size, progress: 0, error: '' }),
     releaseEntry(entry, reason) {
       releaseCalls.push({ entry, reason });
       return { stopped: true };
@@ -119,9 +126,14 @@ test('controller keeps its public API after responsibilities are extracted', () 
     'proxyRemoteVideoStream',
     'handleDepotVideoStream',
     'handleDepotVideoRelease',
+    'handleDepotVideoFeedback',
+    'handleDepotVideoFullCacheStart',
+    'handleDepotVideoFullCacheStatus',
+    'handleDepotVideoFullCacheCancel',
     'handleVideoPlay',
     'handleVideoStream',
     'getDepotWorkerCount',
+    'getDepotStreamDiagnostics',
   ]);
 });
 
@@ -177,6 +189,84 @@ test('file URL video source is prepared as a remote stream', async () => {
     mode: 'steamkit',
   }]);
   assert.equal(getServiceDeps(), null);
+});
+
+test('depot play reports the CDN selected by its own worker', async () => {
+  const { controller } = createHarness(async () => ({
+    key: 'worker-with-cdn',
+    cdnHost: 'worker-cdn.example',
+    info: { size: 1024, fileName: 'video.mp4' },
+  }), {
+    steamCdnStatusSnapshot: () => ({ currentHost: 'unrelated-global.example' }),
+  });
+
+  const { res } = await play(controller, 100);
+
+  assert.equal(res.body.source, 'depot_stream');
+  assert.equal(res.body.cdnHost, 'worker-cdn.example');
+});
+
+test('depot playback feedback stays scoped to its temporary token', async () => {
+  const harness = createHarness(async () => ({
+    key: 'feedback-worker',
+    info: { size: 1024, fileName: 'video.mp4' },
+  }));
+  const playback = await play(harness.controller, 100);
+  const res = response();
+
+  await harness.controller.handleDepotVideoFeedback(request(), res, playback.token, {
+    state: 'playing', sequence: 1, currentTime: 2, duration: 10, bufferedEnd: 5, playbackRate: 1,
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { success: true, accepted: true });
+  assert.equal(harness.getServiceDeps().getDepotVideoStream(playback.token).playbackFeedback.sequence, 1);
+
+  const expired = response();
+  await harness.controller.handleDepotVideoFeedback(request(), expired, 'missing-token', { state: 'paused', sequence: 2 });
+  assert.equal(expired.statusCode, 404);
+});
+
+test('full cache controls stay scoped to the depot token', async () => {
+  const harness = createHarness(async () => ({
+    key: 'cache-worker',
+    info: { size: 1024, fileName: 'video.mp4' },
+  }));
+  const playback = await play(harness.controller, 100);
+  const started = response();
+  const status = response();
+  const cancelled = response();
+
+  await harness.controller.handleDepotVideoFullCacheStart(request(), started, playback.token);
+  await harness.controller.handleDepotVideoFullCacheStatus(request(), status, playback.token);
+  await harness.controller.handleDepotVideoFullCacheCancel(request(), cancelled, playback.token);
+
+  assert.equal(started.statusCode, 202);
+  assert.equal(started.body.status, 'caching');
+  assert.equal(status.body.status, 'complete');
+  assert.equal(cancelled.body.status, 'cancelled');
+  const expired = response();
+  await harness.controller.handleDepotVideoFullCacheStatus(request(), expired, 'missing-token');
+  assert.equal(expired.statusCode, 404);
+});
+
+test('full cache capacity errors preserve their HTTP status and code', async () => {
+  const harness = createHarness(async () => ({
+    key: 'cache-limit-worker', info: { size: 2048, fileName: 'video.mp4' },
+  }));
+  const playback = await play(harness.controller, 100);
+  harness.getServiceDeps();
+  const service = harness.controller.getDepotStreamService();
+  service.startFullCache = () => {
+    const error = new Error('Complete video exceeds the streaming cache limit');
+    error.code = 'DEPOT_STREAM_FULL_CACHE_LIMIT';
+    error.statusCode = 409;
+    throw error;
+  };
+  await assert.rejects(
+    harness.controller.handleDepotVideoFullCacheStart(request(), response(), playback.token),
+    error => error.code === 'DEPOT_STREAM_FULL_CACHE_LIMIT' && error.statusCode === 409
+  );
 });
 
 test('shared depot worker stops only after its final token is removed', async () => {

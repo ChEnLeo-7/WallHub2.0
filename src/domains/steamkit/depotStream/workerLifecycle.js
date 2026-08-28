@@ -22,12 +22,14 @@ function createDepotStreamWorkerLifecycle(options) {
     getCdnRouteStrategy,
     getContentCellId,
     getMaxDownloads,
+    chunkBufferBytes,
     describeCdnRouteStrategy,
     updateCdnStatusFromText,
     workerHasWork,
     rejectWorkerPending,
     handleWorkerMessage,
     retryWorkerTempCleanups,
+    logger = console,
   } = options;
 
   function workerProcessExited(cp) {
@@ -99,7 +101,14 @@ function createDepotStreamWorkerLifecycle(options) {
       fileName: String(payload.fileName || ''),
       size,
       chunks: parseInt(String(payload.chunks || '0'), 10) || 0,
+      cdnHost: String(payload.cdnHost || '').trim(),
     };
+  }
+
+  function updateWorkerCdnStatus(worker, text) {
+    const cdn = updateCdnStatusFromText(text, { source: 'stream', mode: 'steamkit' });
+    if (worker && cdn && cdn.host) worker.cdnHost = cdn.host;
+    return cdn;
   }
 
   function refreshWorkerIdle(worker) {
@@ -113,7 +122,7 @@ function createDepotStreamWorkerLifecycle(options) {
         refreshWorkerIdle(worker);
         return;
       }
-      console.log(`[Depot Stream] worker idle, stopping ${worker.publishedFileId}`);
+      logger.log(`[Depot Stream] worker idle, stopping ${worker.publishedFileId}`);
       stopWorker(worker, 'idle');
     }, workerIdleMs);
     worker.idleTimer.unref?.();
@@ -183,7 +192,9 @@ function createDepotStreamWorkerLifecycle(options) {
 
     const { command } = depotCommandFor(executable);
     const built = buildArgs(executable, publishedFileId, 431960, { worker: true, depotLogin });
-    const childEnv = buildSteamContentEnv(Object.assign({}, process.env, buildDepotDotnetEnv()));
+    const childEnv = buildSteamContentEnv(Object.assign({}, process.env, buildDepotDotnetEnv(), {
+      WALLHUB_DEPOT_STREAM_CHUNK_BUFFER_BYTES: String(chunkBufferBytes),
+    }));
     const cp = spawn(command, built.args, {
       cwd: configDir,
       env: childEnv,
@@ -211,6 +222,7 @@ function createDepotStreamWorkerLifecycle(options) {
       ready: false,
       closed: false,
       info: null,
+      cdnHost: '',
       stderr: '',
       stdoutBuffer: '',
       readyResolve: null,
@@ -227,8 +239,8 @@ function createDepotStreamWorkerLifecycle(options) {
     workers.set(key, worker);
     attachWorkerStdinErrorHandler(worker);
     attachWorkerLifecycleCleanup(worker);
-    console.log(`[Depot Stream] starting worker: ${executable}`);
-    console.log(`[Depot Stream] Steam CDN route: ${describeCdnRouteStrategy()} · stream max ${getMaxDownloads()}`);
+    logger.log(`[Depot Stream] starting worker: ${executable}`);
+    logger.log(`[Depot Stream] Steam CDN route: ${describeCdnRouteStrategy()} · stream max ${getMaxDownloads()}`);
 
     if (built.inputLines.length && cp.stdin) {
       built.inputLines.forEach((line, index) => {
@@ -259,18 +271,19 @@ function createDepotStreamWorkerLifecycle(options) {
         if (!line) continue;
         let message = null;
         try { message = JSON.parse(line); } catch {
-          updateCdnStatusFromText(line, { source: 'stream', mode: 'steamkit' });
-          console.warn(`[Depot Stream] worker stdout(non-json): ${line.slice(0, 300)}`);
+          updateWorkerCdnStatus(worker, line);
+          logger.log(`[Depot Stream] worker stdout(non-json): ${line.slice(0, 300)}`);
           continue;
         }
         if (message.type === 'ready') {
           try {
             worker.info = parseInfoPayload(message, publishedFileId);
+            if (worker.info.cdnHost) worker.cdnHost = worker.info.cdnHost;
             worker.ready = true;
             clearTimeout(readyTimer);
             refreshWorkerIdle(worker);
             worker.readyResolve(worker);
-            console.log(`[Depot Stream] worker ready ${publishedFileId} file="${worker.info.fileName}" size=${worker.info.size} chunks=${worker.info.chunks}`);
+            logger.log(`[Depot Stream] worker ready ${publishedFileId} file="${worker.info.fileName}" size=${worker.info.size} chunks=${worker.info.chunks}`);
           } catch (err) {
             clearTimeout(readyTimer);
             stopWorker(worker, 'bad-ready');
@@ -289,8 +302,9 @@ function createDepotStreamWorkerLifecycle(options) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         if (/WALLHUB_|cdn|content server|got cdn auth token|cache\d|steamcontent/i.test(trimmed)) {
-          updateCdnStatusFromText(trimmed, { source: 'stream', mode: 'steamkit' });
-          console.log(`[Depot Stream worker] ${trimmed}`);
+          updateWorkerCdnStatus(worker, trimmed);
+          if (/^WALLHUB_/.test(trimmed)) logger.traceLog?.(`[Depot Stream worker] ${trimmed}`);
+          else logger.log(`[Depot Stream worker] ${trimmed}`);
         }
       }
     });
@@ -313,7 +327,7 @@ function createDepotStreamWorkerLifecycle(options) {
       const err = new Error((worker.stderr || `Depot stream worker exited: ${code}`).trim().slice(-1200));
       if (!worker.ready) worker.readyReject(err);
       rejectWorkerPending(worker, err);
-      console.warn(`[Depot Stream] worker closed ${publishedFileId}: exit=${code}`);
+      logger.warn(`[Depot Stream] worker closed ${publishedFileId}: exit=${code}`);
     });
 
     return worker.readyPromise;
@@ -338,6 +352,7 @@ function createDepotStreamWorkerLifecycle(options) {
     attachWorkerLifecycleCleanup,
     workerKey,
     parseInfoPayload,
+    updateWorkerCdnStatus,
     refreshWorkerIdle,
     attachWorkerStdinErrorHandler,
     stopWorker,

@@ -14,6 +14,7 @@ const VIDEO_PLAYBACK_RATE_SELECT_OPTIONS = VIDEO_PLAYBACK_RATE_OPTIONS.map((rate
 export function VideoControls({ controller }: { controller: VideoDialogController }) {
   const {
     beginVideoSeek,
+    bufferedRanges,
     cancelVideoSeek,
     clearControlsHideTimer,
     controlsFocusRef,
@@ -40,6 +41,7 @@ export function VideoControls({ controller }: { controller: VideoDialogControlle
     togglePlayback,
     volume,
   } = controller;
+  const playedPercent = duration > 0 ? Math.min(100, Math.max(0, displayedVideoTime / duration * 100)) : 0;
   return (
     <div
       ref={controlsRef}
@@ -71,21 +73,33 @@ export function VideoControls({ controller }: { controller: VideoDialogControlle
         });
       }}
     >
-      <input
-        className="block h-5 w-full cursor-pointer touch-none accent-white"
-        type="range"
-        min={0}
-        max={duration > 0 ? duration : 0}
-        step="0.01"
-        value={Math.min(displayedVideoTime, duration || 0)}
-        disabled={duration <= 0}
-        aria-label={text.videoSeek}
-        aria-valuetext={`${formatVideoTime(displayedVideoTime)} / ${formatVideoTime(duration)}`}
-        onPointerDown={beginVideoSeek}
-        onPointerUp={finishVideoSeek}
-        onPointerCancel={cancelVideoSeek}
-        onChange={(event) => previewVideoPosition(Number(event.target.value))}
-      />
+      <div className="relative h-5 w-full">
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/25">
+          {duration > 0 ? bufferedRanges.map((range, index) => (
+            <span
+              key={`${range.start}-${range.end}-${index}`}
+              className="absolute inset-y-0 bg-white/45"
+              style={{ left: `${range.start / duration * 100}%`, width: `${(range.end - range.start) / duration * 100}%` }}
+            />
+          )) : null}
+          <span className="absolute inset-y-0 left-0 bg-white" style={{ width: `${playedPercent}%` }} />
+        </div>
+        <input
+          className="wallhub-video-seek absolute inset-0 z-10 h-5 w-full cursor-pointer touch-none border-0 outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0"
+          type="range"
+          min={0}
+          max={duration > 0 ? duration : 0}
+          step="0.01"
+          value={Math.min(displayedVideoTime, duration || 0)}
+          disabled={duration <= 0}
+          aria-label={text.videoSeek}
+          aria-valuetext={`${formatVideoTime(displayedVideoTime)} / ${formatVideoTime(duration)}`}
+          onPointerDown={beginVideoSeek}
+          onPointerUp={finishVideoSeek}
+          onPointerCancel={cancelVideoSeek}
+          onChange={(event) => previewVideoPosition(Number(event.target.value))}
+        />
+      </div>
       <div className="mt-1 flex min-w-0 items-center gap-1 sm:gap-2">
         <button
           type="button"

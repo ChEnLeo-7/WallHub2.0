@@ -22,6 +22,7 @@ function createSteamSessionHandlers(options = {}) {
     effectiveDownloaderMode,
     getDownloaderMode,
     logger = console,
+    debugLogger = logger,
   } = options;
 
   async function handleSteamKitLogin(res, payload) {
@@ -35,6 +36,7 @@ function createSteamSessionHandlers(options = {}) {
       await verifyLogin(username, password, steamGuardCode);
     } catch (error) {
       const normalized = error instanceof Error ? error : new Error(String(error || 'Steam 登录失败'));
+      logger.warn(`[Steam Login] failed user=${username} code=${normalized.code || 'STEAM_LOGIN_FAILED'} error=${normalized.message}`);
       if (normalized.code === 'STEAM_GUARD_REQUIRED' && !steamGuardCode && !isRetry) {
         return jsonRes(res, 202, {
           error: normalized.message,
@@ -63,6 +65,7 @@ function createSteamSessionHandlers(options = {}) {
     settings.steamIsPersistent = true;
     settings.authBackend = 'steamkit';
     saveSettings();
+    logger.log(`[Steam Login] success user=${username} persistent=true backend=steamkit`);
 
     jsonRes(res, 200, {
       success: true,
@@ -83,7 +86,7 @@ function createSteamSessionHandlers(options = {}) {
     const steamGuardCode = String(payload.steamGuardCode || '').trim();
     const isRetry = payload.isRetry || false;
     if (!username || !password) return jsonRes(res, 400, { error: '用户名和密码不能为空' });
-    logger.log(`[Steam Login] Attempting SteamKit login for user: ${username}, SteamGuard: ${steamGuardCode ? 'Yes' : 'No'}, Retry: ${isRetry}`);
+    debugLogger.log(`[Steam Login] Attempting SteamKit login for user: ${username}, SteamGuard: ${steamGuardCode ? 'Yes' : 'No'}, Retry: ${isRetry}`);
     return handleSteamKitLogin(res, payload);
   }
 
@@ -95,7 +98,7 @@ function createSteamSessionHandlers(options = {}) {
     const password = String(payload.password || '');
     if (!username || !password) return jsonRes(res, 400, { error: '用户名和密码不能为空' });
     try {
-      logger.log(`[Steam Login] Starting tracked SteamKit login for user: ${username}`);
+      debugLogger.log(`[Steam Login] Starting tracked SteamKit login for user: ${username}`);
       return jsonRes(res, 200, startPasswordSession(payload));
     } catch (error) {
       const normalized = normalizeError(error);

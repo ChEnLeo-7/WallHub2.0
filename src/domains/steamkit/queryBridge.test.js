@@ -102,7 +102,80 @@ test('SteamKit query bridge starts one process for GetUserFiles', async () => {
     '-loginid', 'login-query-bridge:tester',
   ]);
   assert.equal(spawned[0].options.env.WALLHUB_TEST_PROXY, '1');
+  assert.equal(spawned[0].options.env.WALLHUB_DEPOT_STEAM3_PROTOCOL, 'websocket');
   bridge.shutdown('test complete');
+});
+
+test('SteamKit query bridge startup timeout includes captured diagnostics', async () => {
+  const child = createChild();
+  let timeoutCallback;
+  const bridge = createSteamKitQueryBridge({
+    ensureDepotDownloaderReady: async () => 'DepotDownloader.exe',
+    depotCommandFor: () => ({ command: 'DepotDownloader.exe', argsPrefix: [] }),
+    makeDepotLoginId: seed => `login-${seed}`,
+    spawnProcess: () => child,
+    scheduleStartupTimeout(callback) {
+      timeoutCallback = callback;
+      return { unref() {} };
+    },
+    logger: { log() {} },
+  });
+
+  const request = bridge.queryWorkshop({}, { username: 'tester' });
+  await waitFor(() => timeoutCallback);
+  child.stderr.write('Steam CM websocket connection failed');
+  await new Promise(resolve => setImmediate(resolve));
+  timeoutCallback();
+
+  await assert.rejects(request, /startup timed out: Steam CM websocket connection failed/);
+});
+
+test('SteamKit query bridge validates a pending remembered session before spawning', async () => {
+  const validation = deferred();
+  const child = createChild();
+  let spawnCount = 0;
+  let validatedUser = '';
+  const bridge = createSteamKitQueryBridge({
+    ensureDepotDownloaderReady: async () => 'DepotDownloader.exe',
+    depotCommandFor: () => ({ command: 'DepotDownloader.exe', argsPrefix: [] }),
+    validateRememberedSession(username) {
+      validatedUser = username;
+      return validation.promise.then(() => true);
+    },
+    makeDepotLoginId: seed => `login-${seed}`,
+    spawnProcess() {
+      spawnCount += 1;
+      return child;
+    },
+    logger: { log() {} },
+  });
+
+  const warm = bridge.warm('tester');
+  await waitFor(() => validatedUser === 'tester');
+  assert.equal(spawnCount, 0);
+  validation.resolve();
+  await waitFor(() => spawnCount === 1);
+  child.stdout.write(`${WALLHUB_STEAM_QUERY_BRIDGE_READY}\n`);
+  await warm;
+  bridge.shutdown('test complete');
+});
+
+test('SteamKit query bridge does not spawn when remembered-session validation fails', async () => {
+  let spawnCount = 0;
+  const bridge = createSteamKitQueryBridge({
+    ensureDepotDownloaderReady: async () => 'DepotDownloader.exe',
+    depotCommandFor: () => ({ command: 'DepotDownloader.exe', argsPrefix: [] }),
+    validateRememberedSession: async () => { throw new Error('remembered session expired'); },
+    makeDepotLoginId: seed => `login-${seed}`,
+    spawnProcess() {
+      spawnCount += 1;
+      return createChild();
+    },
+    logger: { log() {} },
+  });
+
+  await assert.rejects(bridge.warm('tester'), /remembered session expired/);
+  assert.equal(spawnCount, 0);
 });
 
 test('SteamKit query bridge sends a PublishedFile Workshop query through the same process', async () => {
@@ -119,14 +192,69 @@ test('SteamKit query bridge sends a PublishedFile Workshop query through the sam
     logger: { log() {} },
   });
 
-  const queryPromise = bridge.queryWorkshop({ operation: 'query-files', appid: 431960, search_text: 'video' }, { username: 'tester' });
+  const queryPromise = bridge.queryWorkshop({ operation: 'query-files', appid: 431960, search_text: '极客湾' }, { username: 'tester' });
   child.stdout.write(`${WALLHUB_STEAM_QUERY_BRIDGE_READY}\n`);
   await waitFor(() => inputLines.length === 1);
   const request = JSON.parse(inputLines[0]);
   assert.equal(request.operation, 'workshop-query');
-  assert.equal(request.query.search_text, 'video');
+  assert.equal(request.query.search_text, '极客湾');
+  assert.equal(request.query.wallhub_timeout_ms, 40000);
   child.stdout.write(`${WALLHUB_STEAM_QUERY_BRIDGE_MARKER}${JSON.stringify({ id: request.id, ok: true, response: { total: 0, ids: [] } })}\n`);
   assert.deepEqual(await queryPromise, { total: 0, ids: [] });
+  bridge.shutdown('test complete');
+});
+
+test('SteamKit query bridge classifies an active request timeout without requiring login', async () => {
+  const child = createChild();
+  let requestTimeoutCallback;
+  const bridge = createSteamKitQueryBridge({
+    ensureDepotDownloaderReady: async () => 'DepotDownloader.exe',
+    depotCommandFor: () => ({ command: 'DepotDownloader.exe', argsPrefix: [] }),
+    makeDepotLoginId: seed => `login-${seed}`,
+    spawnProcess: () => child,
+    scheduleRequestTimeout(callback) {
+      requestTimeoutCallback = callback;
+      return { unref() {} };
+    },
+    logger: { log() {} },
+  });
+
+  const request = bridge.queryWorkshop({ search_text: '极客湾' }, { username: 'tester' });
+  child.stdout.write(`${WALLHUB_STEAM_QUERY_BRIDGE_READY}\n`);
+  await waitFor(() => requestTimeoutCallback);
+  requestTimeoutCallback();
+
+  await assert.rejects(request, error => (
+    error.code === 'STEAM_CM_QUERY_TIMEOUT'
+    && error.statusCode === 504
+    && error.requiresSteamLogin === false
+  ));
+});
+
+test('SteamKit query bridge preserves structured query and login errors', async () => {
+  const inputLines = [];
+  const child = createChild();
+  child.stdin.on('data', chunk => inputLines.push(...String(chunk).split(/\r?\n/).filter(Boolean)));
+  const bridge = createSteamKitQueryBridge({
+    ensureDepotDownloaderReady: async () => 'DepotDownloader.exe',
+    depotCommandFor: () => ({ command: 'DepotDownloader.exe', argsPrefix: [] }),
+    makeDepotLoginId: seed => `login-${seed}`,
+    spawnProcess: () => child,
+    logger: { log() {} },
+  });
+
+  const timeoutRequest = bridge.queryWorkshop({}, { username: 'tester' });
+  child.stdout.write(`${WALLHUB_STEAM_QUERY_BRIDGE_READY}\n`);
+  await waitFor(() => inputLines.length === 1);
+  const timeoutBody = JSON.parse(inputLines[0]);
+  child.stdout.write(`${WALLHUB_STEAM_QUERY_BRIDGE_MARKER}${JSON.stringify({ id: timeoutBody.id, ok: false, code: 'STEAM_CM_QUERY_TIMEOUT', error: 'query timed out' })}\n`);
+  await assert.rejects(timeoutRequest, error => error.code === 'STEAM_CM_QUERY_TIMEOUT' && error.statusCode === 504 && error.requiresSteamLogin === false);
+
+  const loginRequest = bridge.queryWorkshop({}, { username: 'tester' });
+  await waitFor(() => inputLines.length === 2);
+  const loginBody = JSON.parse(inputLines[1]);
+  child.stdout.write(`${WALLHUB_STEAM_QUERY_BRIDGE_MARKER}${JSON.stringify({ id: loginBody.id, ok: false, code: 'STEAM_CM_LOGIN_REQUIRED', error: 'not logged on' })}\n`);
+  await assert.rejects(loginRequest, error => error.code === 'STEAM_CM_LOGIN_REQUIRED' && error.statusCode === 401 && error.requiresSteamLogin === true);
   bridge.shutdown('test complete');
 });
 

@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 
 function createOwnershipCheck(options) {
+  const debugLogger = options.debugLogger || options.logger;
   return async function checkAppOwnership(username, appId = 431960) {
     const user = String(username || '').trim();
     const targetAppId = Math.max(1, parseInt(appId, 10) || 431960);
@@ -29,7 +30,7 @@ function createOwnershipCheck(options) {
         '-loginid', options.makeDepotLoginId(`ownership:${user}:${targetAppId}`),
       ];
       const timeout = Math.max(30000, parseInt(process.env.WALLHUB_STEAMKIT_LOGIN_TIMEOUT || '120000', 10) || 120000);
-      options.logger.log(`[SteamKit Ownership] Checking app ${targetAppId} access for: ${user}`);
+      debugLogger.log(`[SteamKit Ownership] Checking app ${targetAppId} access for: ${user}`);
       await options.runProcess(command, args, timeout, {
         cwd: options.configDir,
         closeStdin: true,

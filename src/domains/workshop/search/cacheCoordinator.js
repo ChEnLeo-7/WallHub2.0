@@ -47,10 +47,10 @@ function createSearchCacheCoordinator(options = {}) {
 
   async function search(rawParams = {}, searchOptions = {}) {
     const allowNsfw = !!options.nsfwEnabled();
-    const params = sanitizeWorkshopQueryParams(rawParams || {}, allowNsfw);
     const configuredSource = ['community', 'webapi', 'cm'].includes(String(searchOptions.steamDataSource || '').trim().toLowerCase())
       ? String(searchOptions.steamDataSource).trim().toLowerCase()
       : 'community';
+    const params = sanitizeWorkshopQueryParams(rawParams || {}, allowNsfw, configuredSource);
     let cacheKey = queryCacheKey(params, allowNsfw, configuredSource);
     const authenticatedCommunityQuery = configuredSource === 'community' && !!String(searchOptions.steamCommunityCookie || '').trim();
     if (requiresSteamCommunitySession(params) || authenticatedCommunityQuery) {

@@ -10,12 +10,12 @@ function parseSingleHttpByteRange(rangeHeader, total) {
   let end = total - 1;
   if (!match[1]) {
     const suffixLength = parseInt(match[2], 10);
-    if (!Number.isFinite(suffixLength) || suffixLength <= 0) return { error: 'Range Not Satisfiable' };
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return { error: 'Range Not Satisfiable' };
     start = suffixLength >= total ? 0 : total - suffixLength;
   } else {
     start = parseInt(match[1], 10);
     end = match[2] ? parseInt(match[2], 10) : total - 1;
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= total) {
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= total) {
       return { error: 'Range Not Satisfiable' };
     }
     end = Math.min(end, total - 1);
@@ -39,46 +39,41 @@ function createDepotStreamRangeTools(options) {
 
   function normalizeRange(req, total) {
     const header = String(req.headers.range || '').trim();
-    const maxBytes = maxRangeBytes();
-    const firstBytes = firstRangeBytes(maxBytes);
     if (!header) {
       return {
         start: 0,
-        end: Math.min(total - 1, Math.min(firstBytes, maxBytes) - 1),
-        statusCode: 206,
+        end: total - 1,
+        statusCode: 200,
         rangeHeader: '',
       };
     }
     const parsed = parseSingleHttpByteRange(header, total);
     if (!parsed || parsed.error) return parsed;
-    let { start, end } = parsed;
-    const limit = start === 0 && /^bytes=\d+-$/i.test(header)
-      ? Math.min(firstBytes, maxBytes)
-      : maxBytes;
-    if (end - start + 1 > limit) {
-      if (/^bytes=-\d+$/i.test(header)) start = Math.max(0, end - limit + 1);
-      else end = Math.min(total - 1, start + limit - 1);
-    }
-    return { start, end, statusCode: 206, rangeHeader: header };
+    return { start: parsed.start, end: parsed.end, statusCode: 206, rangeHeader: header };
   }
 
-  function planDepotStreamBlocks(total, start, end, requestedBlockSize = configuredFirstRangeBytes) {
+  function planDepotStreamBlocks(total, start, end) {
     const safeTotal = parseInt(String(total || 0), 10);
     const safeStart = parseInt(String(start || 0), 10);
     const safeEnd = parseInt(String(end || 0), 10);
     const maxBytes = maxRangeBytes();
-    const blockSize = Math.max(1, Math.min(
-      maxBytes,
-      parseInt(String(requestedBlockSize || configuredFirstRangeBytes || maxBytes), 10) || maxBytes
-    ));
     if (!Number.isFinite(safeTotal) || safeTotal <= 0 || !Number.isFinite(safeStart) ||
         !Number.isFinite(safeEnd) || safeStart < 0 || safeStart > safeEnd || safeStart >= safeTotal) {
       return [];
     }
     const last = Math.min(safeTotal - 1, safeEnd);
+    const firstBytes = Math.min(safeTotal, firstRangeBytes(maxBytes));
     const blocks = [];
-    for (let blockStart = Math.floor(safeStart / blockSize) * blockSize; blockStart <= last; blockStart += blockSize) {
-      const blockEnd = Math.min(safeTotal - 1, blockStart + blockSize - 1);
+    let blockStart = safeStart < firstBytes
+      ? 0
+      : safeStart < maxBytes
+        ? firstBytes
+        : Math.floor(safeStart / maxBytes) * maxBytes;
+    while (blockStart <= last) {
+      const blockEnd = Math.min(
+        safeTotal - 1,
+        blockStart === 0 ? firstBytes - 1 : blockStart < maxBytes ? maxBytes - 1 : blockStart + maxBytes - 1
+      );
       blocks.push({
         start: blockStart,
         end: blockEnd,
@@ -86,6 +81,7 @@ function createDepotStreamRangeTools(options) {
         responseEnd: Math.min(last, blockEnd),
         index: blocks.length,
       });
+      blockStart = blockEnd + 1;
     }
     return blocks;
   }

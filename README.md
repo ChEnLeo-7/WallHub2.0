@@ -228,16 +228,9 @@ WallHub 基于 [SteamKit2](https://github.com/SteamRE/SteamKit)、[DepotDownload
 
 ## 📊 项目数据
 
-<p align="center">
-  <img src="https://github-readme-stats.vercel.app/api?username=ChEnLeo-7&amp;show_icons=true&amp;theme=tokyonight&amp;hide_border=true" width="49%" alt="ChEnLeo-7 的 GitHub 统计">
-  <img src="https://github-readme-stats.vercel.app/api/top-langs/?username=ChEnLeo-7&amp;layout=donut&amp;theme=tokyonight&amp;hide_border=true" width="49%" alt="ChEnLeo-7 的常用语言">
-</p>
+###  Star History
 
-<p align="center">
-  <a href="https://star-history.com/#ChEnLeo-7/WallHub2.0&amp;Timeline">
-    <img src="https://api.star-history.com/svg?repos=ChEnLeo-7/WallHub2.0&amp;type=Timeline" width="100%" alt="WallHub Star History 趋势图">
-  </a>
-</p>
+[![Star History Chart](https://api.star-history.com/chart?repos=ChEnLeo-7/WallHub2.0&type=timeline&legend=top-left&sealed_token=6-24iyddT5SMVQfdv3jmyUOoluied6GU4MVp3A9NOXc247X-J9y4LxhcZBKqk8spu5ReAYrqywp0qWQrSkU5797qWIlSBxQR7VXUn7LeijiC9tZdDV7SEg)](https://www.star-history.com/?repos=ChEnLeo-7%2FWallHub2.0&type=timeline&legend=top-left)
 
 ## ⚖️ 免责声明
 

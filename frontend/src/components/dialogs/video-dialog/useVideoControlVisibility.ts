@@ -2,7 +2,7 @@ import * as React from 'react';
 
 const COMPATIBILITY_CONTROLS_HIDE_MS = 2400;
 
-export function useVideoControlVisibility(compatibilityMode: boolean, isPlaying: boolean, isSeeking: boolean) {
+export function useVideoControlVisibility(isPlaying: boolean, isSeeking: boolean) {
   const [controlsVisible, setControlsVisible] = React.useState(true);
   const controlsHideTimerRef = React.useRef<number | null>(null);
   const controlsHoverRef = React.useRef(false);
@@ -17,17 +17,16 @@ export function useVideoControlVisibility(compatibilityMode: boolean, isPlaying:
   }, []);
   const scheduleControlsHide = React.useCallback(() => {
     clearControlsHideTimer();
-    if (!compatibilityMode || !playingRef.current || seekingRef.current || controlsHoverRef.current || controlsFocusRef.current) return;
+    if (!playingRef.current || seekingRef.current || controlsHoverRef.current || controlsFocusRef.current) return;
     controlsHideTimerRef.current = window.setTimeout(() => {
       controlsHideTimerRef.current = null;
       setControlsVisible(false);
     }, COMPATIBILITY_CONTROLS_HIDE_MS);
-  }, [clearControlsHideTimer, compatibilityMode]);
+  }, [clearControlsHideTimer]);
   const showControls = React.useCallback(() => {
-    if (!compatibilityMode) return;
     setControlsVisible(true);
     scheduleControlsHide();
-  }, [compatibilityMode, scheduleControlsHide]);
+  }, [scheduleControlsHide]);
   const resetControlVisibility = React.useCallback(() => {
     setControlsVisible(true);
     clearControlsHideTimer();
@@ -35,13 +34,13 @@ export function useVideoControlVisibility(compatibilityMode: boolean, isPlaying:
 
   React.useEffect(() => {
     playingRef.current = isPlaying;
-    if (!compatibilityMode || !isPlaying) {
+    if (!isPlaying) {
       clearControlsHideTimer();
       setControlsVisible(true);
       return;
     }
     scheduleControlsHide();
-  }, [clearControlsHideTimer, compatibilityMode, isPlaying, scheduleControlsHide]);
+  }, [clearControlsHideTimer, isPlaying, scheduleControlsHide]);
   React.useEffect(() => {
     seekingRef.current = isSeeking;
     if (isSeeking) {

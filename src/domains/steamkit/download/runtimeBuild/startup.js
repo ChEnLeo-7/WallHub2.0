@@ -10,6 +10,7 @@ function createRuntimeStartup(deps, validation, publisher) {
     runtimeSetupSnapshot,
     ensureSteamConfigDir,
     reconcileCachedSteamLogin,
+    warmupSteamKitQueryBridge = () => {},
   } = deps;
   let startupPreparePromise = null;
 
@@ -42,6 +43,9 @@ function createRuntimeStartup(deps, validation, publisher) {
           error: '',
         });
         if (env.WALLHUB_VALIDATE_STEAM_LOGIN_ON_STARTUP === '1') await reconcileCachedSteamLogin(mode);
+        Promise.resolve().then(() => warmupSteamKitQueryBridge('startup')).catch(error => {
+          logger.warn('[SteamKit Bridge] Startup warmup failed:', error.message);
+        });
         publisher.warmupDepotStreamDownloader('startup');
       } catch (error) {
         const message = error.message || String(error);

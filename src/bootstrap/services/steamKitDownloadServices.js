@@ -87,7 +87,7 @@ function assembleSteamKitDownloadServices(scope) {
         buildSteamContentEnv: scope.buildSteamContentEnv,
         buildDepotDotnetEnv: scope.buildDepotDotnetEnv,
         describeSteamCdnRouteStrategy: scope.describeSteamCdnRouteStrategy,
-        logger: console,
+        logger: scope.debugLogger,
       });
       scope.state.steamKitDownloadService = service;
     }

@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check } from 'lucide-react';
+import { Check, Smartphone } from 'lucide-react';
 import { AnimatedHeight } from '@/components/layout/AnimatedHeight';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { useText } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { type Filters } from '@/lib/normalizers';
+import { normalizeResolutionSelection, type Filters } from '@/lib/normalizers';
 
 const GENRES = [
   { id: 'Abstract', name: '抽象' },
@@ -67,70 +67,95 @@ export function GenreSheet({
   fixedPanelHeight,
   filters,
   setFilters,
+  steamDataSource = 'community',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   fixedPanelHeight: boolean;
   filters: Filters;
   setFilters: (patch: Partial<Filters>) => void;
+  steamDataSource?: 'community' | 'webapi' | 'cm';
 }) {
   const text = useText();
   const language = text.languageName === 'English' ? 'en' : 'zh';
   const [tab, setTab] = React.useState<'genres' | 'official' | 'resolution'>('genres');
   const [draftGenres, setDraftGenres] = React.useState<string[]>(filters.genres);
   const [draftOfficialTags, setDraftOfficialTags] = React.useState<string[]>(filters.officialTags || []);
-  const [draftResolutions, setDraftResolutions] = React.useState<string[]>(filters.resolutions || []);
-  const [draftResolutionAll, setDraftResolutionAll] = React.useState(!filters.resolutions?.length);
+  const [draftExcludedOfficialTags, setDraftExcludedOfficialTags] = React.useState<string[]>(filters.excludedOfficialTags || []);
+  const [draftMobileCompatibleOnly, setDraftMobileCompatibleOnly] = React.useState(!!filters.mobileCompatibleOnly);
+  const [draftResolutions, setDraftResolutions] = React.useState<string[]>(() => normalizeResolutionSelection(filters.resolutions, steamDataSource));
+  const [draftResolutionAll, setDraftResolutionAll] = React.useState(!normalizeResolutionSelection(filters.resolutions, steamDataSource).length);
   React.useEffect(() => {
     if (!open) return;
+    const resolutions = normalizeResolutionSelection(filters.resolutions, steamDataSource);
     setDraftGenres(filters.genres);
     setDraftOfficialTags(filters.officialTags || []);
-    setDraftResolutions(filters.resolutions || []);
-    setDraftResolutionAll(!filters.resolutions?.length);
-  }, [filters.genres, filters.officialTags, filters.resolutions, open]);
+    setDraftExcludedOfficialTags(filters.excludedOfficialTags || []);
+    setDraftMobileCompatibleOnly(steamDataSource === 'community' ? false : !!filters.mobileCompatibleOnly);
+    setDraftResolutions(resolutions);
+    setDraftResolutionAll(!resolutions.length);
+  }, [filters.excludedOfficialTags, filters.genres, filters.mobileCompatibleOnly, filters.officialTags, filters.resolutions, open, steamDataSource]);
   const selected = new Set(draftGenres);
   const selectedOfficialTags = new Set(draftOfficialTags);
+  const excludedOfficialTags = new Set(draftExcludedOfficialTags);
   const selectedResolutions = new Set(draftResolutions);
   const allResolutionsSelected = draftResolutionAll || selectedResolutions.size === RESOLUTIONS.length;
-  const activeCount = draftGenres.length + draftOfficialTags.length + (allResolutionsSelected ? 0 : draftResolutions.length);
+  const activeGenreCount = draftGenres.length > 0 && draftGenres.length < GENRES.length ? draftGenres.length : 0;
+  const activeCount = activeGenreCount + draftOfficialTags.length + draftExcludedOfficialTags.length + (draftMobileCompatibleOnly ? 1 : 0) + (allResolutionsSelected ? 0 : draftResolutions.length);
   const toggleAll = () => {
     if (tab === 'genres') setDraftGenres(selected.size === GENRES.length ? [] : GENRES.map((genre) => genre.id));
-    if (tab === 'official') setDraftOfficialTags(selectedOfficialTags.size === OFFICIAL_FILTERS.length ? [] : OFFICIAL_FILTERS.map((item) => item.id));
+    if (tab === 'official') {
+      const allIncluded = selectedOfficialTags.size === OFFICIAL_FILTERS.length && excludedOfficialTags.size === 0;
+      setDraftOfficialTags(allIncluded ? [] : OFFICIAL_FILTERS.map((item) => item.id));
+      setDraftExcludedOfficialTags([]);
+    }
     if (tab === 'resolution') {
       setDraftResolutionAll(!allResolutionsSelected);
       setDraftResolutions([]);
     }
   };
   const closeWithoutApply = () => {
+    const resolutions = normalizeResolutionSelection(filters.resolutions, steamDataSource);
     setDraftGenres(filters.genres);
     setDraftOfficialTags(filters.officialTags || []);
-    setDraftResolutions(filters.resolutions || []);
-    setDraftResolutionAll(!filters.resolutions?.length);
+    setDraftExcludedOfficialTags(filters.excludedOfficialTags || []);
+    setDraftMobileCompatibleOnly(steamDataSource === 'community' ? false : !!filters.mobileCompatibleOnly);
+    setDraftResolutions(resolutions);
+    setDraftResolutionAll(!resolutions.length);
     onOpenChange(false);
   };
   const apply = () => {
-    setFilters({ genres: draftGenres, officialTags: draftOfficialTags, resolutions: allResolutionsSelected ? [] : draftResolutions });
+    setFilters({
+      genres: draftGenres,
+      officialTags: draftOfficialTags,
+      excludedOfficialTags: draftExcludedOfficialTags,
+      categories: ['Wallpaper'],
+      resolutions: allResolutionsSelected ? [] : normalizeResolutionSelection(draftResolutions, steamDataSource),
+      mobileCompatibleOnly: steamDataSource === 'community' ? false : draftMobileCompatibleOnly,
+    });
     onOpenChange(false);
   };
   const toggleListValue = (values: string[], setValues: (values: string[]) => void, id: string) => {
-    const baseValues = setValues === setDraftResolutions && (draftResolutionAll || values.length === RESOLUTIONS.length)
-      ? RESOLUTIONS
-      : values;
+    if (setValues === setDraftResolutions) {
+      const next = new Set(draftResolutionAll ? [] : values);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      const normalized = Array.from(next);
+      setDraftResolutionAll(normalized.length === 0 || normalized.length === RESOLUTIONS.length);
+      setDraftResolutions(normalized.length === RESOLUTIONS.length ? [] : normalized);
+      return;
+    }
+    const baseValues = values;
     const next = new Set(baseValues);
     if (next.has(id)) next.delete(id);
     else next.add(id);
     const normalized = Array.from(next);
-    if (setValues === setDraftResolutions) {
-      setDraftResolutionAll(normalized.length === RESOLUTIONS.length);
-      setValues(normalized.length === RESOLUTIONS.length ? [] : normalized);
-      return;
-    }
     setValues(normalized);
   };
   const tabItems = [
     { id: 'genres' as const, label: text.genreTabGenres, count: draftGenres.length },
-    { id: 'official' as const, label: text.genreTabOfficial, count: draftOfficialTags.length },
-    { id: 'resolution' as const, label: text.genreTabResolution, count: draftResolutions.length },
+    { id: 'official' as const, label: text.genreTabOfficial, count: draftOfficialTags.length + draftExcludedOfficialTags.length + (draftMobileCompatibleOnly ? 1 : 0) },
+    { id: 'resolution' as const, label: text.genreTabResolution, count: allResolutionsSelected ? RESOLUTIONS.length : draftResolutions.length },
   ];
   return (
     <Dialog
@@ -142,7 +167,12 @@ export function GenreSheet({
       footer={
         <>
           <Button variant="outline" onClick={toggleAll}>
-            {(tab === 'genres' && selected.size === GENRES.length) || (tab === 'official' && selectedOfficialTags.size === OFFICIAL_FILTERS.length) || (tab === 'resolution' && allResolutionsSelected) ? text.clear : text.selectAll}
+            {tab === 'resolution'
+              ? allResolutionsSelected ? text.clear : text.selectAll
+              : (tab === 'genres' && selected.size === GENRES.length)
+                || (tab === 'official' && selectedOfficialTags.size === OFFICIAL_FILTERS.length && excludedOfficialTags.size === 0)
+                ? text.clear
+                : text.selectAll}
           </Button>
           <Button variant="outline" onClick={closeWithoutApply}>{text.cancel}</Button>
           <Button className="col-span-2 sm:col-span-1" onClick={apply}>{text.applyFilter}</Button>
@@ -203,12 +233,36 @@ export function GenreSheet({
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1], layout: { type: 'spring', stiffness: 330, damping: 34, mass: 0.9 } }}
                 >
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {OFFICIAL_FILTERS.map((item) => (
-                      <FilterButton key={item.id} active={selectedOfficialTags.has(item.id)} onClick={() => toggleListValue(draftOfficialTags, setDraftOfficialTags, item.id)}>
+                      <FilterButton
+                        key={item.id}
+                        active={selectedOfficialTags.has(item.id)}
+                        onClick={() => {
+                          setDraftOfficialTags(selectedOfficialTags.has(item.id)
+                            ? draftOfficialTags.filter((tag) => tag !== item.id)
+                            : [...draftOfficialTags.filter((tag) => tag !== item.id), item.id]);
+                          setDraftExcludedOfficialTags(draftExcludedOfficialTags.filter((tag) => tag !== item.id));
+                        }}
+                      >
                         {language === 'en' ? item.en : item.zh}
                       </FilterButton>
                     ))}
+                    <button
+                      type="button"
+                      aria-pressed={draftMobileCompatibleOnly}
+                      disabled={steamDataSource === 'community'}
+                      title={steamDataSource === 'community' ? text.mobileCompatibleCommunityUnsupported : text.mobileCompatible}
+                      className={cn(
+                        'flex items-center justify-between gap-3 rounded-md border border-input bg-input/45 px-3 py-2 text-left text-sm transition-[background-color,border-color,color,filter,transform] active:scale-95 active:brightness-110 hover:bg-input/65',
+                        draftMobileCompatibleOnly && 'border-primary/20 bg-accent text-accent-foreground',
+                        steamDataSource === 'community' && 'cursor-not-allowed opacity-45',
+                      )}
+                      onClick={() => setDraftMobileCompatibleOnly((current) => !current)}
+                    >
+                      <span className="flex items-center gap-2"><Smartphone className="h-4 w-4" />{text.mobileCompatible}</span>
+                      {draftMobileCompatibleOnly ? <Check className="h-4 w-4 shrink-0" /> : null}
+                    </button>
                   </div>
                 </motion.div>
               ) : (
@@ -265,6 +319,7 @@ function FilterButton({ active, onClick, children, nowrap = false }: { active: b
   return (
     <button
       type="button"
+      aria-pressed={active}
       className={cn(
         'flex items-center justify-between gap-3 rounded-md border border-input bg-input/45 px-3 py-2 text-left text-sm transition-[background-color,border-color,color,filter,transform] active:scale-95 active:brightness-110 hover:bg-input/65',
         nowrap && 'w-auto whitespace-nowrap',

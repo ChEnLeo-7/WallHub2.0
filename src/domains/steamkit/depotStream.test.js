@@ -20,14 +20,15 @@ function createFixture(options = {}) {
     DEPOT_STREAM_MAX_RANGE_BYTES: options.maxRangeBytes || 8,
     DEPOT_STREAM_FIRST_RANGE_BYTES: options.firstRangeBytes || 4,
     DEPOT_STREAM_TAIL_BYTES: 4,
-    DEPOT_STREAM_INITIAL_BUFFER_BYTES: 8,
+    DEPOT_STREAM_INITIAL_BUFFER_BYTES: options.initialBufferBytes || 8,
     DEPOT_STREAM_AHEAD_BYTES: options.aheadBytes || 0,
+    DEPOT_STREAM_CHUNK_BUFFER_BYTES: options.chunkBufferBytes || 64 * 1024 * 1024,
     DEPOT_STREAM_WORKER_IDLE_MS: 60_000,
     DEPOT_STREAM_CACHE_CLEANUP_HIGH_WATERMARK: 0.9,
     DEPOT_STREAM_CACHE_CLEANUP_TARGET: 0.8,
     DEPOT_STREAM_CACHE_CLEANUP_DEBOUNCE_MS: 60_000,
     depotCommandFor: () => ({ command: 'unused', argsPrefix: [] }),
-    getSteamKitStreamMaxDownloads: () => 4,
+    getSteamKitMaxDownloads: () => options.maxDownloads || 4,
     makeDepotLoginId: value => value,
     getSteamContentCellId: () => 0,
     resolveDepotLogin: () => ({}),
@@ -37,10 +38,10 @@ function createFixture(options = {}) {
     buildSteamContentEnv: value => value,
     buildDepotDotnetEnv: () => ({}),
     getSteamCdnRouteStrategy: () => 'default',
-    updateSteamCdnStatusFromText: () => {},
+    updateSteamCdnStatusFromText: options.updateSteamCdnStatusFromText || (() => null),
     describeSteamCdnRouteStrategy: () => 'test route',
     fmtBytes: value => `${value} B`,
-    getDepotStreamCacheMaxBytes: () => 1024 * 1024,
+    getDepotStreamCacheMaxBytes: () => options.cacheMaxBytes || 1024 * 1024,
     getDepotVideoStreams: () => streams.values(),
     getDepotVideoStream: token => streams.get(token),
     hasFilesRecursive: () => false,
@@ -82,6 +83,7 @@ function cacheFile(fixture, entry, start, end, content) {
     const fd = fs.openSync(file, 'w');
     try { fs.ftruncateSync(fd, end - start + 1); } finally { fs.closeSync(fd); }
   } else fs.writeFileSync(file, content);
+  fixture.service._test.commitDepotStreamCacheRange(entry, start, end, file);
   return file;
 }
 
@@ -133,11 +135,15 @@ class TestResponse extends Writable {
 
   writeHead(statusCode, headers = {}) {
     this.statusCode = statusCode;
-    this.responseHeaders = headers;
+    this.responseHeaders = Object.assign({}, this.responseHeaders, headers);
     this.headersSent = true;
     if (this.onHeaders) this.onHeaders();
     if (this.closeOnHeaders) this.emit('close');
     return this;
+  }
+
+  setHeader(name, value) {
+    this.responseHeaders[name] = value;
   }
 
   _write(chunk, encoding, callback) {
@@ -158,7 +164,7 @@ function request(range) {
 test('cache coverage combines the adjacent ranges seen in seek logs', (t) => {
   const fixture = createFixture({ maxRangeBytes: 8 * 1024 * 1024, firstRangeBytes: 2 * 1024 * 1024 });
   t.after(() => fixture.cleanup());
-  const entry = { publishedFileId: '2899746382', manifestId: 'manifest', size: 8427339715 };
+  const entry = { publishedFileId: 'coverage-fixture', manifestId: 'manifest', size: 8427339715 };
   const cases = [
     [2693332992, 2701721599, 2701721600, 2710110207, 2693660672, 2702049279],
     [1528070144, 1536458751, 1536458752, 1544847359, 1530232832, 1538621439],
@@ -185,21 +191,27 @@ test('cache coverage reports only the missing span between valid files', (t) => 
   ]);
 });
 
-test('normalizeRange caps bounded, suffix, and headerless responses', (t) => {
+test('normalizeRange preserves requested windows and uses full-file 200 without Range', (t) => {
   const fixture = createFixture({ maxRangeBytes: 16, firstRangeBytes: 32 });
   t.after(() => fixture.cleanup());
   assert.deepEqual(fixture.service.normalizeRange(request('bytes=10-99'), 100), {
-    start: 10, end: 25, statusCode: 206, rangeHeader: 'bytes=10-99',
+    start: 10, end: 99, statusCode: 206, rangeHeader: 'bytes=10-99',
   });
   assert.deepEqual(fixture.service.normalizeRange(request('bytes=-40'), 100), {
-    start: 84, end: 99, statusCode: 206, rangeHeader: 'bytes=-40',
+    start: 60, end: 99, statusCode: 206, rangeHeader: 'bytes=-40',
   });
   assert.deepEqual(fixture.service.normalizeRange(request(), 100), {
-    start: 0, end: 15, statusCode: 206, rangeHeader: '',
+    start: 0, end: 99, statusCode: 200, rangeHeader: '',
+  });
+  assert.deepEqual(fixture.service.normalizeRange(request('bytes=0-1,4-5'), 100), {
+    error: 'Invalid Range',
+  });
+  assert.deepEqual(fixture.service.normalizeRange(request('bytes=9007199254740993-'), 100), {
+    error: 'Range Not Satisfiable',
   });
 });
 
-test('foreground demand evicts queued prefetch and dispatches next', async (t) => {
+test('foreground demand preserves queued prefetch and dispatches it afterward', async (t) => {
   const fixture = createFixture();
   t.after(() => fixture.cleanup());
   const { worker, messages } = fakeWorker();
@@ -212,9 +224,130 @@ test('foreground demand evicts queued prefetch and dispatches next', async (t) =
   fixture.service._test.handleDepotStreamWorkerMessage(worker, { type: 'range', id: blocker.job.id, success: true });
   await tick();
   assert.equal(messages.at(-1).id, foreground.job.id);
-  await assert.rejects(prefetch, { name: 'AbortError' });
   fixture.service._test.handleDepotStreamWorkerMessage(worker, { type: 'range', id: foreground.job.id, success: true });
-  await Promise.all([blocker, foreground]);
+  await tick();
+  assert.equal(messages.at(-1).id, prefetch.job.id);
+  fixture.service._test.handleDepotStreamWorkerMessage(worker, { type: 'range', id: prefetch.job.id, success: true });
+  await Promise.all([blocker, foreground, prefetch]);
+});
+
+test('stream service exposes playback feedback through its public facade', (t) => {
+  const fixture = createFixture();
+  t.after(() => fixture.cleanup());
+  assert.equal(typeof fixture.service.applyPlaybackFeedback, 'function');
+});
+
+test('stream workers use the same user-selected concurrency as full downloads', (t) => {
+  const fixture = createFixture({ maxDownloads: 24 });
+  t.after(() => fixture.cleanup());
+  const built = fixture.service.buildArgs('stream.exe', '1', 431960, { worker: true });
+  const index = built.args.indexOf('-max-downloads');
+  assert.equal(built.args[index + 1], '24');
+  assert.equal(fixture.service.diagnostics().maxDownloads, 24);
+});
+
+test('stream diagnostics expose the bounded Steam chunk buffer budget', (t) => {
+  const fixture = createFixture({ chunkBufferBytes: 32 * 1024 * 1024 });
+  t.after(() => fixture.cleanup());
+  assert.equal(fixture.service.diagnostics().chunkBufferBytes, 32 * 1024 * 1024);
+});
+
+test('initial prefetch includes bounded tail metadata and a contiguous startup window', (t) => {
+  const fixture = createFixture({
+    maxRangeBytes: 32,
+    firstRangeBytes: 2,
+    initialBufferBytes: 64,
+  });
+  t.after(() => fixture.cleanup());
+
+  assert.deepEqual(fixture.service._test.depotStreamInitialPrefetchPlan(200), {
+    first: { start: 0, end: 1 },
+    tail: { start: 196, end: 199 },
+    initial: { start: 2, end: 63 },
+  });
+  assert.deepEqual(fixture.service._test.depotStreamPrefetchBlocks(200, 2, 33), [
+    { start: 2, end: 31 },
+    { start: 32, end: 63 },
+  ]);
+  assert.deepEqual(fixture.service._test.depotStreamPrefetchBlocks(200, 0, 1), [
+    { start: 0, end: 1 },
+  ]);
+});
+
+test('committed cache ranges update coverage without rescanning the manifest directory', (t) => {
+  const fixture = createFixture({ maxRangeBytes: 32, firstRangeBytes: 2 });
+  t.after(() => fixture.cleanup());
+  const entry = { publishedFileId: 'indexed', manifestId: 'm', size: 100 };
+  cacheFile(fixture, entry, 0, 1);
+  assert.equal(fixture.service._test.selectDepotStreamCoverage(entry, 0, 1).complete, true);
+  const original = fs.readdirSync;
+  let scans = 0;
+  t.mock.method(fs, 'readdirSync', (...args) => {
+    scans++;
+    return original(...args);
+  });
+
+  assert.equal(fixture.service._test.selectDepotStreamCoverage(entry, 0, 1).complete, true);
+  assert.equal(fixture.service._test.selectDepotStreamCoverage(entry, 0, 1).complete, true);
+  assert.equal(scans, 0);
+});
+
+test('reopened playback reuses persisted extents for the same project and manifest', async (t) => {
+  const fixture = createFixture({ maxRangeBytes: 8, firstRangeBytes: 4 });
+  t.after(() => fixture.cleanup());
+  const previousEntry = { publishedFileId: 'reopened', manifestId: 'stable-manifest', size: 64 };
+  const cached = cacheFile(fixture, previousEntry, 24, 31, Buffer.from('CACHED!!'));
+
+  fixture.service.releaseEntry(previousEntry, 'client-release');
+  fixture.service._test.clearDepotStreamCacheIndexes();
+
+  const reopenedEntry = { publishedFileId: 'reopened', manifestId: 'stable-manifest', size: 64 };
+  const reopenedEpoch = fixture.service._test.getDemandEpoch(reopenedEntry);
+  const result = await fixture.service._test.prefetchDepotStreamRange(
+    reopenedEntry, 24, 31, {}, 'reopened-position', fixture.service._test.getGeneration(), reopenedEpoch
+  );
+
+  assert.equal(result, cached);
+  assert.equal(fixture.service.rangePromises.size, 0);
+  assert.equal(fixture.service.workers.size, 0);
+});
+
+test('foreground range planning uses the complete normalized response window', (t) => {
+  const fixture = createFixture({ maxRangeBytes: 32, firstRangeBytes: 2 });
+  t.after(() => fixture.cleanup());
+
+  assert.deepEqual(fixture.service._test.planDepotStreamBlocks(100, 32, 63, 32), [{
+    start: 32,
+    end: 63,
+    responseStart: 32,
+    responseEnd: 63,
+    index: 0,
+  }]);
+});
+
+
+test('worker keeps the CDN host parsed from its own process output', (t) => {
+  const fixture = createFixture({
+    updateSteamCdnStatusFromText: () => ({ host: 'worker-cdn.example', port: 443 }),
+  });
+  t.after(() => fixture.cleanup());
+  const worker = { cdnHost: '' };
+  fixture.service._test.updateDepotStreamWorkerCdnStatus(worker, 'WALLHUB_DEPOT_CDN_HOST:{"host":"worker-cdn.example","vhost":"","port":443}');
+
+  assert.equal(worker.cdnHost, 'worker-cdn.example');
+});
+
+test('worker ready metadata carries the selected CDN host', (t) => {
+  const fixture = createFixture();
+  t.after(() => fixture.cleanup());
+
+  const info = fixture.service._test.parseDepotStreamWorkerInfo({
+    size: 1024,
+    fileName: 'video.mp4',
+    cdnHost: 'ready-cdn.example',
+  }, '100');
+
+  assert.equal(info.cdnHost, 'ready-cdn.example');
 });
 
 test('completed range file recovers when worker stdout omits its completion message', async (t) => {
@@ -251,13 +384,14 @@ test('completed range file recovers when worker stdout omits its completion mess
   }
 });
 
-test('active prefetch cancellation keeps the worker reusable', async (t) => {
+test('explicit active prefetch cancellation keeps the worker reusable', async (t) => {
   const fixture = createFixture();
   t.after(() => fixture.cleanup());
   const { worker, messages } = fakeWorker();
   const prefetch = fixture.service._test.requestDepotStreamWorkerRange(worker, 0, 3, 'a', { priority: 'prefetch' });
   prefetch.catch(() => {});
   const foreground = fixture.service._test.requestDepotStreamWorkerRange(worker, 8, 11, 'b', { epoch: 2, blockIndex: 0 });
+  fixture.service._test.cancelDepotStreamWorkerJob(worker, prefetch.job, 'seek');
   assert.deepEqual(messages.map(message => message.type), ['range', 'cancel']);
   fixture.service._test.handleDepotStreamWorkerMessage(worker, {
     type: 'range', id: prefetch.job.id, success: false, cancelled: true,
@@ -406,11 +540,97 @@ test('cache cleanup removes stale orphan temp files but preserves active and fre
   assert.equal(result.removedTempFiles, 1);
   assert.equal(result.removedTempBytes, Buffer.byteLength('stale'));
   assert.equal(result.bytes, Buffer.byteLength('active') + Buffer.byteLength('fresh'));
-  assert.equal(fixture.service._test.getEstimatedCacheBytes(), result.bytes);
+  assert.equal(fixture.service._test.getEstimatedCacheBytes(), Buffer.byteLength('fresh'));
   assert.equal(fs.existsSync(staleTemp), false);
   assert.equal(fs.existsSync(activeTemp), true);
   assert.equal(fs.existsSync(freshTemp), true);
   assert.equal(fixture.service.getCacheStats().bytes, result.bytes);
+});
+
+test('cache write reservations enforce the configured limit across in-flight writes', (t) => {
+  const fixture = createFixture({ cacheMaxBytes: 10 });
+  t.after(() => fixture.cleanup());
+  const entry = { publishedFileId: 'quota', manifestId: 'm', size: 20 };
+  fixture.service.getCacheStats();
+
+  const first = fixture.service._test.reserveCacheWrite(6, path.join(fixture.cacheDir, 'first.tmp'));
+  assert.ok(first);
+  cacheFile(fixture, entry, 0, 5);
+  fixture.service._test.releaseCacheWrite(first, 6);
+  const second = fixture.service._test.reserveCacheWrite(4, path.join(fixture.cacheDir, 'second.tmp'));
+
+  assert.ok(second);
+  assert.equal(fixture.service._test.getEstimatedCacheBytes(), 6);
+  assert.equal(fixture.service._test.getReservedCacheBytes(), 4);
+  const release = fixture.service._test.pinCacheFile(cacheFile(fixture, entry, 0, 5));
+  assert.equal(fixture.service._test.reserveCacheWrite(1, path.join(fixture.cacheDir, 'third.tmp')), null);
+  assert.equal(fs.existsSync(path.join(fixture.cacheDir, 'quota', 'm', '0-5.bin')), true);
+  release();
+  fixture.service._test.releaseCacheWrite(second);
+});
+
+test('foreground cache reservation waits briefly for active space to be released', async (t) => {
+  const fixture = createFixture({ cacheMaxBytes: 10 });
+  t.after(() => fixture.cleanup());
+  fixture.service.getCacheStats();
+  const occupied = fixture.service._test.reserveCacheWrite(10, path.join(fixture.cacheDir, 'occupied.tmp'));
+  assert.ok(occupied);
+
+  const waiting = fixture.service._test.waitForCacheWrite(
+    4,
+    path.join(fixture.cacheDir, 'foreground.tmp'),
+    null,
+    500
+  );
+  setTimeout(() => fixture.service._test.releaseCacheWrite(occupied), 20);
+  const reservation = await waiting;
+
+  assert.ok(reservation);
+  fixture.service._test.releaseCacheWrite(reservation);
+});
+
+test('quota cleanup never removes a cache file held by an active reader', (t) => {
+  const fixture = createFixture({ cacheMaxBytes: 8 });
+  t.after(() => fixture.cleanup());
+  const entry = { publishedFileId: 'reader', manifestId: 'm', size: 16 };
+  const file = cacheFile(fixture, entry, 0, 7);
+  fixture.service.getCacheStats();
+  const release = fixture.service._test.pinCacheFile(file);
+
+  const result = fixture.service.cleanupCache({ force: true, targetBytes: 0 });
+
+  assert.equal(result.bytes, 8);
+  assert.equal(fs.existsSync(file), true);
+  release();
+  const afterRelease = fixture.service.cleanupCache({ force: true, targetBytes: 0 });
+  assert.equal(afterRelease.bytes, 0);
+  assert.equal(fs.existsSync(file), false);
+});
+
+test('rolling cleanup reclaims the farthest played extent and protects the active window', (t) => {
+  const fixture = createFixture({ maxRangeBytes: 8, firstRangeBytes: 4, cacheMaxBytes: 32 });
+  t.after(() => fixture.cleanup());
+  const entry = {
+    publishedFileId: 'rolling', id: 'rolling', manifestId: 'm', size: 72, fileName: 'video.mp4',
+    expiresAt: Date.now() + 60_000,
+    playbackFeedback: { currentTime: 5, duration: 9 },
+    depotPlaybackByteAnchor: { byte: 40 },
+    depotAdaptivePolicy: { targetBytes: 8 },
+  };
+  fixture.streams.set('rolling', entry);
+  const head = cacheFile(fixture, entry, 0, 7);
+  const old = cacheFile(fixture, entry, 8, 15);
+  const rewind = cacheFile(fixture, entry, 32, 39);
+  const forward = cacheFile(fixture, entry, 40, 47);
+  const tail = cacheFile(fixture, entry, 64, 71);
+
+  const result = fixture.service.cleanupCache({ force: true, targetBytes: 32 });
+  assert.equal(result.removedFiles, 1);
+  assert.equal(fs.existsSync(old), false);
+  assert.equal(fs.existsSync(head), true);
+  assert.equal(fs.existsSync(rewind), true);
+  assert.equal(fs.existsSync(forward), true);
+  assert.equal(fs.existsSync(tail), true);
 });
 
 test('a prefetch needed by the new demand is promoted before unrelated prefetch cancellation', async (t) => {
@@ -444,6 +664,51 @@ test('a prefetch needed by the new demand is promoted before unrelated prefetch 
   resolveTask('cached');
   fixture.service._test.handleDepotStreamWorkerMessage(worker, { type: 'range', id: task.job.id, success: true });
   await Promise.all([foregroundWait, workerPromise]);
+});
+
+test('unaligned browser demand promotes the aligned playback prefetch without cancellation', async (t) => {
+  const fixture = createFixture({ maxRangeBytes: 8 * 1024 * 1024, firstRangeBytes: 2 * 1024 * 1024 });
+  t.after(() => fixture.cleanup());
+  const entry = { publishedFileId: '3423261668', manifestId: 'm', size: 1933793420 };
+  const { worker, messages } = fakeWorker();
+  worker.key = fixture.service._test.depotStreamWorkerKey(entry, {});
+  fixture.service.workers.set(worker.key, worker);
+  const start = 11 * 8 * 1024 * 1024;
+  const end = start + 8 * 1024 * 1024 - 1;
+  const workerPromise = fixture.service._test.requestDepotStreamWorkerRange(worker, start, end, 'prefetch', {
+    priority: 'prefetch', epoch: 0, blockIndex: 0,
+  });
+  let resolveTask;
+  const task = {
+    start,
+    end,
+    settled: false,
+    cancelled: false,
+    priority: 'prefetch',
+    epoch: 0,
+    blockIndex: 0,
+    waiters: new Map(),
+    worker,
+    job: workerPromise.job,
+    promise: new Promise(resolve => { resolveTask = resolve; }),
+  };
+  fixture.service.rangePromises.set(fixture.service._test.depotStreamRangePromiseKey(entry, start, end), task);
+
+  const browserStart = 91029504;
+  const browserEnd = browserStart + 8 * 1024 * 1024 - 1;
+  const blocks = fixture.service._test.planDepotStreamBlocks(entry.size, browserStart, browserEnd, browserEnd - browserStart + 1);
+  cacheFile(fixture, entry, blocks[0].start, blocks[0].end);
+  const foreground = fixture.service._test.prepareDepotStreamBlock(entry, blocks[1], {}, {
+    priority: 'foreground', epoch: 0, blockIndex: 0,
+  });
+
+  assert.equal(task.job.priority, 'foreground');
+  assert.deepEqual(messages.map(message => message.type), ['range']);
+  cacheFile(fixture, entry, start, end);
+  task.settled = true;
+  resolveTask(task.job.outPath);
+  fixture.service._test.handleDepotStreamWorkerMessage(worker, { type: 'range', id: task.job.id, success: true });
+  await Promise.all([foreground, workerPromise]);
 });
 
 test('a newer demand epoch overtakes queued foreground without cancelling it', async (t) => {
@@ -783,6 +1048,261 @@ test('adjacent cache files are streamed in byte order', async (t) => {
   assert.equal(res.statusCode, 206);
   assert.equal(Buffer.concat(res.chunks).toString(), 'CDEF');
   assert.equal(res.responseHeaders['Content-Range'], 'bytes 2-5/8');
+});
+
+test('read-through streams growing temp bytes before the range is committed', async (t) => {
+  const fixture = createFixture({ maxRangeBytes: 8, firstRangeBytes: 4 });
+  t.after(() => fixture.cleanup());
+  const tempPath = path.join(fixture.cacheDir, 'growing.tmp');
+  const cachePath = path.join(fixture.cacheDir, 'complete.bin');
+  fs.writeFileSync(tempPath, Buffer.from('ABCD'));
+  let resolveProgress;
+  const task = {
+    start: 0,
+    end: 7,
+    cacheTmpPath: tempPath,
+    cachePath,
+    downloadedUntil: 4,
+    servedUntil: 0,
+    committed: false,
+    settled: false,
+    waitForProgress: cursor => task.downloadedUntil > cursor
+      ? Promise.resolve()
+      : new Promise(resolve => { resolveProgress = resolve; }),
+  };
+  let firstChunkCommitted = null;
+  let resolveFirstChunk;
+  const firstChunk = new Promise(resolve => { resolveFirstChunk = resolve; });
+  const res = new TestResponse();
+  res.on('data', () => {});
+  res.on('pipe', () => {});
+  const originalWrite = res._write.bind(res);
+  res._write = (chunk, encoding, callback) => {
+    if (firstChunkCommitted === null) {
+      firstChunkCommitted = task.committed;
+      resolveFirstChunk();
+    }
+    originalWrite(chunk, encoding, callback);
+  };
+
+  const streaming = fixture.service._test.streamDepotStreamRangeTask(res, task, 0, 7);
+  await firstChunk;
+  assert.equal(Buffer.concat(res.chunks).toString(), 'ABCD');
+  assert.equal(firstChunkCommitted, false);
+
+  fs.appendFileSync(tempPath, Buffer.from('EFGH'));
+  task.downloadedUntil = 8;
+  resolveProgress?.();
+  await streaming;
+  assert.equal(Buffer.concat(res.chunks).toString(), 'ABCDEFGH');
+  assert.equal(task.servedUntil, 8);
+});
+
+test('read-through keeps one growing-file handle and obeys response backpressure', async (t) => {
+  const fixture = createFixture({ maxRangeBytes: 8, firstRangeBytes: 4 });
+  t.after(() => fixture.cleanup());
+  const tempPath = path.join(fixture.cacheDir, 'persistent-growing.tmp');
+  fs.writeFileSync(tempPath, Buffer.from('ABCDEFGH'));
+  const task = {
+    start: 0,
+    end: 7,
+    cacheTmpPath: tempPath,
+    cachePath: path.join(fixture.cacheDir, 'persistent-complete.bin'),
+    downloadedUntil: 8,
+    servedUntil: 0,
+    committed: false,
+    settled: false,
+    waitForProgress: () => Promise.resolve(),
+    beginRead() {},
+    endRead() {},
+  };
+  let opens = 0;
+  const originalOpen = fs.promises.open;
+  t.mock.method(fs.promises, 'open', async (...args) => {
+    opens++;
+    return originalOpen(...args);
+  });
+  const res = new TestResponse({ highWaterMark: 1 });
+  await fixture.service._test.streamDepotStreamRangeTask(res, task, 0, 7);
+  assert.equal(opens, 1);
+  assert.equal(Buffer.concat(res.chunks).toString(), 'ABCDEFGH');
+});
+
+test('read-through releases the growing temp handle while browser backpressure is blocked', async (t) => {
+  const fixture = createFixture({ maxRangeBytes: 8, firstRangeBytes: 4 });
+  t.after(() => fixture.cleanup());
+  const tempPath = path.join(fixture.cacheDir, 'blocked-growing.tmp');
+  fs.writeFileSync(tempPath, Buffer.from('ABCDEFGH'));
+  let readers = 0;
+  let resolveReleased;
+  const released = new Promise(resolve => { resolveReleased = resolve; });
+  const task = {
+    start: 0,
+    end: 7,
+    cacheTmpPath: tempPath,
+    cachePath: path.join(fixture.cacheDir, 'blocked-complete.bin'),
+    downloadedUntil: 8,
+    servedUntil: 0,
+    committed: false,
+    settled: false,
+    waitForProgress: () => Promise.resolve(),
+    beginRead() { readers++; },
+    endRead() { readers--; resolveReleased(); },
+  };
+  const res = new EventEmitter();
+  res.write = () => false;
+  const streaming = fixture.service._test.streamDepotStreamRangeTask(res, task, 0, 7);
+
+  await released;
+  assert.equal(readers, 0);
+  assert.equal(task.servedUntil, 8);
+  await tick();
+  res.emit('drain');
+  await streaming;
+  assert.equal(readers, 0);
+});
+
+test('read-through observes drain emitted while the temp handle is closing', async (t) => {
+  const fixture = createFixture({ maxRangeBytes: 8, firstRangeBytes: 4 });
+  t.after(() => fixture.cleanup());
+  const tempPath = path.join(fixture.cacheDir, 'early-drain-growing.tmp');
+  fs.writeFileSync(tempPath, Buffer.from('ABCDEFGH'));
+  const res = new EventEmitter();
+  let writes = 0;
+  res.write = () => ++writes > 1;
+  let emitted = false;
+  const task = {
+    start: 0,
+    end: 7,
+    cacheTmpPath: tempPath,
+    cachePath: path.join(fixture.cacheDir, 'early-drain-complete.bin'),
+    downloadedUntil: 8,
+    servedUntil: 0,
+    committed: false,
+    settled: false,
+    waitForProgress: () => Promise.resolve(),
+    beginRead() {},
+    endRead() {
+      if (!emitted) {
+        emitted = true;
+        res.emit('drain');
+      }
+    },
+  };
+
+  await fixture.service._test.streamDepotStreamRangeTask(res, task, 0, 7);
+  assert.equal(emitted, true);
+  assert.equal(task.servedUntil, 8);
+});
+
+test('read-through handles response abort while the temp handle is closing', async (t) => {
+  const fixture = createFixture({ maxRangeBytes: 8, firstRangeBytes: 4 });
+  t.after(() => fixture.cleanup());
+  const tempPath = path.join(fixture.cacheDir, 'aborted-growing.tmp');
+  fs.writeFileSync(tempPath, Buffer.from('ABCDEFGH'));
+  const controller = new AbortController();
+  const res = new EventEmitter();
+  res.write = () => false;
+  let signalCloseStarted;
+  let releaseClose;
+  const closeStarted = new Promise(resolve => { signalCloseStarted = resolve; });
+  const closeGate = new Promise(resolve => { releaseClose = resolve; });
+  const originalOpen = fs.promises.open;
+  t.mock.method(fs.promises, 'open', async (...args) => {
+    const handle = await originalOpen(...args);
+    return {
+      read: handle.read.bind(handle),
+      async close() {
+        signalCloseStarted();
+        await closeGate;
+        await handle.close();
+      },
+    };
+  });
+  const task = {
+    start: 0,
+    end: 7,
+    cacheTmpPath: tempPath,
+    cachePath: path.join(fixture.cacheDir, 'aborted-complete.bin'),
+    downloadedUntil: 8,
+    servedUntil: 0,
+    committed: false,
+    settled: false,
+    waitForProgress: () => Promise.resolve(),
+    beginRead() {},
+    endRead() {},
+  };
+  let unhandled = null;
+  const onUnhandled = error => { unhandled = error; };
+  process.once('unhandledRejection', onUnhandled);
+  t.after(() => process.removeListener('unhandledRejection', onUnhandled));
+
+  const streaming = fixture.service._test.streamDepotStreamRangeTask(
+    res,
+    task,
+    0,
+    7,
+    controller.signal
+  );
+  const observedStreaming = streaming.then(() => null, error => error);
+  await closeStarted;
+  res.emit('close');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(unhandled, null);
+  releaseClose();
+  const streamError = await observedStreaming;
+  assert.equal(streamError?.name, 'AbortError');
+  assert.equal(task.servedUntil, 8);
+});
+
+test('range commit waits for active temp readers before atomic rename', async (t) => {
+  const fixture = createFixture();
+  t.after(() => fixture.cleanup());
+  let activeReaders = 1;
+  let resolveReaders;
+  const task = {
+    activeReaders,
+    readerWaiters: new Set(),
+  };
+  task.waitForReaders = () => task.activeReaders === 0
+    ? Promise.resolve()
+    : new Promise(resolve => { resolveReaders = resolve; });
+  task.endRead = () => {
+    task.activeReaders--;
+    if (task.activeReaders === 0) resolveReaders();
+  };
+
+  let committed = false;
+  const commit = (async () => {
+    await task.waitForReaders();
+    committed = true;
+  })();
+  await tick();
+  assert.equal(committed, false);
+  task.endRead();
+  await commit;
+  assert.equal(committed, true);
+});
+
+test('HEAD and invalid ranges return protocol headers without starting Depot work', async (t) => {
+  const fixture = createFixture();
+  t.after(() => fixture.cleanup());
+  const entry = { publishedFileId: 'video', id: 'video', manifestId: 'm', size: 8, fileName: 'video.mp4' };
+  fixture.streams.set('token', entry);
+  const head = request('bytes=2-5');
+  head.method = 'HEAD';
+  const headResponse = new TestResponse();
+  await fixture.service.handleVideoStream(head, headResponse, 'token');
+  assert.equal(headResponse.statusCode, 206);
+  assert.equal(headResponse.responseHeaders['Content-Range'], 'bytes 2-5/8');
+  assert.equal(fixture.service.rangePromises.size, 0);
+
+  const invalid = new TestResponse();
+  await fixture.service.handleVideoStream(request('bytes=20-30'), invalid, 'token');
+  assert.equal(invalid.statusCode, 416);
+  assert.equal(invalid.responseHeaders['Content-Range'], 'bytes */8');
+  assert.equal(invalid.responseHeaders['Accept-Ranges'], 'bytes');
+  assert.equal(fixture.service.rangePromises.size, 0);
 });
 
 test('premature response close sends no 500 and schedules no ahead buffer', async (t) => {

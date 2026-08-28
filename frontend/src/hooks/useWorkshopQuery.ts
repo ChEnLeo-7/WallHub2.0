@@ -14,9 +14,11 @@ import {
   type WorkshopCacheEntry,
   type WorkshopQuerySnapshot,
 } from '@/lib/workshopQuery';
+import type { ApiError } from '@/lib/api/errors';
 import { getNextPagePrefetchPlan } from '@/lib/paginationPrefetch.mjs';
 import { pruneWorkshopCache } from '@/lib/workshopCache.mjs';
 import { scheduleIdleTask } from '@/lib/idleTask.mjs';
+import { isWallpaperSearchItem } from '@/lib/workshop';
 
 export type { WorkshopQuerySnapshot } from '@/lib/workshopQuery';
 
@@ -30,6 +32,7 @@ type UseWorkshopQueryOptions = {
   prefetchNextPage: boolean;
   steamAccessEnhance: boolean;
   steamDataSource: 'community' | 'webapi' | 'cm';
+  language: 'zh' | 'en';
   refreshToken: number;
   setPage: React.Dispatch<React.SetStateAction<number>>;
   onWarning: (message: string) => void;
@@ -47,6 +50,7 @@ export function useWorkshopQuery({
   prefetchNextPage,
   steamAccessEnhance,
   steamDataSource,
+  language,
   refreshToken,
   setPage,
   onWarning,
@@ -59,6 +63,7 @@ export function useWorkshopQuery({
   const [loading, setLoading] = React.useState(false);
   const [warmingSteamIp, setWarmingSteamIp] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [requiresSteamLogin, setRequiresSteamLogin] = React.useState(false);
   const [suppressGridLayoutAnimation, setSuppressGridLayoutAnimation] = React.useState(false);
   const queryCacheRef = React.useRef(new Map<string, WorkshopCacheEntry>());
   const queryRequestRef = React.useRef(0);
@@ -109,6 +114,7 @@ export function useWorkshopQuery({
       pageSize,
       !!snapshot.filters.search.trim() && snapshot.exactPhrase,
       snapshot.steamDataSource,
+      language,
     );
     setItems(snapshot.items);
     setTotal(snapshot.total);
@@ -118,7 +124,7 @@ export function useWorkshopQuery({
     setError(snapshot.error);
     setLoading(false);
     setWarmingSteamIp(false);
-  }, [cancelActiveQuery, pageSize]);
+  }, [cancelActiveQuery, language, pageSize]);
 
   const scheduleBackgroundDetails = React.useCallback((baseItems: WorkshopItem[], cacheKey: string, totalValue: number, requestId: number) => {
     const needsDetails = baseItems.filter((item) => {
@@ -139,12 +145,12 @@ export function useWorkshopQuery({
         const applyDetails = (detailItems: WorkshopItem[]) => {
           if (token !== backgroundDetailsTokenRef.current || requestId !== queryRequestRef.current) return;
           const detailsById = new Map(detailItems.map((item) => [String(item.publishedfileid), item]));
-          const mergeItem = (item: WorkshopItem): WorkshopItem => {
+          const mergeItem = (item: WorkshopItem): WorkshopItem | null => {
             const id = String(item.publishedfileid);
             if (!requestedIds.has(id)) return item;
             const detail = detailsById.get(id);
             if (!detail) return { ...item, detailsPending: false };
-            return {
+            const merged = {
               ...item,
               ...detail,
               title: detail.title || item.title,
@@ -155,16 +161,18 @@ export function useWorkshopQuery({
               tags: detail.tags && detail.tags.length ? detail.tags : item.tags,
               detailsPending: false,
             };
+            return isWallpaperSearchItem(merged, filters.types) ? merged : null;
           };
+          const mergeItems = (source: WorkshopItem[]) => source.map(mergeItem).filter((item): item is WorkshopItem => item !== null);
           setSuppressGridLayoutAnimation(true);
-          setItems((current) => current.map(mergeItem));
+          setItems(mergeItems);
           window.requestAnimationFrame(() => setSuppressGridLayoutAnimation(false));
           const previous = queryCacheRef.current.get(cacheKey);
           if (previous) {
             queryCacheRef.current.set(cacheKey, {
               ...previous,
               pageSize,
-              items: previous.items.map(mergeItem),
+              items: mergeItems(previous.items),
               total: previous.total || totalValue,
             });
             pruneWorkshopCache(queryCacheRef.current, {
@@ -187,11 +195,11 @@ export function useWorkshopQuery({
       });
     };
     runBatch(0);
-  }, [pageSize]);
+  }, [filters.types, pageSize]);
 
   const prefetchFollowingPage = React.useCallback((currentPage: number, currentTotalPages: number) => {
     const nextPage = currentPage + 1;
-    const alreadyCached = !!findWorkshopCacheEntry(queryCacheRef.current, filters, nextPage, pageSize, exactPhrase, steamDataSource);
+    const alreadyCached = !!findWorkshopCacheEntry(queryCacheRef.current, filters, nextPage, pageSize, exactPhrase, steamDataSource, language);
     const plan = getNextPagePrefetchPlan({
       enabled: prefetchNextPage,
       page: currentPage,
@@ -204,8 +212,8 @@ export function useWorkshopQuery({
     const controller = new AbortController();
     const token = prefetchRequestTokenRef.current;
     prefetchRequestRef.current = controller;
-    const cacheKey = workshopCacheKey(filters, plan.page, pageSize, exactPhrase, steamDataSource);
-    void queryWorkshop(buildQuery(filters, plan.page, pageSize, exactPhrase, nsfw, steamDataSource), { signal: controller.signal })
+    const cacheKey = workshopCacheKey(filters, plan.page, pageSize, exactPhrase, steamDataSource, language);
+    void queryWorkshop(buildQuery(filters, plan.page, pageSize, exactPhrase, nsfw, steamDataSource, language), { signal: controller.signal })
       .then((data) => {
         if (token !== prefetchRequestTokenRef.current || controller.signal.aborted) return;
         const totalValue = data.total || data.items.length;
@@ -231,11 +239,11 @@ export function useWorkshopQuery({
       .finally(() => {
         if (token === prefetchRequestTokenRef.current && prefetchRequestRef.current === controller) prefetchRequestRef.current = null;
       });
-  }, [cancelNextPagePrefetch, exactPhrase, filters, nsfw, pageSize, prefetchNextPage, steamDataSource]);
+  }, [cancelNextPagePrefetch, exactPhrase, filters, language, nsfw, pageSize, prefetchNextPage, steamDataSource]);
 
   const loadItems = React.useCallback(async () => {
     if (!enabled) return;
-    const currentKey = workshopCacheKey(filters, page, pageSize, exactPhrase, steamDataSource);
+    const currentKey = workshopCacheKey(filters, page, pageSize, exactPhrase, steamDataSource, language);
     if (restoreKeyRef.current === currentKey) {
       restoreKeyRef.current = '';
       return;
@@ -244,10 +252,11 @@ export function useWorkshopQuery({
     cancelActiveQuery();
     const forceThis = forceRefreshRef.current;
     if (forceThis) forceRefreshRef.current = false;
-    const cacheKey = workshopCacheKey(filters, page, pageSize, exactPhrase, steamDataSource);
-    const cached = forceThis ? null : findWorkshopCacheEntry(queryCacheRef.current, filters, page, pageSize, exactPhrase, steamDataSource);
+    const cacheKey = workshopCacheKey(filters, page, pageSize, exactPhrase, steamDataSource, language);
+    const cached = forceThis ? null : findWorkshopCacheEntry(queryCacheRef.current, filters, page, pageSize, exactPhrase, steamDataSource, language);
     if (cached) {
       setError('');
+      setRequiresSteamLogin(false);
       setItems(cached.items.slice(0, pageSize));
       setTotal(cached.total);
       setServerTotalPages(cached.totalPages || Math.ceil(cached.total / pageSize));
@@ -265,8 +274,9 @@ export function useWorkshopQuery({
     setItems([]);
     setLoading(true);
     setError('');
+    setRequiresSteamLogin(false);
     try {
-      const queryParams = buildQuery(filters, page, pageSize, exactPhrase, nsfw, steamDataSource);
+      const queryParams = buildQuery(filters, page, pageSize, exactPhrase, nsfw, steamDataSource, language);
       if (forceThis) queryParams._refresh = 1;
       if (steamAccessEnhance && steamDataSource !== 'community') {
         setWarmingSteamIp(true);
@@ -316,7 +326,9 @@ export function useWorkshopQuery({
       if (requestId !== queryRequestRef.current) return;
       if (queryError instanceof DOMException && queryError.name === 'AbortError') return;
       if (queryError instanceof Error && queryError.name === 'AbortError') return;
+      const apiError = queryError as ApiError;
       setError(queryError instanceof Error ? queryError.message : String(queryError));
+      setRequiresSteamLogin(!!apiError?.requiresSteamLogin || apiError?.code === 'STEAM_CM_LOGIN_REQUIRED');
       setItems([]);
       setTotal(0);
       setServerTotalPages(0);
@@ -330,7 +342,7 @@ export function useWorkshopQuery({
       }
       if (forceThis) forceRefreshRef.current = false;
     }
-  }, [cancelActiveQuery, enabled, exactPhrase, filters, nsfw, onWarning, page, pageSize, prefetchFollowingPage, refreshToken, scheduleBackgroundDetails, setPage, steamAccessEnhance, steamDataSource]);
+  }, [cancelActiveQuery, enabled, exactPhrase, filters, language, nsfw, onWarning, page, pageSize, prefetchFollowingPage, refreshToken, scheduleBackgroundDetails, setPage, steamAccessEnhance, steamDataSource]);
 
   React.useEffect(() => {
     if (!prefetchNextPage) cancelNextPagePrefetch();
@@ -356,6 +368,7 @@ export function useWorkshopQuery({
     loading,
     warmingSteamIp,
     error,
+    requiresSteamLogin,
     suppressGridLayoutAnimation,
     loadItems,
     cancelActiveQuery,

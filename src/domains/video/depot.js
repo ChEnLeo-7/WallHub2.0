@@ -23,12 +23,15 @@ function createVideoDepot(deps = {}) {
         DEPOT_STREAM_TAIL_BYTES: deps.DEPOT_STREAM_TAIL_BYTES,
         DEPOT_STREAM_INITIAL_BUFFER_BYTES: deps.DEPOT_STREAM_INITIAL_BUFFER_BYTES,
         DEPOT_STREAM_AHEAD_BYTES: deps.DEPOT_STREAM_AHEAD_BYTES,
+        DEPOT_STREAM_CHUNK_BUFFER_BYTES: deps.DEPOT_STREAM_CHUNK_BUFFER_BYTES,
+        DEPOT_STREAM_READ_THROUGH: deps.DEPOT_STREAM_READ_THROUGH,
+        DEPOT_STREAM_READ_WINDOW_BYTES: deps.DEPOT_STREAM_READ_WINDOW_BYTES,
         DEPOT_STREAM_WORKER_IDLE_MS: deps.DEPOT_STREAM_WORKER_IDLE_MS,
         DEPOT_STREAM_CACHE_CLEANUP_HIGH_WATERMARK: deps.DEPOT_STREAM_CACHE_CLEANUP_HIGH_WATERMARK,
         DEPOT_STREAM_CACHE_CLEANUP_TARGET: deps.DEPOT_STREAM_CACHE_CLEANUP_TARGET,
         DEPOT_STREAM_CACHE_CLEANUP_DEBOUNCE_MS: deps.DEPOT_STREAM_CACHE_CLEANUP_DEBOUNCE_MS,
         depotCommandFor: deps.depotCommandFor,
-        getSteamKitStreamMaxDownloads: deps.getSteamKitStreamMaxDownloads,
+        getSteamKitMaxDownloads: deps.getSteamKitMaxDownloads,
         makeDepotLoginId: deps.makeDepotLoginId,
         getSteamContentCellId: deps.getSteamContentCellId,
         resolveDepotLogin: deps.resolveDepotLogin,
@@ -55,6 +58,7 @@ function createVideoDepot(deps = {}) {
         jsonRes: deps.jsonRes,
         send: deps.send,
         sleep: deps.sleep,
+        debugLogger: deps.debugLogger,
       });
     }
     return streamService;
@@ -85,7 +89,10 @@ function createVideoDepot(deps = {}) {
           throw err;
         }
       }
-      const info = Object.assign({}, worker.info || {}, { workerKey: worker.key });
+      const info = Object.assign({}, worker.info || {}, {
+        workerKey: worker.key,
+        cdnHost: worker.cdnHost || '',
+      });
       if (cancelled()) {
         registry.releaseDepotEntryIfUnreferenced(info, 'request-aborted');
         return null;
@@ -93,8 +100,8 @@ function createVideoDepot(deps = {}) {
       const token = registry.createDepot(source, info);
       const entry = registry.getDepot(token);
       if (entry) scheduleDepotStreamInitialPrefetch(entry, depotLogin);
-      logger.log(`[Video Source] id=${id} source=chunk/depot streaming=enabled status=ready file="${info.fileName || source.filename || ''}" size=${info.size || 0}`);
-      return { streamUrl: `/api/video/depot?token=${encodeURIComponent(token)}`, info };
+      (logger.info || logger.log).call(logger, `[Video Source] id=${id} source=chunk/depot streaming=enabled status=ready file="${info.fileName || source.filename || ''}" size=${info.size || 0}`);
+      return { streamUrl: `/api/video/depot?token=${encodeURIComponent(token)}`, info, cdnHost: info.cdnHost };
     } catch (error) {
       const err = deps.normalizeDepotError(error);
       if (err && err.requiresSteamLogin) throw err;
@@ -177,11 +184,43 @@ function createVideoDepot(deps = {}) {
   }
 
   async function handleDepotVideoRelease(req, res, token) {
+    const entry = registry.getDepot(token);
+    const service = getDepotStreamService();
+    if (entry && typeof service.finishPlayback === 'function') service.finishPlayback(entry, 'client-release');
     return deps.jsonRes(res, 200, registry.releaseDepot(token));
+  }
+
+  async function handleDepotVideoFeedback(req, res, token, payload) {
+    const entry = registry.getDepot(token);
+    if (!entry) return deps.jsonRes(res, 404, { error: 'Depot video stream expired' });
+    const result = getDepotStreamService().applyPlaybackFeedback(entry, payload);
+    return deps.jsonRes(res, 200, { success: true, ...result });
+  }
+
+  async function handleDepotVideoFullCacheStart(req, res, token) {
+    const entry = registry.getDepot(token);
+    if (!entry) return deps.jsonRes(res, 404, { error: 'Depot video stream expired' });
+    return deps.jsonRes(res, 202, { success: true, ...getDepotStreamService().startFullCache(entry) });
+  }
+
+  async function handleDepotVideoFullCacheStatus(req, res, token) {
+    const entry = registry.getDepot(token);
+    if (!entry) return deps.jsonRes(res, 404, { error: 'Depot video stream expired' });
+    return deps.jsonRes(res, 200, { success: true, ...getDepotStreamService().getFullCacheStatus(entry) });
+  }
+
+  async function handleDepotVideoFullCacheCancel(req, res, token) {
+    const entry = registry.getDepot(token);
+    if (!entry) return deps.jsonRes(res, 404, { error: 'Depot video stream expired' });
+    return deps.jsonRes(res, 200, { success: true, ...getDepotStreamService().cancelFullCache(entry, 'client-cancel') });
   }
 
   function getDepotWorkerCount() {
     return getDepotStreamService().workers.size;
+  }
+
+  function getDepotStreamDiagnostics() {
+    return getDepotStreamService().diagnostics();
   }
 
   return {
@@ -207,7 +246,12 @@ function createVideoDepot(deps = {}) {
     clearDepotStreamCacheNow,
     handleDepotVideoStream,
     handleDepotVideoRelease,
+    handleDepotVideoFeedback,
+    handleDepotVideoFullCacheStart,
+    handleDepotVideoFullCacheStatus,
+    handleDepotVideoFullCacheCancel,
     getDepotWorkerCount,
+    getDepotStreamDiagnostics,
   };
 }
 

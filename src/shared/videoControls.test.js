@@ -28,12 +28,17 @@ test('video long press uses two-times playback only while held', async () => {
   const {
     VIDEO_PLAYBACK_RATE_MAX,
     VIDEO_PLAYBACK_RATE_MIN,
+    getKeyboardLongPressPlaybackRate,
     getLongPressPlaybackRate,
     getRestoredPlaybackRate,
     normalizeVideoPlaybackRate,
   } = await import('../../frontend/src/lib/videoControls.mjs');
   assert.equal(getLongPressPlaybackRate(false), 1);
   assert.equal(getLongPressPlaybackRate(true), 2);
+  assert.equal(getKeyboardLongPressPlaybackRate(1), 2);
+  assert.equal(getKeyboardLongPressPlaybackRate(1.5), 2.5);
+  assert.equal(getKeyboardLongPressPlaybackRate(2), 3);
+  assert.equal(getKeyboardLongPressPlaybackRate(2.75), 3);
   assert.equal(getRestoredPlaybackRate(1.5), 1.5);
   assert.equal(getRestoredPlaybackRate(Number.NaN), 1);
   assert.equal(VIDEO_PLAYBACK_RATE_MIN, 0.5);
@@ -43,15 +48,6 @@ test('video long press uses two-times playback only while held', async () => {
   assert.equal(normalizeVideoPlaybackRate(4), 3);
   assert.equal(normalizeVideoPlaybackRate(0), 0.5);
   assert.equal(normalizeVideoPlaybackRate(Number.NaN), 1);
-});
-
-test('video player mode defaults to native and only accepts compatibility mode', async () => {
-  const { DEFAULT_VIDEO_PLAYER_MODE, normalizeVideoPlayerMode } = await import('../../frontend/src/lib/videoControls.mjs');
-  assert.equal(DEFAULT_VIDEO_PLAYER_MODE, 'native');
-  assert.equal(normalizeVideoPlayerMode('compatibility'), 'compatibility');
-  assert.equal(normalizeVideoPlayerMode('native'), 'native');
-  assert.equal(normalizeVideoPlayerMode('legacy'), 'native');
-  assert.equal(normalizeVideoPlayerMode(null), 'native');
 });
 
 test('video time formatting handles invalid, minute, and hour durations', async () => {

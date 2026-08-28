@@ -137,6 +137,7 @@ test('runtime handlers preserve compact runtime and diagnostic snapshots', async
     steamAccessDiagnosticSnapshot: () => ({ generatedAt: 14, routes: [] }),
     steamKitDepotStreamingEnabled: () => true,
     getDepotStreamWorkerCount: () => 2,
+    getDepotStreamDiagnostics: () => ({ readThrough: true, readWindowBytes: 524288, sessions: [] }),
     getDepotStreamCacheMaxMb: () => 512,
     updateService,
     platform: 'linux',
@@ -171,6 +172,9 @@ test('runtime handlers preserve compact runtime and diagnostic snapshots', async
     cacheMaxMb: 512,
     firstRangeBytes: 1024,
     rangeBytes: 2048,
+    readThrough: true,
+    readWindowBytes: 524288,
+    sessions: [],
   });
 });
 
@@ -221,6 +225,36 @@ test('settings POST continues to use mutation trust independently', async () => 
   assert.equal(res.statusCode, 403);
   assert.equal(res.body.code, 'SETTINGS_ORIGIN_DENIED');
   assert.equal(readChecks, 0);
+});
+
+test('stream cache clear rejects cross-site mutation requests', async () => {
+  let clears = 0;
+  const handlers = createSettingsHandlers({
+    jsonRes,
+    isMutationAllowed: () => false,
+    clearDepotStreamCacheNow: () => { clears += 1; return { success: true }; },
+  });
+  const res = createResponse();
+
+  await handlers.handleDepotStreamCacheClear({}, res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.code, 'SETTINGS_ORIGIN_DENIED');
+  assert.equal(clears, 0);
+});
+
+test('stream cache clear allows trusted mutation requests', async () => {
+  const handlers = createSettingsHandlers({
+    jsonRes,
+    isMutationAllowed: () => true,
+    clearDepotStreamCacheNow: () => ({ success: true, removedBytes: 42, remainingBytes: 0 }),
+  });
+  const res = createResponse();
+
+  await handlers.handleDepotStreamCacheClear({}, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { success: true, removedBytes: 42, remainingBytes: 0 });
 });
 
 test('settings changes restart the SteamKit query bridge when SteamAccess routing changes', async () => {
@@ -418,6 +452,7 @@ test('download and video handlers delegate without changing arguments or return 
     getDownloadsController: () => ({
       handleQueueAction: (...args) => { calls.push(['queue', ...args]); return 'queue-result'; },
     }),
+    readBody: async req => req.body || '',
   });
   assert.equal(handlers.handleVideoPlay('req', 'res', '123'), 'video-result');
   assert.equal(handlers.handleCachedItemDelete('res', 'key'), 'cache-result');
@@ -427,4 +462,28 @@ test('download and video handlers delegate without changing arguments or return 
     ['cache', 'res', 'key'],
     ['queue', 'req', 'res'],
   ]);
+});
+
+test('depot playback feedback parses a bounded JSON body before delegation', async () => {
+  const calls = [];
+  const handlers = createDownloadVideoHandlers({
+    getVideoController: () => ({
+      handleDepotVideoFeedback: (...args) => { calls.push(args); return 'feedback-result'; },
+    }),
+    getCacheItemsService: () => ({}),
+    getDownloadsController: () => ({}),
+    readBody: async (req, limit) => {
+      assert.equal(limit, 4096);
+      return req.body;
+    },
+  });
+  const req = { body: JSON.stringify({ state: 'playing', sequence: 1 }) };
+  const res = {};
+
+  assert.equal(await handlers.handleDepotVideoFeedback(req, res, 'token'), 'feedback-result');
+  assert.deepEqual(calls, [[req, res, 'token', { state: 'playing', sequence: 1 }]]);
+  await assert.rejects(
+    handlers.handleDepotVideoFeedback({ body: '{' }, res, 'token'),
+    error => error.statusCode === 400 && /Invalid playback feedback JSON/.test(error.message)
+  );
 });

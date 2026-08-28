@@ -235,6 +235,16 @@ test('settings dialog delegates navigation and stable panels to focused modules'
   assert.match(tabs, /export function SettingsTabs/);
 });
 
+test('streaming cache controls are subordinate to the experimental SteamKit streaming toggle', () => {
+  const dialog = fs.readFileSync(settingsDialogPath, 'utf8');
+  const experimental = fs.readFileSync(experimentalSettingsPath, 'utf8');
+  const download = fs.readFileSync(downloadSettingsPath, 'utf8');
+
+  assert.doesNotMatch(download, /depotStreamCacheMax/);
+  assert.match(experimental, /<ExperimentalToggle[\s\S]*?title=\{text\.steamKitDepotStreaming\}[\s\S]*?\{settings\.steamKitDepotStreaming \? \([\s\S]*?text\.depotStreamCacheMax/);
+  assert.match(dialog, /<ExperimentalSettingsPanel[\s\S]*?depotStreamCacheSelectValue=\{dialogState\.depotStreamCacheSelectValue\}[\s\S]*?onClearDepotStreamCache=\{onClearDepotStreamCache\}/);
+});
+
 test('settings logic stays within focused file boundaries', () => {
   const settingsDir = path.dirname(settingsDialogPath);
   const logicFiles = fs.readdirSync(settingsDir)
@@ -369,10 +379,10 @@ test('download choice stages use a short sequential fade transition', () => {
   assert.match(dialog, /key=\{`\$\{item\.publishedfileid \|\| 'download'\}-\$\{stage\}`\}[\s\S]*?exit=\{\{ opacity: 0, pointerEvents: 'none', transition: stageExitTransition \}\}/);
 });
 
-test('two-times video playback indicator uses the player height with a safe top inset', () => {
+test('dynamic video playback indicator uses the player height with a safe top inset', () => {
   const videoDialog = videoDialogSource;
 
-  assert.match(videoDialog, /longPressActive \|\| keyboardLongPressActive[\s\S]*?top-\[max\(1rem,6%\)\][\s\S]*?px-5 py-3 text-sm[\s\S]*?sm:px-6 sm:py-3\.5 sm:text-base[\s\S]*?text\.videoSpeedPlaying/);
+  assert.match(videoDialog, /longPressActive \|\| keyboardLongPressActive[\s\S]*?top-\[max\(1rem,6%\)\][\s\S]*?px-5 py-3 text-sm[\s\S]*?sm:px-6 sm:py-3\.5 sm:text-base[\s\S]*?text\.videoSpeedPlaying\.replace\('\{rate\}', String\(longPressPlaybackRate \|\| 2\)\)/);
   assert.doesNotMatch(videoDialog, /top-\[max\(1rem,6%\)\][\s\S]*?-translate-y-1\/2/);
 });
 
@@ -394,9 +404,9 @@ test('video shortcuts fade in only after playback actually starts', () => {
 
   assert.match(videoDialog, /const \[playbackStarted, setPlaybackStarted\] = React\.useState\(false\);/);
   assert.match(videoDialog, /const resetVideoPlayback = React\.useCallback[\s\S]*?setPlaybackStarted\(false\);/);
-  assert.match(videoDialog, /playback\.resetVideoPlayback\(\);[\s\S]*?playerMode,[\s\S]*?readySrc,/);
+  assert.match(videoDialog, /playback\.resetVideoPlayback\(\);[\s\S]*?readySrc,/);
   assert.match(videoDialog, /\{playbackStarted \? \([\s\S]*?<motion\.div[\s\S]*?initial=\{\{ opacity: 0, y: reduceMotion \? 0 : -4 \}\}[\s\S]*?animate=\{\{ opacity: 1, y: 0 \}\}/);
-  assert.match(videoDialog, /onPlaying=\{\(\) => setPlaybackStarted\(true\)\}/);
+  assert.match(videoDialog, /onPlaying=\{\(event\) => \{ setPlaybackStarted\(true\); onDepotPlaying\(event\.currentTarget\); \}\}/);
 });
 
 test('video controls release pointer focus and retain long-press keyboard speed control', () => {
@@ -406,19 +416,19 @@ test('video controls release pointer focus and retain long-press keyboard speed 
   assert.equal((videoDialog.match(/if \(event\.pointerType === 'mouse'\) event\.currentTarget\.blur\(\);/g) || []).length, 3);
 });
 
-test('compatibility video controls expose a direct playback speed selector', () => {
+test('WallHub video controls expose a direct playback speed selector', () => {
   const videoDialog = videoDialogSource;
   const select = fs.readFileSync(path.join(projectRoot, 'frontend', 'src', 'components', 'ui', 'select.tsx'), 'utf8');
 
   assert.match(videoDialog, /const VIDEO_PLAYBACK_RATE_OPTIONS = \[0\.5, 0\.75, 1,[\s\S]*?2\.75, 3\];/);
-  assert.match(videoDialog, /\{compatibilityMode \? <VideoControls controller=\{controller\} \/> : null\}/);
+  assert.match(videoDialog, /<VideoControls controller=\{controller\} \/>/);
   assert.match(videoDialog, /<Select[\s\S]*?value=\{String\(playbackRate\)\}[\s\S]*?options=\{VIDEO_PLAYBACK_RATE_SELECT_OPTIONS\}[\s\S]*?onChange=\{\(value\) => setVideoPlaybackRate\(Number\(value\)\)\}[\s\S]*?ariaLabel=\{text\.videoPlaybackRate\}[\s\S]*?portalContainerRef=\{fullscreenActive \? playerShellRef : undefined\}[\s\S]*?variant="media"/);
   assert.match(select, /border-border bg-popover[\s\S]*?text-foreground/);
   assert.match(select, /portalContainerRef\?\.current \|\| document\.body/);
   assert.match(select, /const SELECT_MENU_MAX_HEIGHT = 256;/);
   assert.match(select, /const MEDIA_SELECT_MENU_WIDTH = 88;/);
   assert.match(select, /rect\.top - optionHeight - 4/);
-  assert.match(select, /wallhub-media-select-menu rounded-md border-white\/20 bg-black\/90[\s\S]*?bg-white\/20 text-white/);
+  assert.match(select, /wallhub-media-select-menu rounded-md border-white\/20 bg-black\/55[\s\S]*?backdrop-blur-xl[\s\S]*?bg-white\/20 text-white/);
 });
 
 test('an open playback speed menu consumes the first video-area click', () => {
@@ -434,18 +444,26 @@ test('an open playback speed menu consumes the first video-area click', () => {
   assert.match(videoDialog, /onOpenChange=\{handlePlaybackRateMenuOpenChange\}/);
 });
 
-test('mobile video playback requires a double click or the playback button', () => {
+test('desktop video playback uses one click while narrow mobile playback requires a double click', () => {
   const videoDialog = videoDialogSource;
 
-  assert.match(videoDialog, /React\.useState\(\(\) => hasTouchVideoInteraction\(\)\)/);
-  assert.match(videoDialog, /window\.matchMedia\('\(pointer: coarse\)'\)/);
-  assert.match(videoDialog, /desktopVideoInteraction: viewportSize\.width >= 640 && !touchVideoInteraction/);
+  assert.match(videoDialog, /export function isDesktopVideoViewport\(width: number\)[\s\S]*?width >= 640/);
+  assert.match(videoDialog, /desktopVideoInteraction: isDesktopVideoViewport\(viewportSize\.width\)/);
+  assert.doesNotMatch(videoDialog, /maxTouchPoints|pointer: coarse|touchVideoInteraction/);
   assert.match(videoDialog, /const handleMobileVideoDoubleClick = React\.useCallback[\s\S]*?if \(desktopVideoInteraction \|\| suppressVideoClickRef\.current\) return;[\s\S]*?event\.preventDefault\(\);[\s\S]*?togglePlayback\(\);[\s\S]*?showControls\(\);/);
   assert.match(videoDialog, /touch-manipulation/);
   assert.match(videoDialog, /const handleVideoClick = React\.useCallback[\s\S]*?if \(!desktopVideoInteraction\) \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?showControls\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?togglePlayback\(\);/);
   assert.match(videoDialog, /onClick=\{handleVideoClick\}/);
   assert.match(videoDialog, /onDoubleClick=\{!desktopVideoInteraction \? handleMobileVideoDoubleClick : undefined\}/);
   assert.match(videoDialog, /onClick=\{togglePlayback\}[\s\S]*?aria-label=\{isPlaying \? text\.videoPause : text\.videoPlay\}/);
+});
+
+test('video seek control removes its native focus rectangle', () => {
+  const videoDialog = videoDialogSource;
+  const styles = fs.readFileSync(path.join(projectRoot, 'frontend', 'src', 'styles.css'), 'utf8');
+
+  assert.match(videoDialog, /wallhub-video-seek[^\"]*border-0 outline-none[^\"]*focus-visible:outline-none[^\"]*focus-visible:ring-0/);
+  assert.match(styles, /\.wallhub-video-seek:focus,[\s\S]*?\.wallhub-video-seek:focus-visible[\s\S]*?outline: 0;[\s\S]*?box-shadow: none;/);
 });
 
 test('video seek slider previews while dragging and commits on pointer release', () => {
@@ -477,6 +495,21 @@ test('non-video play defaults open the download flow and Steam actions wait thre
   assert.match(steamController, /const interval = window\.setInterval\([\s\S]*?\}, 1000\);/);
   assert.match(steamController, /const timeout = window\.setTimeout\(async \(\) => \{[\s\S]*?\}, 3000\);/);
   assert.match(steamController, /cancel-scheduled-remote-\$\{kind\}/);
+});
+
+test('WallHub owns all visible video controls and shows browser buffered ranges', () => {
+  const videoDialog = videoDialogSource;
+  const settings = fs.readFileSync(path.join(projectRoot, 'frontend', 'src', 'components', 'settings', 'ExperimentalSettingsPanel.tsx'), 'utf8');
+  const preferences = fs.readFileSync(path.join(projectRoot, 'frontend', 'src', 'hooks', 'usePreferences.ts'), 'utf8');
+
+  assert.match(videoDialog, /controls=\{false\}/);
+  assert.match(videoDialog, /disablePictureInPicture/);
+  assert.match(videoDialog, /disableRemotePlayback/);
+  assert.match(videoDialog, /bufferedRanges\.map/);
+  assert.match(videoDialog, /wallhub-video-seek/);
+  assert.doesNotMatch(videoDialog, /controls=\{!compatibilityMode\}/);
+  assert.doesNotMatch(settings, /videoPlayerMode|videoPlayerControls/);
+  assert.doesNotMatch(preferences, /videoPlayerMode/);
 });
 
 test('App delegates preferences settings controls and overlay history to focused feature hooks', () => {
@@ -555,6 +588,27 @@ test('App shell delegates home dialogs downloads author navigation and home coor
   assert.match(author, /restoreWorkshopState\(snapshot\)/);
   assert.match(home, /export function useHomeCoordinator/);
   assert.match(home, /defaultHomeFilters\(GENRES, TEXT\.zh\)/);
+});
+
+test('successful Steam login refreshes the failed Workshop query automatically', () => {
+  const app = fs.readFileSync(appPath, 'utf8');
+  const dialogs = fs.readFileSync(appDialogsPath, 'utf8');
+  assert.match(app, /onLoginSuccess=\{refreshWorkshopAfterLogin\}/);
+  assert.match(app, /workshopQuery\.clearCache\(\)/);
+  assert.match(app, /workshopQuery\.markForceRefresh\(\)/);
+  assert.match(app, /setFilterRefreshToken\(\(value\) => value \+ 1\)/);
+  assert.match(dialogs, /onLoginSuccess\(\);/);
+});
+
+test('pending persistent Steam login replaces only Steam CM loading with account recovery', () => {
+  const app = fs.readFileSync(appPath, 'utf8');
+  const home = fs.readFileSync(homePagePath, 'utf8');
+
+  assert.match(app, /const restoringSteamAccount = isSteamAccountRecoveryBlockingWorkshop\([\s\S]*?!!steamController\.steam\?\.pendingValidation,[\s\S]*?settings\.settingsForm\.steamDataSource,[\s\S]*?\);/);
+  assert.match(app, /restoringSteamAccount=\{restoringSteamAccount\}/);
+  assert.match(app, /if \(!pageVisible \|\| !steamController\.steam\?\.pendingValidation\) return;[\s\S]*?steamController\.refreshSteamStatus\(\);[\s\S]*?if \(!workshopQuery\.loading\) return;[\s\S]*?setInterval\(steamController\.refreshSteamStatus, 1000\)/);
+  assert.match(home, /loading[\s\S]*?restoringSteamAccount \? text\.restoringSteamAccount/);
+  assert.match(home, /<LoadingState warmingSteamIp=\{warmingSteamIp\} restoringSteamAccount=\{restoringSteamAccount\}/);
 });
 
 test('home view switches keep visual regions proportional and scale action buttons independently', () => {

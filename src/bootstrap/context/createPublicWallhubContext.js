@@ -45,6 +45,7 @@ function createPublicWallhubContext(scope) {
         steamAccessDiagnosticSnapshot: scope.steamAccessDiagnosticSnapshot,
         steamKitDepotStreamingEnabled: scope.steamKitDepotStreamingEnabled,
         getDepotStreamWorkerCount: () => scope.getDepotStreamService().workers.size,
+        getDepotStreamDiagnostics: () => scope.getVideoController().getDepotStreamDiagnostics(),
         getDepotStreamCacheMaxMb: scope.getDepotStreamCacheMaxMb,
         updateService: scope.UPDATE_SERVICE,
         platform: process.platform,
@@ -116,6 +117,7 @@ function createPublicWallhubContext(scope) {
         effectiveDownloaderMode: scope.effectiveDownloaderMode,
         getDownloaderMode: scope.getDownloaderMode,
         logger: console,
+        debugLogger: scope.debugLogger,
       },
       settingsHandlers: {
         jsonRes,
@@ -152,6 +154,7 @@ function createPublicWallhubContext(scope) {
         getVideoController: scope.getVideoController,
         getCacheItemsService: scope.getCacheItemsService,
         getDownloadsController: scope.getDownloadsController,
+        readBody,
       },
       serverControlHandlers: {
         jsonRes,

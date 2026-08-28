@@ -1,5 +1,4 @@
 import type { Dispatch, SetStateAction } from 'react';
-import type { VideoPlayerMode } from '@/hooks/usePreferences';
 import type { RuntimeDiagnostics, RuntimeStatus, SteamStatus } from '@/lib/api';
 import type { Language } from '@/lib/text';
 
@@ -104,8 +103,6 @@ export type SettingsDialogContentProps = SettingsStateProps & {
   setHomePageSize: (size: number) => void;
   prefetchNextPage: boolean;
   setPrefetchNextPage: (enabled: boolean) => void;
-  videoPlayerMode: VideoPlayerMode;
-  setVideoPlayerMode: (mode: VideoPlayerMode) => void;
   onClearDepotStreamCache: () => void;
   onLogin: () => void;
   onLogout: () => void;

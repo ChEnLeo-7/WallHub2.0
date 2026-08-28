@@ -104,6 +104,8 @@ function buildCommunityWorkshopBrowseUrl(params = {}) {
     search.set('sortmethod', personalSort);
     normalizeCommunityTagList((params.tags || []).concat(collectArrayLikeParams(params, 'requiredtags')))
       .forEach(tag => search.append('requiredtags[]', tag));
+    normalizeCommunityTagList((params.excludedTags || []).concat(collectArrayLikeParams(params, 'excludedtags')))
+      .forEach(tag => search.append('excludedtags[]', tag));
     const steamId = normalizeSteamId(params.steamid || params.profileSteamId);
     const basePath = steamId ? `/profiles/${steamId}/myworkshopfiles/` : '/my/myworkshopfiles/';
     return `https://steamcommunity.com${basePath}?${search.toString()}`;
@@ -116,19 +118,20 @@ function buildCommunityWorkshopBrowseUrl(params = {}) {
     return `https://steamcommunity.com/sharedfiles/votingqueue/?${search.toString()}`;
   }
 
-  const sort = params.sortmethod ? personalSort : requestedSort || COMMUNITY_SORT_MAP[parseInt(params.query_type, 10)] || 'trend';
+  const searchText = String(params.searchText || params.search_text || '').trim();
+  const mappedSort = params.sortmethod ? personalSort : requestedSort || COMMUNITY_SORT_MAP[parseInt(params.query_type, 10)] || 'trend';
+  const allTimeTrend = mappedSort === 'trend' && ['-1', '0'].includes(String(params.days));
+  const sort = allTimeTrend ? 'toprated' : mappedSort;
   const search = new URLSearchParams();
   search.set('appid', String(appId));
   search.set('browsesort', sort);
   search.set('section', params.section || 'readytouseitems');
-  search.set('actualsort', sort);
   search.set('p', String(page));
   search.set('num_per_page', String(pageSize));
-  const searchText = String(params.searchText || params.search_text || '').trim();
   if (searchText) search.set('searchtext', searchText);
   if (params.browsefilter) search.set('browsefilter', String(params.browsefilter));
   if (params.special_filter) search.set('special_filter', String(params.special_filter));
-  if (params.days && sort === 'trend' && String(params.days) !== '0') search.set('days', String(params.days));
+  if (params.days && sort === 'trend') search.set('days', String(params.days));
 
   normalizeCommunityTagList((params.tags || []).concat(collectArrayLikeParams(params, 'requiredtags')))
     .forEach(tag => search.append('requiredtags[]', tag));
@@ -216,6 +219,8 @@ function buildSteamApiQueryFields(params = {}, singleGenreTag, singleResolutionT
     numperpage: Math.max(1, Math.min(100, parseInt(params.numperpage, 10) || 30)),
     appid: parseInt(params.appid, 10) || 431960,
     search_text: String(params.search_text || '').trim(),
+    search_text_target: parseInt(params.search_text_target, 10) === 1 ? 1 : 0,
+    mobile_compatible: ['1', 'true', 'yes', 'on'].includes(String(params.mobile_compatible || '').toLowerCase()),
     days: parseInt(params.days, 10) || 0,
     requiredTags: Array.from(new Set(requiredTags)),
     excludedTags: Array.from(new Set(excludedTags)),
@@ -228,17 +233,22 @@ function normalizeSteamApiTrendDays(days) {
   return Math.max(1, Math.min(365, parsed));
 }
 
+function normalizeSteamQueryLanguage(value) {
+  const language = String(value || '').trim().toLowerCase();
+  return language === 'schinese' || language === 'zh' || language === 'zh-cn' || language === '6' ? 6 : 0;
+}
+
 function buildSteamApiQueryInput(params = {}, singleGenreTag, singleResolutionTag) {
   const q = buildSteamApiQueryFields(params, singleGenreTag, singleResolutionTag);
   const specialQueryType = { 2: 4, 3: 5, 4: 7 }[parseInt(params.special_filter, 10)] || 0;
   const input = {
-    query_type: q.search_text && !specialQueryType ? 12 : (specialQueryType || q.query_type),
+    query_type: specialQueryType || q.query_type,
     page: q.page,
     numperpage: q.numperpage,
     creator_appid: q.appid,
     appid: q.appid,
     filetype: 0,
-    match_all_tags: true,
+    match_all_tags: !['0', 'false', 'no', 'off'].includes(String(params.match_all_tags ?? 'true').toLowerCase()),
     requiredtags: q.requiredTags,
     excludedtags: q.excludedTags,
     return_tags: true,
@@ -246,14 +256,16 @@ function buildSteamApiQueryInput(params = {}, singleGenreTag, singleResolutionTa
     return_short_description: true,
     return_metadata: true,
     return_vote_data: true,
+    language: normalizeSteamQueryLanguage(params.language),
+    search_text_target: q.search_text_target,
+    required_kv_tags: q.mobile_compatible
+      ? [{ key: 'app_workshop_eula_version', value: '3' }]
+      : [],
   };
   if (q.search_text) input.search_text = q.search_text;
   if (input.query_type === 3) {
     const days = normalizeSteamApiTrendDays(q.days);
-    if (days > 0) {
-      input.days = days;
-      input.include_recent_votes_only = true;
-    }
+    if (days > 0) input.days = days;
   }
   return input;
 }
@@ -291,10 +303,6 @@ function buildSteamCmQueryInput(params = {}, singleGenreTag, singleResolutionTag
   return Object.assign({ operation: 'query-files' }, buildSteamApiQueryInput(params, singleGenreTag, singleResolutionTag));
 }
 
-function appendBooleanParam(search, name, value) {
-  search.set(name, value ? '1' : '0');
-}
-
 function normalizeSteamWebApiBaseUrl(baseUrl) {
   const raw = String(baseUrl || '').trim();
   if (!raw) return 'https://api.steampowered.com';
@@ -312,23 +320,8 @@ function buildSteamApiQueryUrl(apiKey, params = {}, singleGenreTag, singleResolu
   const search = new URLSearchParams();
   search.set('key', apiKey);
   search.set('format', 'json');
-  search.set('query_type', String(input.query_type));
-  search.set('page', String(input.page));
-  search.set('numperpage', String(input.numperpage));
-  search.set('creator_appid', String(input.creator_appid));
-  search.set('appid', String(input.appid));
-  search.set('filetype', String(input.filetype));
-  appendBooleanParam(search, 'match_all_tags', input.match_all_tags);
-  appendBooleanParam(search, 'return_tags', input.return_tags);
-  appendBooleanParam(search, 'return_previews', input.return_previews);
-  appendBooleanParam(search, 'return_short_description', input.return_short_description);
-  appendBooleanParam(search, 'return_metadata', input.return_metadata);
-  appendBooleanParam(search, 'return_vote_data', input.return_vote_data);
-  if (input.search_text) search.set('search_text', input.search_text);
-  if (input.days > 0) search.set('days', String(input.days));
-  if (input.include_recent_votes_only) appendBooleanParam(search, 'include_recent_votes_only', true);
-  input.requiredtags.forEach((tag, index) => search.set(`requiredtags[${index}]`, tag));
-  input.excludedtags.forEach((tag, index) => search.set(`excludedtags[${index}]`, tag));
+  // Steam service methods require input_json for nested message fields such as required_kv_tags.
+  search.set('input_json', JSON.stringify(input));
   return `${normalizeSteamWebApiBaseUrl(baseUrl)}/IPublishedFileService/QueryFiles/v1/?${search.toString()}`;
 }
 
@@ -347,9 +340,8 @@ function steamApiHeaders(apiKey, extra = {}) {
   }, extra || {});
 }
 
-async function queryWorkshopBySteamApi(apiKey, params = {}, genreOr = [], helpers = {}) {
+async function queryWorkshopBySteamApi(apiKey, params = {}, _legacyGenreOr = [], helpers = {}) {
   const get = helpers.get;
-  const logger = helpers.logger || console;
   const baseUrl = typeof helpers.getSteamWebApiBaseUrl === 'function' ? helpers.getSteamWebApiBaseUrl() : helpers.steamWebApiBaseUrl;
   if (typeof get !== 'function') throw new Error('Workshop Steam API GET dependency missing');
 
@@ -380,43 +372,21 @@ async function queryWorkshopBySteamApi(apiKey, params = {}, genreOr = [], helper
     };
   }
 
-  const genres = Array.from(new Set((genreOr || []).map(value => String(value || '').trim()).filter(Boolean)));
-  const variants = genres.length > 1 && genres.length <= 48
-    ? genres.map(genre => ({ genre, resolution: '' }))
-    : [{ genre: genres.length === 1 ? genres[0] : '', resolution: '' }];
-  if (genres.length > 48) logger.log(`[Query] SteamAPI genre OR(${genres.length}) uses broad query + local filtering`);
-  const results = await Promise.all(variants.map(async ({ genre, resolution }) => {
-    const raw = await get(
-      buildSteamApiQueryUrl(apiKey, params, genre, resolution, baseUrl),
-      steamApiHeaders(apiKey, helpers.signal ? { signal: helpers.signal } : {}),
-      Number(helpers.timeoutMs || 22000)
-    );
-    const response = JSON.parse(raw.toString('utf8')).response || {};
-    const details = Array.isArray(response.publishedfiledetails) ? response.publishedfiledetails : [];
-    const ids = Array.isArray(response.publishedfileids) && response.publishedfileids.length
-      ? response.publishedfileids.map(value => String(value))
-      : details.map(detail => String(detail && detail.publishedfileid || '')).filter(Boolean);
-    const detailMap = {};
-    details.forEach((detail) => {
-      if (detail && detail.result === 1 && detail.publishedfileid) detailMap[String(detail.publishedfileid)] = detail;
-    });
-    return { ids, totalCount: parseInt(response.total, 10) || 0, detailMap };
-  }));
-
-  const ids = [];
+  const raw = await get(
+    buildSteamApiQueryUrl(apiKey, params, '', '', baseUrl),
+    steamApiHeaders(apiKey, helpers.signal ? { signal: helpers.signal } : {}),
+    Number(helpers.timeoutMs || 22000)
+  );
+  const response = JSON.parse(raw.toString('utf8')).response || {};
+  const details = Array.isArray(response.publishedfiledetails) ? response.publishedfiledetails : [];
+  const ids = Array.isArray(response.publishedfileids) && response.publishedfileids.length
+    ? response.publishedfileids.map(value => String(value))
+    : details.map(detail => String(detail && detail.publishedfileid || '')).filter(Boolean);
   const detailMap = {};
-  const seen = new Set();
-  let totalCount = 0;
-  for (const result of results) {
-    totalCount += result.totalCount;
-    Object.assign(detailMap, result.detailMap);
-    for (const id of result.ids) {
-      if (seen.has(id)) continue;
-      seen.add(id);
-      ids.push(id);
-    }
-  }
-  return { ids, totalCount, detailMap };
+  details.forEach((detail) => {
+    if (detail && detail.result === 1 && detail.publishedfileid) detailMap[String(detail.publishedfileid)] = detail;
+  });
+  return { ids, totalCount: parseInt(response.total, 10) || 0, detailMap, hints: {}, upstreamRequests: 1 };
 }
 
 module.exports = {

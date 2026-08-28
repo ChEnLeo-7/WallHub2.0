@@ -22,6 +22,7 @@ function createSteamKitLoginService(options = {}) {
   const effectiveDownloaderMode = options.effectiveDownloaderMode;
   const configDir = options.configDir;
   const logger = options.logger || console;
+  const debugLogger = options.debugLogger || logger;
 
   const normalizeSteamKitLoginError = createLoginErrorNormalizer(options.normalizeDepotError);
   const qrCodec = createQrCodec({
@@ -48,6 +49,7 @@ function createSteamKitLoginService(options = {}) {
     normalizeSteamKitLoginError,
     configDir,
     logger,
+    debugLogger,
   };
   const passwordSession = createPasswordSession(sharedSessionOptions);
   const qrSession = createQrSession({
@@ -67,6 +69,7 @@ function createSteamKitLoginService(options = {}) {
     normalizeSteamKitLoginError,
     configDir,
     logger,
+    debugLogger,
   });
   const webSession = createWebSession({
     ensureDepotDownloaderReady,
@@ -77,6 +80,7 @@ function createSteamKitLoginService(options = {}) {
     makeDepotLoginId,
     configDir,
     logger,
+    debugLogger,
   });
 
   function getPasswordSession(id) {

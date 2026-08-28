@@ -30,7 +30,7 @@ function assembleWorkshopServices(scope) {
     steamKitPersistentLoginIsUsable: scope.steamKitPersistentLoginIsUsable,
     effectiveDownloaderMode: scope.effectiveDownloaderMode,
     cachedSteamLoginUsername: scope.cachedSteamLoginUsername,
-    logger: console,
+    logger: scope.debugLogger,
   });
   scope.getFileDetails = scope.WORKSHOP_HANDLERS.getFileDetails;
   scope.fmtBytes = workshopText.fmtBytes;

@@ -1,6 +1,14 @@
 'use strict';
 
-const { cleanText } = require('./text');
+const {
+  CONTENT_RATING_TAG_LIST,
+  LEGACY_RESOLUTION_TAG_MAP,
+  STEAM_RESOLUTION_TAG_LIST,
+  WORKSHOP_CATEGORY_TAG_LIST,
+  WORKSHOP_GENRE_TAG_LIST,
+  WORKSHOP_TYPE_TAG_LIST,
+  WORKSHOP_UTILITY_TAG_LIST,
+} = require('./filterCatalog');
 
 const BLOCKED_NSFW_TAGS = new Set([
   'mature',
@@ -14,8 +22,36 @@ const BLOCKED_NSFW_TAGS = new Set([
   'nsfw',
 ]);
 
-const CONTENT_RATING_TAGS = new Set(['Everyone', 'Questionable', 'Mature']);
-const WORKSHOP_TYPE_TAGS = new Set(['Scene', 'Video', 'Web', 'Application']);
+const CONTENT_RATING_TAGS = new Set(CONTENT_RATING_TAG_LIST);
+const WORKSHOP_TYPE_TAGS = new Set(WORKSHOP_TYPE_TAG_LIST);
+const FILTER_GROUPS = [
+  { name: 'type_or', tags: WORKSHOP_TYPE_TAG_LIST },
+  { name: 'rating_or', tags: CONTENT_RATING_TAG_LIST },
+  { name: 'genre_or', tags: WORKSHOP_GENRE_TAG_LIST },
+  { name: 'resolution_or', tags: STEAM_RESOLUTION_TAG_LIST, aliases: LEGACY_RESOLUTION_TAG_MAP },
+  { name: 'category_or', tags: WORKSHOP_CATEGORY_TAG_LIST, fixedSelection: ['Wallpaper'] },
+];
+const OFFICIAL_TAG_ORDER = new Map([
+  ...WORKSHOP_TYPE_TAG_LIST,
+  ...CONTENT_RATING_TAG_LIST,
+  ...WORKSHOP_GENRE_TAG_LIST,
+  ...STEAM_RESOLUTION_TAG_LIST,
+  ...WORKSHOP_CATEGORY_TAG_LIST,
+  ...WORKSHOP_UTILITY_TAG_LIST,
+].map((tag, index) => [tag.toLowerCase(), index]));
+
+function compareWorkshopTags(left, right) {
+  const leftText = workshopTagName(left);
+  const rightText = workshopTagName(right);
+  const leftRank = OFFICIAL_TAG_ORDER.get(leftText.toLowerCase());
+  const rightRank = OFFICIAL_TAG_ORDER.get(rightText.toLowerCase());
+  if (leftRank !== undefined || rightRank !== undefined) {
+    if (leftRank === undefined) return 1;
+    if (rightRank === undefined) return -1;
+    return leftRank - rightRank;
+  }
+  return leftText.localeCompare(rightText, 'en', { sensitivity: 'base' });
+}
 
 function workshopTagName(tag) {
   return String((tag && tag.tag) || tag || '').trim();
@@ -55,58 +91,61 @@ function collectArrayLikeParams(params, name) {
   return Array.from(new Set(out));
 }
 
-function itemTagSet(item) {
-  return new Set((Array.isArray(item && item.tags) ? item.tags : [])
-    .map(tag => workshopTagName(tag).toLowerCase())
-    .filter(Boolean));
-}
-
-function itemMatchesAnyTag(item, tags) {
-  const normalized = (tags || []).map(tag => workshopTagName(tag).toLowerCase()).filter(Boolean);
-  if (!normalized.length) return true;
-  const tagSet = itemTagSet(item);
-  return normalized.some(tag => tagSet.has(tag));
-}
-
-function collectRatingOrParams(params, nsfwEnabled = false) {
-  return collectArrayLikeParams(params, 'rating_or')
-    .filter(tag => CONTENT_RATING_TAGS.has(tag))
-    .filter(tag => nsfwEnabled || !isBlockedNsfwTag(tag));
-}
-
-function itemMatchesExactPhrase(item, phrase) {
-  const query = cleanText(phrase).toLowerCase();
-  if (!query) return true;
-  const haystack = [
-    item && item.title,
-    item && item.short_description,
-    item && item.description,
-    item && item.author,
-    item && item.creator,
-    item && item.publishedfileid,
-  ].map(value => cleanText(value).toLowerCase()).join('\n');
-  return haystack.includes(query);
-}
-
-function sanitizeWorkshopQueryParams(params, nsfwEnabled = false) {
+function sanitizeWorkshopQueryParams(params, nsfwEnabled = false, steamDataSource = 'community') {
   const clean = Object.assign({}, params || {});
   if (clean.workshop_id) clean.workshop_id = String(clean.workshop_id || '').replace(/[^\d]/g, '');
-  if (nsfwEnabled) return clean;
-
-  const requiredTags = [];
-  const excludedTags = [];
-  for (const [key, value] of Object.entries(clean)) {
-    if (!/^requiredtags/.test(key) && !/^excludedtags/.test(key)) continue;
-    delete clean[key];
-    const tag = workshopTagName(value);
-    if (!tag || isBlockedNsfwTag(tag)) continue;
-    if (/^requiredtags/.test(key)) requiredTags.push(tag);
-    else excludedTags.push(tag);
+  const requiredTags = collectArrayLikeParams(clean, 'requiredtags')
+    .map(tag => LEGACY_RESOLUTION_TAG_MAP[tag] || tag);
+  const excludedTags = collectArrayLikeParams(clean, 'excludedtags')
+    .map(tag => LEGACY_RESOLUTION_TAG_MAP[tag] || tag);
+  for (const key of Object.keys(clean)) {
+    if (/^(?:requiredtags|excludedtags)(?:\[\d+\])?$/.test(key)) delete clean[key];
+  }
+  for (const group of FILTER_GROUPS) {
+    const allowed = new Set(group.tags);
+    const selected = group.fixedSelection || [
+      ...collectArrayLikeParams(clean, group.name),
+      ...requiredTags,
+    ]
+      .map(tag => group.aliases && group.aliases[tag] || tag)
+      .filter(tag => allowed.has(tag));
+    for (const key of Object.keys(clean)) {
+      if (new RegExp(`^${group.name}(?:\\[\\d+\\])?$`).test(key)) delete clean[key];
+    }
+    if (!selected.length || selected.length >= group.tags.length) continue;
+    const selectedSet = new Set(selected);
+    group.tags.forEach((tag) => {
+      if (!selectedSet.has(tag)) excludedTags.push(tag);
+    });
   }
 
-  ['Mature', 'Adult Only Sexual Content', 'Sexual Content', 'Nudity', 'R18', 'NSFW'].forEach(tag => excludedTags.push(tag));
-  Array.from(new Set(requiredTags)).forEach((tag, index) => { clean[`requiredtags[${index}]`] = tag; });
-  Array.from(new Set(excludedTags)).forEach((tag, index) => { clean[`excludedtags[${index}]`] = tag; });
+  const groupedTags = new Set(FILTER_GROUPS.flatMap(group => group.tags));
+  const filteredRequiredTags = (nsfwEnabled ? requiredTags : requiredTags.filter(tag => !isBlockedNsfwTag(tag)))
+    .filter(tag => !groupedTags.has(tag));
+  // Wallpaper Engine sanitizes normal browse results before exposing them to
+  // the UI. Steam's public query surfaces do not expose that native switch, so
+  // keep non-wallpaper Workshop categories out at the source.
+  filteredRequiredTags.push('Wallpaper');
+  const filteredExcludedTags = nsfwEnabled ? excludedTags : excludedTags.filter(tag => !isBlockedNsfwTag(tag));
+
+  const mobileCompatible = steamDataSource !== 'community' && ['1', 'true', 'yes', 'on'].includes(String(clean.mobile_compatible || '').toLowerCase());
+  if (mobileCompatible) {
+    filteredExcludedTags.push('Application', 'Web');
+    clean.mobile_compatible = 1;
+  } else {
+    delete clean.mobile_compatible;
+  }
+  if (steamDataSource === 'community') delete clean.search_text_target;
+  else if (parseInt(clean.search_text_target, 10) === 1) clean.search_text_target = 1;
+  else delete clean.search_text_target;
+
+  if (!nsfwEnabled) {
+    ['Mature', 'Adult Only Sexual Content', 'Sexual Content', 'Nudity', 'R18', 'NSFW'].forEach(tag => filteredExcludedTags.push(tag));
+  }
+  Array.from(new Set(filteredRequiredTags)).sort(compareWorkshopTags)
+    .forEach((tag, index) => { clean[`requiredtags[${index}]`] = tag; });
+  Array.from(new Set(filteredExcludedTags)).sort(compareWorkshopTags)
+    .forEach((tag, index) => { clean[`excludedtags[${index}]`] = tag; });
   return clean;
 }
 
@@ -121,16 +160,13 @@ function normalizeWorkshopIdSearch(value) {
 module.exports = {
   BLOCKED_NSFW_TAGS,
   CONTENT_RATING_TAGS,
+  STEAM_RESOLUTION_TAG_LIST,
   WORKSHOP_TYPE_TAGS,
   workshopTagName,
   isBlockedNsfwTag,
   itemAllowedByContentSafety,
   filterItemsByContentSafety,
   collectArrayLikeParams,
-  itemTagSet,
-  itemMatchesAnyTag,
-  collectRatingOrParams,
-  itemMatchesExactPhrase,
   sanitizeWorkshopQueryParams,
   normalizeWorkshopIdSearch,
 };

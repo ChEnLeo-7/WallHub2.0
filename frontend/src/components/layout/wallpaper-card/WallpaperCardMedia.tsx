@@ -4,6 +4,16 @@ import { motion } from 'motion/react';
 import { HOME_VIEW_MEDIA_LAYOUT_TRANSITION } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
+const COVER_RETRY_DELAYS_MS = [1000, 3000];
+
+function coverRetryUrl(previewUrl: string, attempt: number, nonce: number) {
+  if (!attempt) return previewUrl;
+  const hashIndex = previewUrl.indexOf('#');
+  const base = hashIndex >= 0 ? previewUrl.slice(0, hashIndex) : previewUrl;
+  const hash = hashIndex >= 0 ? previewUrl.slice(hashIndex) : '';
+  return `${base}${base.includes('?') ? '&' : '?'}wallhub_cover_retry=${attempt}-${nonce}${hash}`;
+}
+
 function useViewportActivity(ref: React.RefObject<HTMLElement>, disabled: boolean) {
   const [active, setActive] = React.useState(false);
   React.useEffect(() => {
@@ -33,6 +43,7 @@ export function WallpaperCardMedia({
   type,
   typeLabel,
   noCoverLabel,
+  coverNetworkErrorLabel,
   view,
   layoutAnimationEnabled,
   preserveAspectLayout,
@@ -44,6 +55,7 @@ export function WallpaperCardMedia({
   type: string;
   typeLabel: string;
   noCoverLabel: string;
+  coverNetworkErrorLabel: string;
   view: 'grid' | 'list';
   layoutAnimationEnabled: boolean;
   preserveAspectLayout: 'preserve-aspect' | false;
@@ -52,10 +64,47 @@ export function WallpaperCardMedia({
   const mediaRef = React.useRef<HTMLDivElement>(null);
   const equalizerActive = useViewportActivity(mediaRef, reducedMotion);
   const [loadedPreviewUrl, setLoadedPreviewUrl] = React.useState('');
-  const [failedPreviewUrl, setFailedPreviewUrl] = React.useState('');
+  const [retryState, setRetryState] = React.useState({ previewUrl: '', attempt: 0, nonce: 0, failed: false });
+  const retryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentRetryState = retryState.previewUrl === previewUrl
+    ? retryState
+    : { previewUrl: previewUrl || '', attempt: 0, nonce: 0, failed: false };
   const previewReady = !!previewUrl && loadedPreviewUrl === previewUrl;
-  const previewFailed = !!previewUrl && failedPreviewUrl === previewUrl;
+  const previewFailed = !!previewUrl && currentRetryState.failed;
+  const imageUrl = previewUrl
+    ? coverRetryUrl(previewUrl, currentRetryState.attempt, currentRetryState.nonce)
+    : '';
   const showPlaceholder = previewPending || (!!previewUrl && !previewFailed);
+  React.useEffect(() => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+    setRetryState({ previewUrl: previewUrl || '', attempt: 0, nonce: 0, failed: false });
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    };
+  }, [previewUrl]);
+
+  const handlePreviewError = () => {
+    if (!previewUrl || retryTimerRef.current) return;
+    const attempt = currentRetryState.attempt;
+    if (attempt >= COVER_RETRY_DELAYS_MS.length) {
+      setRetryState({ previewUrl, attempt, nonce: currentRetryState.nonce, failed: true });
+      return;
+    }
+    retryTimerRef.current = setTimeout(() => {
+      retryTimerRef.current = null;
+      setRetryState((current) => current.previewUrl === previewUrl
+        ? { previewUrl, attempt: attempt + 1, nonce: Date.now(), failed: false }
+        : current);
+    }, COVER_RETRY_DELAYS_MS[attempt]);
+  };
+
+  const handlePreviewLoad = () => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+    setLoadedPreviewUrl(previewUrl || '');
+  };
   return (
     <>
       <motion.div
@@ -81,13 +130,13 @@ export function WallpaperCardMedia({
                   ? 'scale-100 opacity-0'
                   : 'scale-[1.015] opacity-0',
             )}
-            src={previewUrl}
+            src={imageUrl}
             alt={title}
             loading="lazy"
             decoding="async"
             draggable={false}
-            onLoad={() => setLoadedPreviewUrl(previewUrl)}
-            onError={() => setFailedPreviewUrl(previewUrl)}
+            onLoad={handlePreviewLoad}
+            onError={handlePreviewError}
           />
         ) : null}
         {showPlaceholder ? (
@@ -101,7 +150,9 @@ export function WallpaperCardMedia({
           />
         ) : null}
         {!showPlaceholder && (!previewUrl || previewFailed) ? (
-          <div className="grid h-full place-items-center text-muted-foreground">{noCoverLabel}</div>
+          <div className="grid h-full place-items-center px-4 text-center text-muted-foreground">
+            {previewFailed ? coverNetworkErrorLabel : noCoverLabel}
+          </div>
         ) : null}
       </motion.div>
       <motion.div

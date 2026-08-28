@@ -35,7 +35,7 @@ function createPublishedFileDetailsService(options = {}) {
   const singleTimeoutMs = parsePositiveInt(process.env.WALLHUB_FILEDETAILS_SINGLE_TIMEOUT_MS, 22000, 5000, 45000);
   const safeTotalBudgetMs = parsePositiveInt(process.env.WALLHUB_FILEDETAILS_SAFE_BUDGET_MS, 9000, 3000, 30000);
   const safeChunkTimeoutMs = parsePositiveInt(process.env.WALLHUB_FILEDETAILS_SAFE_CHUNK_TIMEOUT_MS, 6000, 2000, 15000);
-  const safeRetryCount = parsePositiveInt(process.env.WALLHUB_FILEDETAILS_SAFE_RETRIES, 1, 1, 3) - 1;
+  const safeRetryCount = parsePositiveInt(process.env.WALLHUB_FILEDETAILS_SAFE_RETRIES, 3, 1, 3) - 1;
   const failureCooldownMs = parsePositiveInt(process.env.WALLHUB_FILEDETAILS_FAILURE_COOLDOWN_MS, 90000, 10000, 600000);
   const detailCacheTtlMs = parsePositiveInt(process.env.WALLHUB_FILEDETAILS_CACHE_TTL_MS, 600000, 30000, 3600000);
   const detailCacheLimit = parsePositiveInt(process.env.WALLHUB_FILEDETAILS_CACHE_LIMIT, 2000, 100, 20000);
@@ -133,21 +133,36 @@ function createPublishedFileDetailsService(options = {}) {
   async function getChunkWithRetry(ids, chunkIndex, runOptions = {}) {
     let lastError = null;
     const retries = Number.isFinite(runOptions.retryCount) ? runOptions.retryCount : retryCount;
+    const detailsById = new Map();
+    let missingIds = ids.slice();
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
         throwIfAborted(runOptions.signal);
-        const timeout = runOptions.timeoutMs || (ids.length <= 1 ? singleTimeoutMs : baseTimeoutMs + attempt * 5000);
-        if (attempt > 0) logger.log(`[FileDetails] Retry chunk ${chunkIndex + 1} attempt ${attempt + 1}/${retries + 1}`);
-        return await get(ids, timeout, runOptions.signal);
+        const remainingBudget = runOptions.deadline ? runOptions.deadline - now() : 0;
+        if (runOptions.deadline && remainingBudget <= 0) break;
+        const requestedTimeout = runOptions.timeoutMs || (missingIds.length <= 1 ? singleTimeoutMs : baseTimeoutMs + attempt * 5000);
+        const timeout = runOptions.deadline ? Math.min(requestedTimeout, Math.max(1000, remainingBudget)) : requestedTimeout;
+        if (attempt > 0) logger.log(`[FileDetails] Retry chunk ${chunkIndex + 1} attempt ${attempt + 1}/${retries + 1} for ${missingIds.length} missing ids`);
+        const list = await get(missingIds, timeout, runOptions.signal);
+        for (const detail of list) {
+          const id = String(detail && detail.publishedfileid || '').trim();
+          if (id && ids.includes(id)) detailsById.set(id, detail);
+        }
+        missingIds = ids.filter(id => {
+          const detail = detailsById.get(id);
+          return !detail || String(detail.result || '') !== '1';
+        });
+        if (!missingIds.length) return ids.map(id => detailsById.get(id)).filter(Boolean);
+        lastError = new Error(`${missingIds.length} published file details missing`);
       } catch (e) {
         lastError = e;
         if (e && e.code === 'ABORT_ERR') throw e;
         logger.warn(`[FileDetails] Chunk ${chunkIndex + 1} failed attempt ${attempt + 1}/${retries + 1}:`, e.message);
-        if (attempt < retries) await sleep(250 * (attempt + 1));
       }
+      if (attempt < retries) await sleep(250 * (attempt + 1));
     }
-    logger.warn(`[FileDetails] Chunk ${chunkIndex + 1} gave up:`, lastError ? lastError.message : 'unknown error');
-    return [];
+    logger.warn(`[FileDetails] Chunk ${chunkIndex + 1} gave up with ${missingIds.length} missing ids:`, lastError ? lastError.message : 'unknown error');
+    return ids.map(id => detailsById.get(id)).filter(Boolean);
   }
 
   async function getSafe(ids, optionsForRun = {}) {
@@ -178,7 +193,7 @@ function createPublishedFileDetailsService(options = {}) {
 
     if (chunks.length === 1) {
       const timeout = safeMode ? Math.min(safeChunkTimeoutMs, Math.max(1000, deadline ? deadline - now() : safeChunkTimeoutMs)) : undefined;
-      const list = await getChunkWithRetry(chunks[0], 0, { retryCount: retries, timeoutMs: timeout, signal: optionsForRun.signal });
+      const list = await getChunkWithRetry(chunks[0], 0, { retryCount: retries, timeoutMs: timeout, deadline, signal: optionsForRun.signal });
       if (!list.length && chunks[0].length) failures += 1;
       out.push(...list);
       if (failures && !list.length) rememberFailure('single chunk failed');
@@ -195,7 +210,7 @@ function createPublishedFileDetailsService(options = {}) {
         nextIndex += 1;
         const remaining = deadline ? Math.max(1000, deadline - now()) : 0;
         const timeout = safeMode ? Math.min(safeChunkTimeoutMs, remaining) : undefined;
-        const list = await getChunkWithRetry(chunks[index], index, { retryCount: retries, timeoutMs: timeout, signal: optionsForRun.signal });
+        const list = await getChunkWithRetry(chunks[index], index, { retryCount: retries, timeoutMs: timeout, deadline, signal: optionsForRun.signal });
         if (!list.length && chunks[index].length) failures += 1;
         out.push(...list);
       }

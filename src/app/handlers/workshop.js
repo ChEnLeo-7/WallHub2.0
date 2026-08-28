@@ -112,6 +112,7 @@ function createWorkshopHandlers(options = {}) {
   }
 
   async function handleQuery(req, res) {
+    const startedAt = Date.now();
     let payload;
     try { payload = JSON.parse(await readBody(req)); }
     catch { return jsonRes(res, 400, { error: 'Bad JSON' }); }
@@ -188,6 +189,11 @@ function createWorkshopHandlers(options = {}) {
         }
       }
       finished = true;
+      const response = result && result.response || {};
+      const items = Array.isArray(response.publishedfiledetails) ? response.publishedfiledetails.length : 0;
+      const page = Number(result && result.page || params.page || 1) || 1;
+      const total = Number(response.total || result && result.total || 0) || 0;
+      logger.info(`[Workshop] query completed source=${result && result.source || steamDataSource} page=${page} items=${items} total=${total} fallback=${!!(result && result.fallbackUsed)} durationMs=${Date.now() - startedAt}`);
       jsonRes(res, 200, result);
     } catch (error) {
       if (error && error.code === 'ABORT_ERR') {
@@ -204,14 +210,22 @@ function createWorkshopHandlers(options = {}) {
       }
       logger.error('[Query Error]', error.message);
       finished = true;
-      jsonRes(res, error.statusCode || 502, { error: error.message, code: error.code || '' });
+      jsonRes(res, error.statusCode || 502, {
+        error: error.message,
+        code: error.code || '',
+        requiresSteamLogin: !!error.requiresSteamLogin,
+      });
     } finally {
       res.off('close', abortSearch);
     }
   }
 
   async function handleDetails(res, id) {
-    jsonRes(res, 200, await getDetailService().fetchDetail(id));
+    const startedAt = Date.now();
+    const detail = await getDetailService().fetchDetail(id);
+    const comments = Array.isArray(detail && detail.comments) ? detail.comments.length : 0;
+    logger.info(`[Workshop] detail completed id=${id} comments=${comments} preview=${!!(detail && detail.preview_url)} durationMs=${Date.now() - startedAt}`);
+    jsonRes(res, 200, detail);
   }
 
   async function handlePersonalSource(req, res, id, personalFilter) {

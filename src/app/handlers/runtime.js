@@ -13,6 +13,7 @@ function createRuntimeHandlers(options = {}) {
     steamAccessDiagnosticSnapshot,
     steamKitDepotStreamingEnabled,
     getDepotStreamWorkerCount,
+    getDepotStreamDiagnostics = () => ({}),
     getDepotStreamCacheMaxMb,
     updateService,
     platform,
@@ -141,6 +142,7 @@ function createRuntimeHandlers(options = {}) {
         cacheMaxMb: getDepotStreamCacheMaxMb(),
         firstRangeBytes: depotStreamFirstRangeBytes,
         rangeBytes: depotStreamMaxRangeBytes,
+        ...getDepotStreamDiagnostics(),
       },
     });
   }

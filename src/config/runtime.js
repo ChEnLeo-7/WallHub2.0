@@ -17,6 +17,12 @@ function parseEnvFloat(name, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseEnvBool(name, fallback) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) return fallback;
+  return /^(?:1|true|yes|on)$/i.test(value);
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -29,11 +35,16 @@ const URL_PROXY_CACHE = {
 };
 
 const DEPOT_STREAM = {
-  maxRangeBytes: Math.max(256 * 1024, parseEnvInt('WALLHUB_DEPOT_STREAM_MAX_RANGE_BYTES', 8 * MB)),
+  // Extents stay large enough for Steam chunk concurrency without making the
+  // browser wait on a 32 MiB disk round trip before every uncached response.
+  maxRangeBytes: Math.max(256 * 1024, parseEnvInt('WALLHUB_DEPOT_STREAM_MAX_RANGE_BYTES', 16 * MB)),
   firstRangeBytes: Math.max(256 * 1024, parseEnvInt('WALLHUB_DEPOT_STREAM_FIRST_RANGE_BYTES', 2 * MB)),
   tailBytes: Math.max(512 * 1024, parseEnvInt('WALLHUB_DEPOT_STREAM_TAIL_BYTES', 8 * MB)),
-  initialBufferBytes: Math.max(1024 * 1024, parseEnvInt('WALLHUB_DEPOT_STREAM_INITIAL_BUFFER_BYTES', 32 * MB)),
-  aheadBytes: Math.max(0, parseEnvInt('WALLHUB_DEPOT_STREAM_AHEAD_BYTES', 64 * MB)),
+  initialBufferBytes: Math.max(1024 * 1024, parseEnvInt('WALLHUB_DEPOT_STREAM_INITIAL_BUFFER_BYTES', 16 * MB)),
+  aheadBytes: Math.max(0, parseEnvInt('WALLHUB_DEPOT_STREAM_AHEAD_BYTES', 256 * MB)),
+  chunkBufferBytes: clamp(parseEnvInt('WALLHUB_DEPOT_STREAM_CHUNK_BUFFER_BYTES', 64 * MB), 8 * MB, 512 * MB),
+  readThrough: parseEnvBool('WALLHUB_DEPOT_STREAM_READ_THROUGH', true),
+  readWindowBytes: Math.max(64 * 1024, parseEnvInt('WALLHUB_DEPOT_STREAM_READ_WINDOW_BYTES', 512 * 1024)),
   readyTimeoutMs: Math.max(1000, parseEnvInt('WALLHUB_DEPOT_STREAM_READY_TIMEOUT_MS', 12000)),
   workerIdleMs: Math.max(30000, parseEnvInt('WALLHUB_DEPOT_STREAM_WORKER_IDLE_MS', 10 * 60 * 1000)),
   cleanupHighWatermark: clamp(parseEnvFloat('WALLHUB_DEPOT_STREAM_CACHE_HIGH_WATERMARK', 0.85), 0.5, 0.98),

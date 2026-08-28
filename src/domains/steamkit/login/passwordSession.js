@@ -1,6 +1,7 @@
 'use strict';
 
 function createPasswordSession(options) {
+  const debugLogger = options.debugLogger || options.logger;
   function buildValidationArgs(executable, username, password, steamGuardCode, loginIdSeed) {
     const { argsPrefix } = options.depotCommandFor(executable);
     const args = [
@@ -17,6 +18,12 @@ function createPasswordSession(options) {
     return { args, inputLines: steamGuardCode ? [password, steamGuardCode] : [password] };
   }
 
+  function buildLoginEnv() {
+    const env = options.buildDepotDotnetEnv();
+    if (!env.WALLHUB_DEPOT_STEAM3_PROTOCOL) env.WALLHUB_DEPOT_STEAM3_PROTOCOL = 'websocket';
+    return env;
+  }
+
   async function verifyLogin(username, password, steamGuardCode, progress = {}) {
     const reportProgress = typeof progress.onProgress === 'function' ? progress.onProgress : () => {};
     const reportOutput = typeof progress.onOutput === 'function' ? progress.onOutput : () => {};
@@ -27,19 +34,19 @@ function createPasswordSession(options) {
       const { command } = options.depotCommandFor(executable);
       const built = buildValidationArgs(executable, username, password, steamGuardCode, `login:${username}`);
       const timeout = Math.max(30000, parseInt(process.env.WALLHUB_STEAMKIT_LOGIN_TIMEOUT || '120000', 10) || 120000);
-      options.logger.log(`[SteamKit Login] Verifying Steam account through a dedicated Steam CM session: ${username}`);
+      debugLogger.log(`[SteamKit Login] Verifying Steam account through a dedicated Steam CM session: ${username}`);
       reportProgress({ status: 'validating', message: '正在向 Steam 验证账号' });
       await options.runProcess(command, built.args, timeout, {
         cwd: options.configDir,
         inputLines: built.inputLines,
         closeStdin: true,
-        env: options.buildDepotDotnetEnv(),
+        env: buildLoginEnv(),
         steamAuth: true,
         onStdout: reportOutput,
         onStderr: reportOutput,
       });
       options.logger.log(`[SteamKit Login] DepotDownloader session persisted for: ${username}`);
-      options.logger.log('[SteamKit Login] Remembered session is managed by DepotDownloader/.NET isolated storage.');
+      debugLogger.log('[SteamKit Login] Remembered session is managed by DepotDownloader/.NET isolated storage.');
       reportProgress({ status: 'success', message: 'Steam 登录验证完成，正在保存本地会话' });
     } catch (error) {
       if (options.isDepotLoginVerifiedDespiteCanceled(error && error.message || error)) {
@@ -118,6 +125,17 @@ function createPasswordSession(options) {
     }).catch((error) => {
       const normalized = options.normalizeSteamKitLoginError(error);
       const networkFailure = normalized.code === 'STEAM_NETWORK_UNREACHABLE' || normalized.code === 'STEAM_LOGIN_TIMEOUT';
+      if (session.requiresPhoneConfirmation && normalized.code === 'STEAM_LOGIN_FAILED') {
+        options.finish(session, {
+          status: 'error',
+          message: 'Steam 手机确认未完成',
+          error: 'Steam 手机确认未完成或已过期，请重新登录并及时在 Steam 手机 App 中批准本次登录。',
+          code: 'STEAM_PHONE_CONFIRMATION_REQUIRED',
+          needsSteamGuard: false,
+          requiresPhoneConfirmation: true,
+        });
+        return;
+      }
       const needsSteamGuard = !networkFailure && (normalized.code === 'STEAM_GUARD_REQUIRED' || !!normalized.requiresSteamGuard);
       options.finish(session, {
         status: needsSteamGuard ? 'needs-guard' : 'error',
@@ -125,6 +143,7 @@ function createPasswordSession(options) {
         error: normalized.message || String(error || 'Steam 登录失败'),
         code: normalized.code || '',
         needsSteamGuard,
+        requiresPhoneConfirmation: false,
       });
     });
 
@@ -146,11 +165,11 @@ function createPasswordSession(options) {
         '-loginid', options.makeDepotLoginId(`session:${user}`),
       ];
       const timeout = Math.max(30000, parseInt(process.env.WALLHUB_STEAMKIT_LOGIN_TIMEOUT || '120000', 10) || 120000);
-      options.logger.log(`[SteamKit Login] Validating remembered session via DepotDownloader: ${user}`);
+      debugLogger.log(`[SteamKit Login] Validating remembered session via DepotDownloader: ${user}`);
       await options.runProcess(command, args, timeout, {
         cwd: options.configDir,
         closeStdin: true,
-        env: options.buildDepotDotnetEnv(),
+        env: buildLoginEnv(),
         steamAuth: true,
       });
     } catch (error) {

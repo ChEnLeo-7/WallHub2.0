@@ -86,3 +86,41 @@ test('SteamKit Workshop query uses the persistent CM bridge without one-shot fal
   assert.deepEqual(result.ids, ['100000']);
   assert.equal(result.details[0].title, 'CM item');
 });
+
+test('SteamKit Workshop query preserves remembered-session login failures', async () => {
+  const service = createSteamKitPersonalWorkshopService({
+    queryBridge: {
+      queryWorkshop: async () => {
+        const error = new Error('Steam 登录已失效，请重新登录后再使用 Steam CM WebSocket。');
+        error.code = 'STEAM_CM_LOGIN_REQUIRED';
+        error.statusCode = 401;
+        error.requiresSteamLogin = true;
+        throw error;
+      },
+    },
+  });
+
+  await assert.rejects(
+    service.queryWorkshop({}, { username: 'tester' }),
+    error => error.code === 'STEAM_CM_LOGIN_REQUIRED' && error.statusCode === 401 && error.requiresSteamLogin === true,
+  );
+});
+
+test('SteamKit Workshop query preserves CM timeout without requiring login', async () => {
+  const service = createSteamKitPersonalWorkshopService({
+    queryBridge: {
+      queryWorkshop: async () => {
+        const error = new Error('SteamKit query bridge request timed out');
+        error.code = 'STEAM_CM_QUERY_TIMEOUT';
+        error.statusCode = 504;
+        error.requiresSteamLogin = false;
+        throw error;
+      },
+    },
+  });
+
+  await assert.rejects(
+    service.queryWorkshop({}, { username: 'tester' }),
+    error => error.code === 'STEAM_CM_QUERY_TIMEOUT' && error.statusCode === 504 && error.requiresSteamLogin === false,
+  );
+});

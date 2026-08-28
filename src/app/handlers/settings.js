@@ -93,7 +93,8 @@ function createSettingsHandlers(options = {}) {
     });
   }
 
-  async function handleDepotStreamCacheClear(_req, res) {
+  async function handleDepotStreamCacheClear(req, res) {
+    if (rejectUntrustedSettingsRequest(req, res)) return;
     jsonRes(res, 200, clearDepotStreamCacheNow());
   }
 
@@ -102,6 +103,7 @@ function createSettingsHandlers(options = {}) {
     try {
       const data = JSON.parse(await readBody(req));
       const currentSettings = getSettings();
+      const previousDepotStreamCacheMaxMb = Number(currentSettings.depotStreamCacheMaxMb || 0);
       const previousStreamSettings = {
         steamCdnRouteStrategy: getSteamCdnRouteStrategy(),
         steamHttpProxyUrl: currentSettings.steamHttpProxyUrl || '',
@@ -139,10 +141,13 @@ function createSettingsHandlers(options = {}) {
           logSteamAccessResolvedRoutes('HOSTS applied').catch(error => logger.warn('[SteamAccess] hosts route log failed:', error.message));
         }
       }
-      setTimeout(() => cleanupDepotStreamCache({
-        force: true,
-        targetWatermark: depotStreamCacheCleanupTarget,
-      }), 100).unref?.();
+      const nextDepotStreamCacheMaxMb = Number(nextSettings.depotStreamCacheMaxMb || 0);
+      if (nextDepotStreamCacheMaxMb < previousDepotStreamCacheMaxMb) {
+        setTimeout(() => cleanupDepotStreamCache({
+          force: true,
+          targetWatermark: depotStreamCacheCleanupTarget,
+        }), 100).unref?.();
+      }
       const nextStreamSettings = {
         steamCdnRouteStrategy: getSteamCdnRouteStrategy(),
         steamHttpProxyUrl: nextSettings.steamHttpProxyUrl || '',

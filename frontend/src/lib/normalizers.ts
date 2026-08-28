@@ -1,3 +1,10 @@
+import {
+  DEFAULT_WORKSHOP_GENRES,
+  VISIBLE_WORKSHOP_TYPES,
+  WORKSHOP_RESOLUTIONS,
+  WORKSHOP_UTILITY_TAGS,
+} from '@/lib/workshopFilterCatalog';
+
 export function normalizeLanguage(value: unknown): 'zh' | 'en' {
   return value === 'en' ? 'en' : 'zh';
 }
@@ -279,37 +286,9 @@ export function primaryRating(ratings: string[], nsfw: boolean, text: RatingText
 
 export function normalizeFilterTypes(value: unknown, legacyType?: unknown) {
   const raw = Array.isArray(value) ? value : legacyType ? [legacyType] : [];
-  return Array.from(new Set(raw.map((item) => String(item || '').trim()).filter((item) => ['Scene', 'Video', 'Web'].includes(item))));
+  return Array.from(new Set(raw.map((item) => String(item || '').trim()).filter((item) => VISIBLE_WORKSHOP_TYPES.includes(item as typeof VISIBLE_WORKSHOP_TYPES[number]))));
 }
 
-const OFFICIAL_TAGS = ['Approved', 'Audio responsive', '3D', 'Customizable', 'Puppet Warp', 'HDR', 'Media Integration', 'User Shortcut', 'Video Texture', 'Asset Pack'];
-const RESOLUTION_TAGS = [
-  'Standard',
-  '1280 x 720',
-  '1366 x 768',
-  '1920 x 1080',
-  '2560 x 1440',
-  '3840 x 2160',
-  'Ultrawide',
-  '2560 x 1080',
-  '3440 x 1440',
-  'Dual monitor',
-  '3840 x 1080',
-  '5120 x 1440',
-  '7680 x 2160',
-  'Triple monitor',
-  '4096 x 768',
-  '5760 x 1080',
-  '7680 x 1440',
-  '11520 x 2160',
-  'Portrait',
-  '720 x 1280',
-  '1080 x 1920',
-  '1440 x 2560',
-  '2160 x 3840',
-  'Other resolution',
-  'Dynamic resolution',
-];
 const PERSONAL_FILTERS = ['mysubscriptions', 'myfavorites', 'voted', 'friendsfavorites', 'friendscreated', 'followedcreated'];
 const PERSONAL_SORTS = ['subscriptiondate', 'alpha', 'lastupdated', 'creationorder'];
 
@@ -318,9 +297,13 @@ function normalizeTagList(value: unknown, allowed: string[]) {
   return Array.from(new Set(raw.map((item) => String(item || '').trim()).filter((item) => allowed.includes(item))));
 }
 
-function normalizeResolutionTags(value: unknown) {
-  const normalized = normalizeTagList(value, RESOLUTION_TAGS);
-  return normalized.length === RESOLUTION_TAGS.length ? [] : normalized;
+export function normalizeResolutionTags(value: unknown) {
+  const normalized = normalizeTagList(value, [...WORKSHOP_RESOLUTIONS]);
+  return normalized.length === WORKSHOP_RESOLUTIONS.length ? [] : normalized;
+}
+
+export function normalizeResolutionSelection(value: unknown, _steamDataSource: 'community' | 'webapi' | 'cm') {
+  return normalizeResolutionTags(value);
 }
 
 export type Filters = {
@@ -334,8 +317,16 @@ export type Filters = {
   ratings: string[];
   genres: string[];
   officialTags: string[];
+  excludedOfficialTags: string[];
+  categories: string[];
   resolutions: string[];
+  mobileCompatibleOnly: boolean;
 };
+
+export function normalizeFilterDays(value: unknown) {
+  const days = String(value || '30');
+  return ['1', '7', '30', '90', '180', '365'].includes(days) ? days : '30';
+}
 
 export function normalizeFilters(value: unknown, nsfw = true, GENRES: { id: string }[], text: { all: string; ratingEveryone: string; ratingQuestionable: string; ratingMature: string }): Filters {
   const raw = (value || {}) as Partial<Filters> & { type?: string };
@@ -345,18 +336,37 @@ export function normalizeFilters(value: unknown, nsfw = true, GENRES: { id: stri
     sort: ['trend', 'mostrecent', 'toprated', 'mostvotes', 'totaluniquesubscribers'].includes(String(raw.sort)) ? String(raw.sort) : 'trend',
     personalFilter: PERSONAL_FILTERS.includes(String(raw.personalFilter || '')) ? String(raw.personalFilter) : '',
     personalSort: PERSONAL_SORTS.includes(String(raw.personalSort || '')) ? String(raw.personalSort) : 'lastupdated',
-    days: String(raw.days || '30'),
+    days: normalizeFilterDays(raw.days),
     types: normalizeFilterTypes(raw.types, raw.type),
     rating: primaryRating(ratings, nsfw, text),
     ratings,
-    genres: Array.isArray(raw.genres) ? raw.genres.filter((g) => GENRES.some((x) => x.id === g)) : GENRES.map((g) => g.id),
-    officialTags: normalizeTagList(raw.officialTags, OFFICIAL_TAGS),
+    genres: Array.isArray(raw.genres) ? raw.genres.filter((g) => GENRES.some((x) => x.id === g)) : DEFAULT_WORKSHOP_GENRES.filter((g) => GENRES.some((x) => x.id === g)),
+    officialTags: normalizeTagList(raw.officialTags, [...WORKSHOP_UTILITY_TAGS]),
+    excludedOfficialTags: normalizeTagList(raw.excludedOfficialTags, [...WORKSHOP_UTILITY_TAGS])
+      .filter((tag) => !normalizeTagList(raw.officialTags, [...WORKSHOP_UTILITY_TAGS]).includes(tag)),
+    categories: ['Wallpaper'],
     resolutions: normalizeResolutionTags(raw.resolutions),
+    mobileCompatibleOnly: !!raw.mobileCompatibleOnly,
   };
 }
 
 export function defaultHomeFilters(GENRES: { id: string }[], text: { all: string; ratingEveryone: string; ratingQuestionable: string; ratingMature: string }): Filters {
-  return normalizeFilters({ search: '', sort: 'trend', personalFilter: '', personalSort: 'lastupdated', days: '30', types: [], rating: 'Everyone', ratings: ['Everyone'], genres: GENRES.map((g) => g.id) }, true, GENRES, text);
+  return normalizeFilters({
+    search: '',
+    sort: 'trend',
+    personalFilter: '',
+    personalSort: 'lastupdated',
+    days: '30',
+    types: [],
+    rating: 'Everyone',
+    ratings: ['Everyone'],
+    genres: DEFAULT_WORKSHOP_GENRES,
+    officialTags: [],
+    excludedOfficialTags: [],
+    categories: ['Wallpaper'],
+    resolutions: [],
+    mobileCompatibleOnly: false,
+  }, true, GENRES, text);
 }
 
 export function shouldRestoreSearchPrefs(SEARCH_SESSION_KEY: string, SEARCH_SESSION_TTL_MS: number) {

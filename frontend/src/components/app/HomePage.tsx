@@ -59,11 +59,13 @@ type HomePageProps = {
   onUpdateFilter: (patch: Partial<Filters>) => void;
   onOpenGenres: () => void;
   steamLoggedIn: boolean;
+  restoringSteamAccount: boolean;
   onLoginRequired: () => void;
   onOpenItem: (item: WorkshopItem) => void;
   onDefaultAction: (item: WorkshopItem) => void;
   onOpenContextMenu: (item: WorkshopItem, anchor: WallpaperContextMenuAnchor) => void;
   detailsDialogOpen: boolean;
+  steamDataSource: 'community' | 'webapi' | 'cm';
 };
 
 export function HomePage({
@@ -81,11 +83,13 @@ export function HomePage({
   onUpdateFilter,
   onOpenGenres,
   steamLoggedIn,
+  restoringSteamAccount,
   onLoginRequired,
   onOpenItem,
   onDefaultAction,
   onOpenContextMenu,
   detailsDialogOpen,
+  steamDataSource,
 }: HomePageProps) {
   const {
     filters,
@@ -109,6 +113,7 @@ export function HomePage({
     loading,
     warmingSteamIp,
     error,
+    requiresSteamLogin,
     suppressGridLayoutAnimation,
     loadItems,
   } = query;
@@ -162,6 +167,7 @@ export function HomePage({
         onGenres={onOpenGenres}
         steamLoggedIn={steamLoggedIn}
         onLoginRequired={onLoginRequired}
+        steamDataSource={steamDataSource}
       />
       <main ref={containerRef} className="mx-auto w-full max-w-6xl px-3 pb-20 pt-2 sm:px-6 sm:pb-24 sm:pt-6">
         <section className="mb-3 flex flex-wrap items-center justify-between gap-2 sm:mb-5 sm:gap-3">
@@ -169,7 +175,7 @@ export function HomePage({
             <h1 className="text-base font-semibold tracking-tight sm:text-lg">{text.homeTitle}</h1>
             <p className="text-xs text-muted-foreground sm:text-sm">
               {loading
-                ? (warmingSteamIp ? text.warmingSteamIp : text.loading)
+                ? (restoringSteamAccount ? text.restoringSteamAccount : warmingSteamIp ? text.warmingSteamIp : text.loading)
                 : total
                   ? language === 'en'
                     ? `${text.homeApprox} ${total.toLocaleString('en-US')} ${text.homeItems} · ${totalPages} ${text.homePagesSuffix}`
@@ -180,8 +186,8 @@ export function HomePage({
           </div>
           <ViewToggle view={view} setView={setView} className="lg:hidden" />
         </section>
-        {loading ? <LoadingState warmingSteamIp={warmingSteamIp} /> : null}
-        {!loading && error ? <ErrorState message={error} onRetry={loadItems} proxyDomains={PROXY_DOMAINS} /> : null}
+        {loading ? <LoadingState warmingSteamIp={warmingSteamIp} restoringSteamAccount={restoringSteamAccount} /> : null}
+        {!loading && error ? <ErrorState message={error} onRetry={loadItems} proxyDomains={PROXY_DOMAINS} requiresSteamLogin={requiresSteamLogin} onLoginRequired={onLoginRequired} /> : null}
         {!loading && !error && !items.length ? <EmptyState /> : null}
         {!loading && !error && items.length ? (
           <>

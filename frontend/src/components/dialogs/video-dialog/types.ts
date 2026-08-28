@@ -1,5 +1,3 @@
-import type { VideoPlayerMode } from '@/hooks/usePreferences';
-
 export type VideoState = {
   id?: string;
   title: string;
@@ -11,6 +9,5 @@ export type VideoState = {
 
 export type VideoDialogProps = {
   video: VideoState | null;
-  playerMode: VideoPlayerMode;
   onOpenChange: (open: boolean) => void;
 };

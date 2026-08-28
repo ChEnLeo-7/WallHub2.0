@@ -10,6 +10,17 @@ export function itemType(item: { workshopType?: string; tags?: Array<string | { 
   return 'Scene';
 }
 
+export function isWallpaperSearchItem(
+  item: { tags?: Array<string | { tag: string }> },
+  selectedTypes: string[] = [],
+) {
+  const tags = new Set((item.tags || []).map((entry) => String(typeof entry === 'string' ? entry : entry.tag || '').trim().toLowerCase()).filter(Boolean));
+  if (tags.has('asset')) return false;
+  const allowedTypes = (selectedTypes.length ? selectedTypes : ['Scene', 'Video', 'Web'])
+    .map((type) => type.toLowerCase());
+  return allowedTypes.some((type) => tags.has(type));
+}
+
 export function localizedItemType(type: string, text: { video: string; web: string; application: string; scene: string }) {
   if (type === 'Video') return text.video;
   if (type === 'Web') return text.web;

@@ -5,7 +5,7 @@ const { replaceSourceOnce, ensureCSharpUsings } = require('./sourceEdits');
 
 function prepareProgram(programPath) {
   let program = fs.readFileSync(programPath, 'utf8');
-  program = ensureCSharpUsings(program, ['System.Text.Json'], 'DepotDownloader Program.cs query bridge usings');
+  program = ensureCSharpUsings(program, ['System.Text', 'System.Text.Json'], 'DepotDownloader Program.cs query bridge usings');
   fs.writeFileSync(programPath, program, 'utf8');
   return program;
 }

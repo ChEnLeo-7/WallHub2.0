@@ -170,8 +170,18 @@ function createSteamKitPersonalWorkshopService(options = {}) {
       return parseSteamKitUserFilesOutput(outputFromBridge(WALLHUB_STEAM_USER_FILES_MARKER, response));
     } catch (error) {
       if (error && error.code === 'ABORT_ERR') throw error;
-      const wrapped = personalWorkshopError(`Steam CM Workshop query failed: ${error && error.message ? error.message : 'unknown error'}`, 'STEAM_CM_QUERY_FAILED');
-      wrapped.statusCode = 502;
+      if (error && error.requiresSteamLogin) {
+        const loginError = personalWorkshopError(error.message, error.code || 'STEAM_CM_LOGIN_REQUIRED');
+        loginError.statusCode = error.statusCode || 401;
+        loginError.cause = error;
+        throw loginError;
+      }
+      const wrapped = personalWorkshopError(
+        `Steam CM Workshop query failed: ${error && error.message ? error.message : 'unknown error'}`,
+        error && error.code || 'STEAM_CM_QUERY_FAILED',
+      );
+      wrapped.requiresSteamLogin = false;
+      wrapped.statusCode = error && error.statusCode || 502;
       wrapped.cause = error;
       throw wrapped;
     }

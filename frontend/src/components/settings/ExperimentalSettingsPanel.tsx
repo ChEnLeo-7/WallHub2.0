@@ -1,9 +1,11 @@
 import { motion, useReducedMotion } from 'motion/react';
-import { ChevronsRight, Film, Gauge, Play } from 'lucide-react';
+import { ChevronsRight, Database, Film, Gauge, Trash2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import type { VideoPlayerMode } from '@/hooks/usePreferences';
+import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
+import { normalizeDepotStreamCacheMaxMb } from '@/lib/normalizers';
 import type { AppText } from '@/lib/text';
-import { cn } from '@/lib/utils';
 import { ExperimentalToggle } from './SettingPrimitives';
 import { panelLayoutMotion } from './panelMotion';
 import { StaticCdnSettings, SteamAccessSettings } from './SteamAccessSettings';
@@ -15,9 +17,12 @@ type ExperimentalSettingsPanelProps = SettingsStateProps & {
   settingsHostsLoaded: boolean;
   prefetchNextPage: boolean;
   setPrefetchNextPage: (enabled: boolean) => void;
-  videoPlayerMode: VideoPlayerMode;
-  setVideoPlayerMode: (mode: VideoPlayerMode) => void;
   steamAccess: SteamAccessSettingsController;
+  depotStreamCacheSelectValue: string;
+  depotStreamCacheCustomInput: string;
+  setDepotStreamCacheCustomMode: (enabled: boolean) => void;
+  setDepotStreamCacheCustomInput: (value: string) => void;
+  onClearDepotStreamCache: () => void;
 };
 
 export function ExperimentalSettingsPanel({
@@ -28,11 +33,20 @@ export function ExperimentalSettingsPanel({
   settingsHostsLoaded,
   prefetchNextPage,
   setPrefetchNextPage,
-  videoPlayerMode,
-  setVideoPlayerMode,
   steamAccess,
+  depotStreamCacheSelectValue,
+  depotStreamCacheCustomInput,
+  setDepotStreamCacheCustomMode,
+  setDepotStreamCacheCustomInput,
+  onClearDepotStreamCache,
 }: ExperimentalSettingsPanelProps) {
   const reduceMotion = useReducedMotion();
+  const commitCustomCacheMax = () => {
+    const next = normalizeDepotStreamCacheMaxMb(depotStreamCacheCustomInput);
+    setDepotStreamCacheCustomInput(String(next));
+    setSettings((current) => ({ ...current, depotStreamCacheMaxMb: next }));
+    if (next !== settings.depotStreamCacheMaxMb) onSave({ depotStreamCacheMaxMb: next });
+  };
 
   return (
     <motion.div key="settings-experimental" layout className="space-y-6 p-5" {...panelLayoutMotion}>
@@ -75,27 +89,6 @@ export function ExperimentalSettingsPanel({
 
       <ExperimentalToggle icon={ChevronsRight} title={text.prefetchNextPage} description={text.prefetchNextPageDesc} enabled={prefetchNextPage} onChange={setPrefetchNextPage} />
 
-      <section className="space-y-3 rounded-xl border border-border bg-card p-4">
-        <div className="min-w-0">
-          <h4 className="flex items-center gap-2 text-sm font-semibold"><Play className="h-4 w-4" />{text.videoPlayerControls}</h4>
-          <p className="mt-1 text-sm text-muted-foreground">{text.videoPlayerControlsDesc}</p>
-        </div>
-        <div className="grid w-full grid-cols-2 gap-1 rounded-lg border border-border bg-input/25 p-1" role="group" aria-label={text.videoPlayerControls}>
-          {([['native', text.videoPlayerModeDefault], ['compatibility', text.videoPlayerModeCompatibility]] as const).map(([mode, label]) => (
-            <button
-              key={mode}
-              type="button"
-              aria-pressed={videoPlayerMode === mode}
-              onClick={() => setVideoPlayerMode(mode)}
-              className={cn('relative isolate min-h-9 rounded-md px-3 py-2 text-sm font-medium transition-colors', videoPlayerMode === mode ? 'text-primary-foreground' : 'text-muted-foreground hover:bg-input/65 hover:text-foreground')}
-            >
-              {videoPlayerMode === mode ? <motion.span layoutId="settings-video-player-mode-indicator" className="pointer-events-none absolute inset-0 -z-10 rounded-md bg-primary shadow-sm" transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 520, damping: 42, mass: 0.72 }} /> : null}
-              <span className="relative z-10">{label}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
       <ExperimentalToggle
         icon={Film}
         title={text.steamKitDepotStreaming}
@@ -106,6 +99,18 @@ export function ExperimentalSettingsPanel({
           onSave({ steamKitDepotStreaming: enabled });
         }}
       />
+
+      {settings.steamKitDepotStreaming ? (
+        <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+          <h4 className="flex flex-wrap items-center justify-between gap-2 text-sm font-semibold"><span className="inline-flex items-center gap-2"><Database className="h-4 w-4" />{text.depotStreamCacheMax}</span><Badge className="border border-border bg-background px-3 py-1 text-foreground shadow-sm" variant="outline">{text.current} {settings.depotStreamCacheMaxMb} MB</Badge></h4>
+          <p className="text-sm text-muted-foreground">{text.depotStreamCacheMaxDesc}</p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Select className="min-w-0 flex-1" value={depotStreamCacheSelectValue} onChange={(value) => { if (value === 'custom') { setDepotStreamCacheCustomMode(true); setDepotStreamCacheCustomInput(String(settings.depotStreamCacheMaxMb || 512)); return; } const next = normalizeDepotStreamCacheMaxMb(value); setDepotStreamCacheCustomMode(false); setSettings((current) => ({ ...current, depotStreamCacheMaxMb: next })); onSave({ depotStreamCacheMaxMb: next }); }} options={[{ value: '512', label: `512 MB（${text.defaultMark}）` }, { value: '1024', label: '1 GB' }, { value: '2048', label: '2 GB' }, { value: '3072', label: '3 GB' }, { value: '4096', label: '4 GB' }, { value: '5120', label: '5 GB' }, { value: '6144', label: '6 GB' }, { value: '7168', label: '7 GB' }, { value: '8192', label: '8 GB' }, { value: 'custom', label: text.depotStreamCacheCustom }]} />
+            {depotStreamCacheSelectValue === 'custom' ? <div className="flex min-w-0 flex-1 items-center gap-2"><Input className="min-w-0 flex-1" inputMode="numeric" pattern="[0-9]*" value={depotStreamCacheCustomInput} onChange={(event) => setDepotStreamCacheCustomInput(event.target.value.replace(/[^\d]/g, ''))} onBlur={commitCustomCacheMax} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} placeholder={text.depotStreamCacheCustomPlaceholder} /><span className="shrink-0 text-sm font-medium text-muted-foreground">MB</span></div> : null}
+            <Button className="w-full sm:w-36" variant="outline" onClick={onClearDepotStreamCache}><Trash2 className="h-4 w-4" />{text.clearDepotStreamCache}</Button>
+          </div>
+        </section>
+      ) : null}
     </motion.div>
   );
 }

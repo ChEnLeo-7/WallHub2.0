@@ -42,7 +42,7 @@ function createHandlers(overrides = {}) {
     steamKitPersistentLoginIsUsable: () => false,
     effectiveDownloaderMode: () => 'steamkit',
     cachedSteamLoginUsername: () => '',
-    logger: { log() {}, warn() {}, error() {} },
+    logger: { log() {}, info() {}, warn() {}, error() {} },
   }, overrides));
 }
 
@@ -185,4 +185,90 @@ test('Community public queries reject a logged-in SteamKit account without a Web
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.code, 'STEAM_WEB_LOGIN_REQUIRED');
   assert.equal(res.body.requiresSteamLogin, true);
+});
+
+test('Steam CM query returns a structured re-login response for an expired remembered session', async () => {
+  const handlers = createHandlers({
+    getSteamDataSource: () => 'cm',
+    steamKitPersistentLoginIsUsable: () => true,
+    cachedSteamLoginUsername: () => 'tester',
+    querySteamKitWorkshop: async () => {
+      const error = new Error('Steam 登录已失效，请重新登录后再使用 Steam CM WebSocket。');
+      error.code = 'STEAM_CM_LOGIN_REQUIRED';
+      error.statusCode = 401;
+      error.requiresSteamLogin = true;
+      throw error;
+    },
+  });
+  const res = createResponse();
+
+  await handlers.handleQuery(queryRequest(), res);
+
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.code, 'STEAM_CM_LOGIN_REQUIRED');
+  assert.equal(res.body.requiresSteamLogin, true);
+  assert.match(res.body.error, /重新登录/);
+});
+
+test('Steam CM query timeout is retryable and does not request a new login', async () => {
+  const handlers = createHandlers({
+    getSteamDataSource: () => 'cm',
+    steamKitPersistentLoginIsUsable: () => true,
+    cachedSteamLoginUsername: () => 'tester',
+    querySteamKitWorkshop: async () => {
+      const error = new Error('Steam CM Workshop query timed out');
+      error.code = 'STEAM_CM_QUERY_TIMEOUT';
+      error.statusCode = 504;
+      error.requiresSteamLogin = false;
+      throw error;
+    },
+  });
+  const res = createResponse();
+
+  await handlers.handleQuery(queryRequest(), res);
+
+  assert.equal(res.statusCode, 504);
+  assert.equal(res.body.code, 'STEAM_CM_QUERY_TIMEOUT');
+  assert.equal(res.body.requiresSteamLogin, false);
+});
+
+test('successful Workshop queries emit one safe info summary', async () => {
+  const infoLogs = [];
+  const handlers = createHandlers({
+    logger: {
+      log() {},
+      info(message) { infoLogs.push(message); },
+      warn() {},
+      error() {},
+    },
+  });
+  const res = createResponse();
+
+  await handlers.handleQuery(queryRequest(), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(infoLogs.length, 1);
+  assert.match(infoLogs[0], /^\[Workshop\] query completed source=community-html page=1 items=1 total=1 fallback=false durationMs=\d+$/);
+  assert.doesNotMatch(infoLogs[0], /Cookie item|steamLoginSecure|steamcommunity\.com/);
+});
+
+test('successful Workshop details emit one safe info summary', async () => {
+  const infoLogs = [];
+  const handlers = createHandlers({
+    logger: {
+      log() {},
+      info(message) { infoLogs.push(message); },
+      warn() {},
+      error() {},
+    },
+  });
+  const res = createResponse();
+
+  await handlers.handleDetails(res, '123456');
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.publishedfileid, '123456');
+  assert.equal(infoLogs.length, 1);
+  assert.match(infoLogs[0], /^\[Workshop\] detail completed id=123456 comments=0 preview=false durationMs=\d+$/);
+  assert.doesNotMatch(infoLogs[0], /Cookie item|steamcommunity\.com/);
 });

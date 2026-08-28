@@ -19,7 +19,6 @@ export function useAppPreferences() {
   const [desktopColumns, setDesktopColumns] = React.useState(initial.desktopColumns);
   const [homePageSize, setHomePageSize] = React.useState(initial.homePageSize);
   const [prefetchNextPage, setPrefetchNextPage] = React.useState(initial.prefetchNextPage);
-  const [videoPlayerMode, setVideoPlayerMode] = React.useState(initial.videoPlayerMode);
   const [language, setLanguage] = React.useState(initial.language);
   const [fixedPanelHeight, setFixedPanelHeight] = React.useState(initial.fixedPanelHeight);
   const [detailsPresentation, setDetailsPresentation] = React.useState(initial.detailsPresentation);
@@ -40,6 +39,7 @@ export function useAppPreferences() {
       PREFS_KEY,
       JSON.stringify({
         filters,
+        workshopFilterSemanticsVersion: initial.workshopFilterSemanticsVersion,
         exactPhrase,
         homeFilterMultiSelect,
         view,
@@ -50,7 +50,6 @@ export function useAppPreferences() {
         desktopColumns,
         homePageSize,
         prefetchNextPage,
-        videoPlayerMode,
         language,
         fixedPanelHeight,
         detailsPresentation,
@@ -58,7 +57,7 @@ export function useAppPreferences() {
         homeCardDefaultActionVersion: 4,
       }),
     );
-  }, [accentTheme, customAccentColor, desktopColumns, detailsPresentation, exactPhrase, filters, fixedPanelHeight, homeCardDefaultAction, homeFilterMultiSelect, homePageSize, language, mobileColumns, prefetchNextPage, resolvedTheme, themeMode, videoPlayerMode, view]);
+  }, [accentTheme, customAccentColor, desktopColumns, detailsPresentation, exactPhrase, filters, fixedPanelHeight, homeCardDefaultAction, homeFilterMultiSelect, homePageSize, language, mobileColumns, prefetchNextPage, resolvedTheme, themeMode, view]);
 
   return {
     themeMode,
@@ -83,8 +82,6 @@ export function useAppPreferences() {
     setHomePageSize,
     prefetchNextPage,
     setPrefetchNextPage,
-    videoPlayerMode,
-    setVideoPlayerMode,
     language,
     setLanguage,
     fixedPanelHeight,

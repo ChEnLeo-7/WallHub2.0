@@ -7,9 +7,16 @@ import { cn } from '@/lib/utils';
 
 export type ToastItem = { id: number; message: string; type: 'info' | 'ok' | 'warn' };
 
-export function LoadingState({ warmingSteamIp = false }: { warmingSteamIp?: boolean }) {
+export function isSteamAccountRecoveryBlockingWorkshop(
+  pendingValidation: boolean,
+  steamDataSource: 'community' | 'webapi' | 'cm',
+) {
+  return pendingValidation && steamDataSource === 'cm';
+}
+
+export function LoadingState({ warmingSteamIp = false, restoringSteamAccount = false }: { warmingSteamIp?: boolean; restoringSteamAccount?: boolean }) {
   const text = useText();
-  return <div className="grid place-items-center rounded-xl border border-border bg-card p-16 text-muted-foreground"><Loader2 className="mb-3 h-8 w-8 animate-spin text-muted-foreground" />{warmingSteamIp ? text.warmingSteamIp : text.loadingWorkshop}</div>;
+  return <div className="grid place-items-center rounded-xl border border-border bg-card p-16 text-muted-foreground"><Loader2 className="mb-3 h-8 w-8 animate-spin text-muted-foreground" />{restoringSteamAccount ? text.restoringSteamAccount : warmingSteamIp ? text.warmingSteamIp : text.loadingWorkshop}</div>;
 }
 
 export function EmptyState() {
@@ -27,9 +34,9 @@ export function sourceLabel(source: string, fallback: boolean, language: Languag
   return fallback ? (language === 'en' ? `${label}, order may differ` : `${label}，排序可能不同`) : label;
 }
 
-export function ErrorState({ message, onRetry, proxyDomains }: { message: string; onRetry: () => void; proxyDomains: readonly string[] }) {
+export function ErrorState({ message, onRetry, proxyDomains, requiresSteamLogin = false, onLoginRequired }: { message: string; onRetry: () => void; proxyDomains: readonly string[]; requiresSteamLogin?: boolean; onLoginRequired?: () => void }) {
   const text = useText();
-  return <div className="grid place-items-center gap-3 rounded-xl border border-border bg-card p-12 text-center"><div className="text-destructive">{message}</div><div className="max-w-lg text-sm text-muted-foreground">{text.networkHint}</div><Button onClick={onRetry}>{text.retry}</Button><Button variant="outline" onClick={() => navigator.clipboard?.writeText(proxyDomains.join('\n'))}>{text.copyProxyDomains}</Button></div>;
+  return <div className="grid place-items-center gap-3 rounded-xl border border-border bg-card p-12 text-center"><div className="text-destructive">{message}</div><div className="max-w-lg text-sm text-muted-foreground">{requiresSteamLogin ? text.steamLoginExpiredHint : text.networkHint}</div>{requiresSteamLogin ? <Button onClick={onLoginRequired}>{text.loginAgain}</Button> : <><Button onClick={onRetry}>{text.retry}</Button><Button variant="outline" onClick={() => navigator.clipboard?.writeText(proxyDomains.join('\n'))}>{text.copyProxyDomains}</Button></>}</div>;
 }
 
 export function ToastStack({ items }: { items: ToastItem[] }) {

@@ -42,6 +42,8 @@ function selectRangeCoverage(ranges, start, end) {
 }
 
 function createDepotStreamCacheFiles(cacheDir) {
+  const rangeIndexes = new Map();
+
   function depotStreamCacheDir(entry) {
     const id = String(entry.publishedFileId || entry.id || 'unknown').replace(/[^\w.-]/g, '_');
     const manifest = String(entry.manifestId || entry.hcontent || 'manifest').replace(/[^\w.-]/g, '_');
@@ -54,6 +56,9 @@ function createDepotStreamCacheFiles(cacheDir) {
 
   function listDepotStreamCacheRanges(entry) {
     const dir = depotStreamCacheDir(entry);
+    const key = path.resolve(dir);
+    const indexed = rangeIndexes.get(key);
+    if (indexed) return indexed.slice();
     let entries = [];
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
     const ranges = [];
@@ -71,7 +76,31 @@ function createDepotStreamCacheFiles(cacheDir) {
       } catch {}
     }
     ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+    rangeIndexes.set(key, ranges);
     return ranges;
+  }
+
+  function commitDepotStreamCacheRange(entry, start, end, file) {
+    const key = path.resolve(depotStreamCacheDir(entry));
+    const ranges = rangeIndexes.get(key);
+    if (!ranges) return;
+    const resolved = path.resolve(file);
+    const next = ranges.filter(range => path.resolve(range.file) !== resolved);
+    next.push({ file, start, end });
+    next.sort((a, b) => a.start - b.start || b.end - a.end);
+    rangeIndexes.set(key, next);
+  }
+
+  function removeDepotStreamCacheFile(file) {
+    const resolved = path.resolve(file);
+    for (const [key, ranges] of rangeIndexes) {
+      const next = ranges.filter(range => path.resolve(range.file) !== resolved);
+      if (next.length !== ranges.length) rangeIndexes.set(key, next);
+    }
+  }
+
+  function clearDepotStreamCacheIndexes() {
+    rangeIndexes.clear();
   }
 
   function selectDepotStreamCoverage(entry, start, end) {
@@ -91,6 +120,9 @@ function createDepotStreamCacheFiles(cacheDir) {
     listDepotStreamCacheRanges,
     selectDepotStreamCoverage,
     findCachedRange,
+    commitDepotStreamCacheRange,
+    removeDepotStreamCacheFile,
+    clearDepotStreamCacheIndexes,
   };
 }
 

@@ -37,7 +37,7 @@ function createWorkshopSearchService(options = {}) {
 
   async function doSearch(rawParams = {}, initialRunOptions = {}) {
     const allowNsfw = !!nsfwEnabled();
-    const params = sanitizeWorkshopQueryParams(rawParams || {}, allowNsfw);
+    const params = sanitizeWorkshopQueryParams(rawParams || {}, allowNsfw, initialRunOptions.steamDataSource);
     const criteria = createQueryCriteria(params, allowNsfw);
     const sourceSelection = resolveSourceSelection(params, initialRunOptions, {
       getSteamApiKey,
@@ -86,7 +86,7 @@ function createWorkshopSearchService(options = {}) {
     }
 
     if (sourceSelection.useSteamKitUserFiles) return runPersonalQuery(context);
-    if (sourceSelection.configuredSource === 'community' && !criteria.hasLocalOr) return runCommunityHtmlQuery(context);
+    if (sourceSelection.configuredSource === 'community') return runCommunityHtmlQuery(context);
     return runPublicQuery(context);
   }
 

@@ -6,10 +6,11 @@ const { spawn } = require('node:child_process');
 const WALLHUB_STEAM_QUERY_BRIDGE_READY = 'WALLHUB_STEAM_QUERY_BRIDGE_READY';
 const WALLHUB_STEAM_QUERY_BRIDGE_MARKER = 'WALLHUB_STEAM_QUERY_BRIDGE:';
 
-function bridgeError(message, code = 'STEAMKIT_QUERY_BRIDGE_UNAVAILABLE') {
+function bridgeError(message, code = 'STEAMKIT_QUERY_BRIDGE_UNAVAILABLE', options = {}) {
   const error = new Error(message);
   error.code = code;
-  error.requiresSteamLogin = true;
+  error.requiresSteamLogin = !!options.requiresSteamLogin;
+  if (options.statusCode) error.statusCode = options.statusCode;
   return error;
 }
 
@@ -28,10 +29,14 @@ function createSteamKitQueryBridge(options = {}) {
   const depotCommandFor = options.depotCommandFor;
   const buildDepotDotnetEnv = options.buildDepotDotnetEnv;
   const buildSteamAuthEnv = options.buildSteamAuthEnv || (env => env);
+  const validateRememberedSession = options.validateRememberedSession;
+  const onRememberedSessionValidated = options.onRememberedSessionValidated;
   const makeDepotLoginId = options.makeDepotLoginId;
   const ensureDir = options.ensureDir;
   const configDir = options.configDir;
   const spawnProcess = options.spawnProcess || spawn;
+  const scheduleStartupTimeout = options.scheduleStartupTimeout || setTimeout;
+  const scheduleRequestTimeout = options.scheduleRequestTimeout || setTimeout;
   const logger = options.logger || console;
   const startupTimeoutMs = normalizeTimeout(options.startupTimeoutMs || process.env.WALLHUB_STEAMKIT_QUERY_BRIDGE_START_TIMEOUT_MS, 60000, 15000, 180000);
   const requestTimeoutMs = normalizeTimeout(options.requestTimeoutMs || process.env.WALLHUB_STEAMKIT_QUERY_BRIDGE_REQUEST_TIMEOUT_MS, 45000, 10000, 120000);
@@ -110,6 +115,13 @@ function createSteamKitQueryBridge(options = {}) {
     state.stderr = `${state.stderr}${String(chunk || '')}`.slice(-4000);
   }
 
+  function startupError(state) {
+    const detail = state.stderr.trim().slice(-1200);
+    return bridgeError(detail
+      ? `SteamKit query bridge startup timed out: ${detail}`
+      : 'SteamKit query bridge startup timed out');
+  }
+
   function handleBridgeMessage(state, line) {
     let message;
     try {
@@ -125,7 +137,15 @@ function createSteamKitQueryBridge(options = {}) {
       pending.resolve(message.response);
       return;
     }
-    pending.reject(bridgeError(String(message && message.error || 'SteamKit query bridge request failed'), 'STEAMKIT_QUERY_BRIDGE_REQUEST_FAILED'));
+    const code = String(message && message.code || 'STEAMKIT_QUERY_BRIDGE_REQUEST_FAILED');
+    pending.reject(bridgeError(
+      String(message && message.error || 'SteamKit query bridge request failed'),
+      code,
+      {
+        requiresSteamLogin: code === 'STEAM_CM_LOGIN_REQUIRED',
+        statusCode: code === 'STEAM_CM_LOGIN_REQUIRED' ? 401 : (code === 'STEAM_CM_QUERY_TIMEOUT' ? 504 : 502),
+      },
+    ));
   }
 
   function readStdout(state, chunk) {
@@ -162,8 +182,18 @@ function createSteamKitQueryBridge(options = {}) {
       ensureDepotDownloaderReady(),
       attempt.cancelledPromise,
     ]);
+    let rememberedSessionValidated = false;
+    if (typeof validateRememberedSession === 'function') {
+      rememberedSessionValidated = !!(await Promise.race([
+        validateRememberedSession(username),
+        attempt.cancelledPromise,
+      ]));
+    }
     if (attempt.cancelled || requestGeneration.stopped) {
       throw attempt.error || requestGeneration.error || bridgeError('SteamKit query bridge stopped');
+    }
+    if (rememberedSessionValidated && typeof onRememberedSessionValidated === 'function') {
+      onRememberedSessionValidated(username);
     }
     if (typeof ensureDir === 'function' && configDir) ensureDir(configDir);
     const { command, argsPrefix = [] } = depotCommandFor(executable);
@@ -177,6 +207,7 @@ function createSteamKitQueryBridge(options = {}) {
     ];
     const baseEnv = Object.assign({}, process.env, typeof buildDepotDotnetEnv === 'function' ? buildDepotDotnetEnv() : {});
     const childEnv = buildSteamAuthEnv(baseEnv);
+    childEnv.WALLHUB_DEPOT_STEAM3_PROTOCOL = 'websocket';
     const cp = spawnProcess(command, args, {
       cwd: configDir,
       env: childEnv,
@@ -204,8 +235,8 @@ function createSteamKitQueryBridge(options = {}) {
     });
     state.readyPromise.catch(() => {});
     bridge = state;
-    state.readyTimer = setTimeout(() => {
-      if (!state.ready) stopState(state, 'SteamKit query bridge startup timed out');
+    state.readyTimer = scheduleStartupTimeout(() => {
+      if (!state.ready) stopState(state, '', startupError(state));
     }, startupTimeoutMs);
     state.readyTimer.unref?.();
 
@@ -267,8 +298,9 @@ function createSteamKitQueryBridge(options = {}) {
         const error = abortError();
         stopState(state, 'SteamKit query bridge request aborted', error);
       };
-      const timer = setTimeout(() => {
-        stopState(state, 'SteamKit query bridge request timed out');
+      const timer = scheduleRequestTimeout(() => {
+        const error = bridgeError('SteamKit query bridge request timed out', 'STEAM_CM_QUERY_TIMEOUT', { statusCode: 504 });
+        stopState(state, '', error);
       }, normalizeTimeout(timeoutMs, requestTimeoutMs, 10000, 120000));
       timer.unref?.();
       state.pending.set(id, {
@@ -382,7 +414,9 @@ function createSteamKitQueryBridge(options = {}) {
   function queryWorkshop(query, queryOptions = {}) {
     return enqueue(
       requestGeneration => sendRequest('workshop-query', {
-        query: query && typeof query === 'object' ? query : {},
+        query: Object.assign({}, query && typeof query === 'object' ? query : {}, {
+          wallhub_timeout_ms: Math.max(5000, normalizeTimeout(queryOptions.timeoutMs, requestTimeoutMs, 10000, 120000) - 5000),
+        }),
       }, queryOptions.username, queryOptions.timeoutMs, queryOptions.signal, requestGeneration),
       Object.assign({}, queryOptions, { label: 'PublishedFile query' }),
     );

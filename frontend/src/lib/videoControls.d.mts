@@ -1,8 +1,6 @@
 export const VIDEO_SEEK_SECONDS: number;
-export const DEFAULT_VIDEO_PLAYER_MODE: 'native';
 export const VIDEO_PLAYBACK_RATE_MIN: 0.5;
 export const VIDEO_PLAYBACK_RATE_MAX: 3;
-export function normalizeVideoPlayerMode(value: unknown): 'native' | 'compatibility';
 export function formatVideoTime(value: number): string;
 export function normalizeVideoPlaybackRate(value: unknown): number;
 export function getVideoKeyboardAction(input?: {
@@ -16,4 +14,5 @@ export function getVideoKeyboardAction(input?: {
   metaKey?: boolean;
 }): { type: 'seek'; seconds: number } | { type: 'toggle-play' } | { type: 'toggle-fullscreen' } | null;
 export function getLongPressPlaybackRate(isHolding: boolean): 1 | 2;
+export function getKeyboardLongPressPlaybackRate(currentRate: number): number;
 export function getRestoredPlaybackRate(previousRate: number): number;

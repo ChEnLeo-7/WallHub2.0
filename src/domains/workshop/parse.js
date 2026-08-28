@@ -184,11 +184,35 @@ function parseComments(html, limit) {
   return out;
 }
 
+function parseSteamSsrBrowseData(source) {
+  const match = String(source || '').match(/window\.SSR\.renderContext\s*=\s*JSON\.parse\(("(?:\\.|[^"\\])*")\)\s*;/);
+  if (!match) return null;
+  try {
+    const renderContext = JSON.parse(JSON.parse(match[1]));
+    const queryData = JSON.parse(renderContext.queryData || '{}');
+    const browseQuery = (queryData.queries || []).find((query) => (
+      Array.isArray(query && query.queryKey) &&
+      query.queryKey[0] === 'workshop_browse' &&
+      Array.isArray(query.state && query.state.data && query.state.data.results)
+    ));
+    return browseQuery ? browseQuery.state.data : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseWorkshopBrowseHtml(html) {
   const source = String(html || '');
+  const ssrBrowseData = parseSteamSsrBrowseData(source);
   let totalCount = 0;
   let totalPages = 0;
   let totalPagesExact = false;
+
+  if (ssrBrowseData) {
+    totalCount = Math.max(0, parseInt(ssrBrowseData.total_count, 10) || 0);
+    totalPages = Math.max(0, parseInt(ssrBrowseData.total_pages, 10) || 0);
+    totalPagesExact = true;
+  }
 
   // Steam's current SSR page embeds the authoritative browse totals in an
   // escaped React Query payload instead of the legacy paging DOM.
@@ -271,6 +295,31 @@ function parseWorkshopBrowseHtml(html) {
     }
   };
 
+  if (ssrBrowseData) {
+    for (const item of ssrBrowseData.results) {
+      const id = String(item && item.publishedfileid || '').trim();
+      if (!/^\d+$/.test(id) || seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+      hints[id] = {
+        title: cleanText(item.title || ''),
+        preview_url: cleanText(item.preview_url || ''),
+        author: '',
+        creator: String(item.creator || '').trim(),
+      };
+    }
+    return {
+      ids,
+      totalCount,
+      totalPages,
+      totalPagesExact,
+      hints,
+      debugImages: [],
+      foundFirstItem: ids.length > 0,
+      htmlLength: source.length,
+    };
+  }
+
   const browseStart = source.search(/<div\b[^>]*\bid=["']workshopBrowseItems["'][^>]*>/i);
   const browseEnd = browseStart >= 0
     ? source.slice(browseStart + 1).search(/<div\b[^>]*(?:\bid=["']workshopBrowsePaging|\bclass=["'][^"']*workshopBrowsePaging)/i)
@@ -282,6 +331,7 @@ function parseWorkshopBrowseHtml(html) {
 
   const itemStartRe = /<div\b[^>]*\bclass=["'][^"']*\bworkshopItem\b[^"']*["'][^>]*>/gi;
   const starts = [];
+  const candidates = [];
   let startMatch;
   while ((startMatch = itemStartRe.exec(browseSource)) !== null) starts.push(startMatch.index);
   for (let i = 0; i < starts.length; i += 1) {
@@ -289,21 +339,21 @@ function parseWorkshopBrowseHtml(html) {
     const idM = block.match(/data-publishedfileid=["'](\d+)["']/i) ||
       block.match(/sharedfiles\/filedetails\/\?id=(\d+)/i) ||
       block.match(/sharedfiles\\\/filedetails\\\/\?id=(\d+)/i);
-    if (idM) addWorkshopId(idM[1], browseOffset + starts[i], block);
+    if (idM) candidates.push({ id: idM[1], index: starts[i], block });
   }
 
-  for (const m of ids.length ? [] : browseSource.matchAll(/data-publishedfileid=["'](\d+)["']/g)) {
-    addWorkshopId(m[1], browseOffset + m.index);
+  for (const m of browseSource.matchAll(/data-publishedfileid=["'](\d+)["']/g)) {
+    candidates.push({ id: m[1], index: m.index });
   }
-  if (!ids.length) {
-    for (const m of browseSource.matchAll(/sharedfiles\/filedetails\/\?id=(\d+)/g)) {
-      addWorkshopId(m[1], browseOffset + m.index);
-    }
+  for (const m of browseSource.matchAll(/sharedfiles\/filedetails\/\?id=(\d+)/g)) {
+    candidates.push({ id: m[1], index: m.index });
   }
-  if (!ids.length) {
-    for (const m of browseSource.matchAll(/sharedfiles\\\/filedetails\\\/\?id=(\d+)/g)) {
-      addWorkshopId(m[1], browseOffset + m.index);
-    }
+  for (const m of browseSource.matchAll(/sharedfiles\\\/filedetails\\\/\?id=(\d+)/g)) {
+    candidates.push({ id: m[1], index: m.index });
+  }
+  candidates.sort((a, b) => a.index - b.index);
+  for (const candidate of candidates) {
+    addWorkshopId(candidate.id, browseOffset + candidate.index, candidate.block);
   }
 
   const firstIdxData = source.indexOf('data-publishedfileid');

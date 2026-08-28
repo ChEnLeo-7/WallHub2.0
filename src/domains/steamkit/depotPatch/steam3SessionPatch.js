@@ -14,7 +14,7 @@ const { patchSteam3WorkshopQuery } = require('./workshopQueryPatch');
 function patchSteam3Session(steam3SessionPath) {
   if (fs.existsSync(steam3SessionPath)) {
     let steam3Session = fs.readFileSync(steam3SessionPath, 'utf8');
-    steam3Session = ensureCSharpUsings(steam3Session, ['System.Collections.Generic', 'System.Linq', 'System.Net', 'System.Net.Http', 'System.Net.Http.Headers', 'System.Net.Sockets', 'System.Text.Json', 'System.Threading'], 'DepotDownloader Steam3Session.cs Steam3 network usings');
+    steam3Session = ensureCSharpUsings(steam3Session, ['System.Collections.Generic', 'System.Linq', 'System.Net', 'System.Net.Http', 'System.Net.Http.Headers', 'System.Net.Sockets', 'System.Text.Json', 'System.Threading', 'System.Threading.Tasks'], 'DepotDownloader Steam3Session.cs Steam3 network usings');
     if (!steam3Session.includes('WallHubCreateSteamClient')) {
       if (steam3Session.includes('new SteamClient(clientConfiguration)')) {
         steam3Session = steam3Session.replace('new SteamClient(clientConfiguration)', 'WallHubCreateSteamClient(clientConfiguration)');

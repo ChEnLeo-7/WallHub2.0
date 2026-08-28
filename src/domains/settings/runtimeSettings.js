@@ -80,15 +80,13 @@ function createRuntimeSettings(options = {}) {
   }
 
   function getSteamKitMaxDownloads() {
-    const envValue = normalizeSteamKitMaxDownloads(env.DEPOTDOWNLOADER_MAX_DOWNLOADS || '');
-    if (envValue) return envValue;
     const configured = normalizeSteamKitMaxDownloads(settings().steamKitMaxDownloads);
-    return configured || getDefaultSteamKitMaxDownloads();
+    if (configured) return configured;
+    const envValue = normalizeSteamKitMaxDownloads(env.DEPOTDOWNLOADER_MAX_DOWNLOADS || '');
+    return envValue || getDefaultSteamKitMaxDownloads();
   }
 
   function getSteamKitStreamMaxDownloads() {
-    const envValue = normalizeSteamKitMaxDownloads(env.WALLHUB_DEPOT_STREAM_MAX_DOWNLOADS || '');
-    if (envValue) return envValue;
     return getSteamKitMaxDownloads();
   }
 

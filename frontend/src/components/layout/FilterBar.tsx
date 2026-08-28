@@ -28,6 +28,7 @@ export function FilterBar({
   onGenres,
   steamLoggedIn,
   onLoginRequired,
+  steamDataSource = 'community',
 }: {
   filters: Filters;
   genresCount: number;
@@ -40,6 +41,7 @@ export function FilterBar({
   onGenres: () => void;
   steamLoggedIn: boolean;
   onLoginRequired: () => void;
+  steamDataSource?: 'community' | 'webapi' | 'cm';
 }) {
   const text = useText();
   const [typeOpen, setTypeOpen] = React.useState(false);
@@ -63,6 +65,9 @@ export function FilterBar({
   const personalSortValue = filters.personalFilter ? `personal:${filters.personalFilter}` : filters.sort;
   const personalTypeFilter = !!filters.personalFilter;
   const secondarySortEnabled = !!filters.personalFilter || filters.sort === 'trend';
+  const activeGenreCount = genresCount > 0 && genresCount < totalGenres ? genresCount : 0;
+  const advancedFilterCount = activeGenreCount + (filters.officialTags || []).length
+    + (filters.excludedOfficialTags || []).length + (filters.mobileCompatibleOnly ? 1 : 0) + (filters.resolutions || []).length;
   const handleSortChange = (value: string) => {
     if (value.startsWith('personal:')) {
       if (!steamLoggedIn) {
@@ -169,14 +174,15 @@ export function FilterBar({
                   { value: 'lastupdated', label: text.personalSortLastUpdated },
                   { value: 'creationorder', label: text.personalSortCreationDate },
                 ]
-              : [
+                : [
                   { value: '1', label: text.today },
                   { value: '7', label: text.week },
                   { value: '30', label: text.month },
-                  { value: '90', label: text.threeMonths },
-                  { value: '180', label: text.halfYear },
+                  ...(steamDataSource === 'community' ? [
+                    { value: '90', label: text.threeMonths },
+                    { value: '180', label: text.halfYear },
+                  ] : []),
                   { value: '365', label: text.year },
-                  { value: '0', label: text.allTime },
                 ]}
             disabled={!secondarySortEnabled}
             className={secondarySortEnabled ? '' : 'pointer-events-none opacity-45'}
@@ -272,7 +278,7 @@ export function FilterBar({
             <Filter className="h-4 w-4" />
             {text.filter}
             <Badge className="border border-border bg-background text-foreground shadow-sm" variant="outline">
-              {genresCount === totalGenres ? text.filterAllShort : genresCount}
+              {advancedFilterCount || text.filterAllShort}
             </Badge>
           </Button>
           <ViewToggle view={view} setView={setView} className="hidden self-end lg:inline-grid" />

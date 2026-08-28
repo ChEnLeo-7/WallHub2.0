@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 
 function createDepotStreamWorkerScheduler(options) {
-  const { nextSequence, refreshWorkerIdle, stopWorker } = options;
+  const { nextSequence, refreshWorkerIdle, stopWorker, logger = console } = options;
 
   function createDepotStreamAbortError(message = 'Depot stream request cancelled') {
     const err = new Error(message);
@@ -122,6 +122,7 @@ function createDepotStreamWorkerScheduler(options) {
       start: job.start,
       end: job.end,
       path: job.outPath,
+      playbackSessionId: job.playbackSessionId,
     }, (writeError) => {
       if (worker.activeJob !== job || job.settled) return;
       if (writeError) {
@@ -131,7 +132,8 @@ function createDepotStreamWorkerScheduler(options) {
         stopWorker(worker, `range-write-failed ${job.start}-${job.end}`, writeError);
         return;
       }
-      console.log(`[Depot Stream] dispatched ${worker.publishedFileId} ${job.start}-${job.end}`);
+      logger.traceLog?.(`[Depot Stream] dispatched ${worker.publishedFileId} ${job.start}-${job.end}`);
+      job.dispatchedAt = Date.now();
       const timeout = Math.max(30000, parseInt(process.env.WALLHUB_DEPOT_STREAM_RANGE_TIMEOUT || '180000', 10) || 180000);
       job.timer = setTimeout(() => {
         if (worker.activeJob !== job || job.settled) return;
@@ -143,8 +145,14 @@ function createDepotStreamWorkerScheduler(options) {
       const expectedBytes = job.end - job.start + 1;
       job.outputTimer = setInterval(() => {
         if (worker.activeJob !== job || job.settled || job.cancelled) return;
+        let outputBytes = 0;
         try {
-          if (fs.statSync(job.outPath).size !== expectedBytes) {
+          outputBytes = Math.min(expectedBytes, fs.statSync(job.outPath).size);
+          if (outputBytes > job.outputBytes) {
+            job.outputBytes = outputBytes;
+            job.onProgress?.(outputBytes, Date.now());
+          }
+          if (outputBytes !== expectedBytes) {
             job.outputReadyAt = 0;
             return;
           }
@@ -221,6 +229,13 @@ function createDepotStreamWorkerScheduler(options) {
     }
   }
 
+  function cancelBlockingDepotStreamWorkerPrefetch(worker) {
+    if (!worker) return false;
+    ensureDepotStreamWorkerScheduler(worker);
+    if (!worker.activeJob || worker.activeJob.priority !== 'prefetch') return false;
+    return cancelDepotStreamWorkerJob(worker, worker.activeJob, 'Prefetch is blocking foreground stream demand');
+  }
+
   function promoteDepotStreamWorkerJob(worker, job, schedule = {}) {
     if (!worker || !job || job.settled) return;
     ensureDepotStreamWorkerScheduler(worker);
@@ -240,7 +255,6 @@ function createDepotStreamWorkerScheduler(options) {
       worker.prefetchQueue.splice(queuedIndex, 1);
       worker.foregroundQueue.push(job);
     }
-    cancelDepotStreamWorkerPrefetch(worker, job);
     pumpDepotStreamWorker(worker);
   }
 
@@ -267,6 +281,10 @@ function createDepotStreamWorkerScheduler(options) {
       timer: null,
       outputTimer: null,
       outputReadyAt: 0,
+      outputBytes: 0,
+      dispatchedAt: 0,
+      onProgress: typeof schedule.onProgress === 'function' ? schedule.onProgress : null,
+      playbackSessionId: String(schedule.playbackSessionId || ''),
       cancelled: false,
       cancelSent: false,
       settled: false,
@@ -276,7 +294,6 @@ function createDepotStreamWorkerScheduler(options) {
     promise.job = job;
     job.promise = promise;
     if (job.priority === 'foreground') {
-      cancelDepotStreamWorkerPrefetch(worker);
       worker.foregroundQueue.push(job);
     } else {
       worker.prefetchQueue.push(job);
@@ -326,6 +343,7 @@ function createDepotStreamWorkerScheduler(options) {
     handleDepotStreamWorkerMessage,
     cancelDepotStreamWorkerJob,
     cancelDepotStreamWorkerPrefetch,
+    cancelBlockingDepotStreamWorkerPrefetch,
     promoteDepotStreamWorkerJob,
     requestDepotStreamWorkerRange,
     setDepotStreamWorkerJobSchedule,

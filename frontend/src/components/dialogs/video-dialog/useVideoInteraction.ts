@@ -1,7 +1,6 @@
 import * as React from 'react';
 
 type VideoInteractionOptions = {
-  compatibilityMode: boolean;
   desktopVideoInteraction: boolean;
   playbackRateMenuDismissedRef: React.MutableRefObject<boolean>;
   playbackRateMenuOpen: boolean;
@@ -12,7 +11,6 @@ type VideoInteractionOptions = {
 };
 
 export function useVideoInteraction({
-  compatibilityMode,
   desktopVideoInteraction,
   playbackRateMenuDismissedRef,
   playbackRateMenuOpen,
@@ -27,13 +25,8 @@ export function useVideoInteraction({
     showControls();
     return true;
   }, [playbackRateMenuDismissedRef, playbackRateMenuOpen, playbackRateMenuOpenRef, showControls]);
-  const isNativeControlsClick = React.useCallback((event: React.MouseEvent<HTMLVideoElement>) => {
-    if (compatibilityMode) return false;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    return event.clientY >= bounds.bottom - 56;
-  }, [compatibilityMode]);
   const handleVideoClick = React.useCallback((event: React.MouseEvent<HTMLVideoElement>) => {
-    if (suppressVideoClickRef.current || dismissPlaybackRateMenuClick() || isNativeControlsClick(event)) return;
+    if (suppressVideoClickRef.current || dismissPlaybackRateMenuClick()) return;
     if (!desktopVideoInteraction) {
       event.preventDefault();
       showControls();
@@ -41,14 +34,14 @@ export function useVideoInteraction({
     }
     togglePlayback();
     showControls();
-  }, [desktopVideoInteraction, dismissPlaybackRateMenuClick, isNativeControlsClick, showControls, suppressVideoClickRef, togglePlayback]);
+  }, [desktopVideoInteraction, dismissPlaybackRateMenuClick, showControls, suppressVideoClickRef, togglePlayback]);
   const handleMobileVideoDoubleClick = React.useCallback((event: React.MouseEvent<HTMLVideoElement>) => {
     if (desktopVideoInteraction || suppressVideoClickRef.current) return;
     event.preventDefault();
-    if (dismissPlaybackRateMenuClick() || isNativeControlsClick(event)) return;
+    if (dismissPlaybackRateMenuClick()) return;
     togglePlayback();
     showControls();
-  }, [desktopVideoInteraction, dismissPlaybackRateMenuClick, isNativeControlsClick, showControls, suppressVideoClickRef, togglePlayback]);
+  }, [desktopVideoInteraction, dismissPlaybackRateMenuClick, showControls, suppressVideoClickRef, togglePlayback]);
 
   return { handleMobileVideoDoubleClick, handleVideoClick };
 }
