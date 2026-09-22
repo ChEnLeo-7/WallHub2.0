@@ -288,7 +288,9 @@ export default function App({ workshopQueryEnabled = true }: { workshopQueryEnab
     queueController.refreshQueue();
     if (settings.settingsOpen || steamController.loginOpen) steamController.refreshSteamStatus();
   }, [pageVisible, queueController.refreshQueue, refreshRuntime, settings.settingsOpen, steamController.loginOpen, steamController.refreshSteamStatus]);
-  React.useEffect(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }), [page]);
+  React.useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [page]);
   React.useEffect(() => {
     const id = String(detailsController.selected?.publishedfileid || '');
     steamController.syncSelectedItem(id, preferences.filters.personalFilter);
