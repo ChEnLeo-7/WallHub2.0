@@ -538,6 +538,12 @@ test('App delegates preferences settings controls and overlay history to focused
   assert.doesNotMatch(app, /localStorage\.setItem|await saveSettings\(payload\)|useOverlayHistory\(|<SettingsDialog|<WallpaperGrid|<DownloadChoiceDialog/);
 });
 
+test('pagination scroll effect does not return the scrollTo result', () => {
+  const app = fs.readFileSync(appPath, 'utf8');
+
+  assert.match(app, /React\.useEffect\(\(\) => \{\r?\n\s*window\.scrollTo\(\{ top: 0, left: 0, behavior: 'auto' \}\);\r?\n\s*\}, \[page\]\);/);
+});
+
 test('MPKG browser downloads do not show a persistent preparation toast', () => {
   const downloadActions = fs.readFileSync(downloadActionsPath, 'utf8');
   const text = readSources([zhTextPath, enTextPath]);
